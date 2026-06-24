@@ -258,8 +258,10 @@ Track milestone-level progress across all child plans.
       summary through the Kioku adapter via `StoreRunner` instead of the old Hasql AgentMemory read
       model; `AgentSessionRow` now lives in `Rei.Modules.Agent.Session.Types` so live session CLI
       and Today session activity formatting no longer import the old AgentSession table module for
-      the row shape. Disposable production data-copy execution and remaining old
-      AgentMemory/AgentSession decommission work remain.
+      the row shape; Kioku's public session read API now covers recent/scope/focus/range/chain
+      reads and live `rei agent sessions`, `rei agent session show`, and Today session activity use
+      those reads through `StoreRunner`. Disposable production data-copy execution and remaining
+      old AgentMemory/AgentSession decommission work remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -496,6 +498,14 @@ Track milestone-level progress across all child plans.
   live agent-session CLI output plus Today session activity formatting import it directly from the
   adapter-side module. The legacy SQL table module only re-exports the row while old projections and
   migration fixtures remain. Verification: Rei
+  `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
+
+- 2026-06-24: EP-4 M3 live agent-session reads moved to Kioku. `Kioku.Session` now exposes public
+  read helpers for recent sessions by namespace, sessions by scope, sessions by focus, started-at
+  range, and previous-session chain. Rei's adapter converts those rows back to Rei-shaped
+  `AgentSessionRow` values, and `rei agent sessions`, `rei agent session show`, and Today session
+  activity now run through `StoreRunner` instead of the old Hasql AgentSession read model.
+  Verification: Kioku `cabal test kioku-core`; Rei
   `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure

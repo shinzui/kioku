@@ -153,7 +153,11 @@ This section must always reflect the actual current state of the work.
       Kioku adapter instead of the old Hasql `AgentMemoryReadModelEff`. `AgentSessionRow` has also
       moved to `Rei.Modules.Agent.Session.Types`, so live agent-session CLI output and Today session
       activity formatting no longer import the legacy `AgentSession.Infrastructure.Table` module for
-      the row shape. `cabal test rei-core` green; AgentSchedule untouched.
+      the row shape. Kioku now exposes session read queries for recent sessions, scope, focus,
+      started-at range, and previous-session chains; `rei agent sessions`, `rei agent session
+      <id>`, `rei agent session <id> --chain`, and the `rei today` session-activity summary use
+      those adapter functions via `StoreRunner` instead of the old Hasql AgentSession read model.
+      `cabal test rei-core` green; AgentSchedule untouched.
 
 
 ## Surprises & Discoveries
@@ -413,6 +417,16 @@ Record every decision made while working on the plan.
   Kioku. The re-export keeps legacy projections and migration fixtures compiling.
   Date: 2026-06-24
 
+- Decision: Add public Kioku session read helpers for recent-by-namespace, by-scope, by-focus,
+  started-at range, by-id, and previous-session chain, then move Rei's live session CLI reads onto
+  those helpers through `Rei.Modules.Agent.Memory.KiokuAdapter`.
+  Rationale: EP-4's integration rule says Rei should consume top-level Kioku modules, not
+  `Kioku.Session.ReadModel` internals. The new helpers cover the old
+  `Rei.Modules.AgentSession.Infrastructure.ReadModel` query shapes needed by `rei agent sessions`,
+  `rei agent session show`, and Today session activity without migrating unrelated dashboard Hasql
+  reads.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -500,6 +514,15 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   `rei agent session` / `rei today` formatting imports it from the adapter-side module. The legacy
   `AgentSession.Infrastructure.Table` module re-exports the row for old SQL statements and
   projections while they remain. Verification: Rei
+  `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
+
+- 2026-06-24: M3 live agent-session reads migrated to Kioku. Kioku's public `Kioku.Session` module
+  now exposes session read helpers for recent sessions in a namespace, sessions by scope, focus,
+  started-at range, and previous-session chain. Rei's Kioku adapter converts those `SessionRow`
+  values back to Rei-shaped `AgentSessionRow` values with `agent_session_*` IDs. `rei agent
+  sessions`, `rei agent session <id>`, `rei agent session <id> --chain`, and Today session activity
+  now read through `StoreRunner`; the old Hasql AgentSession read model remains only for legacy
+  projections/facades and migration fixtures. Verification: Kioku `cabal test kioku-core`; Rei
   `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
 
 
