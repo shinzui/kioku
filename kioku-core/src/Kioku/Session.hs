@@ -15,6 +15,7 @@ import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError, defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
+import Kioku.Distill.Timer (l1TimerScheduleProjection)
 import Kioku.Id (SessionId, idText)
 import Kioku.Prelude
 import Kioku.Session.Domain
@@ -125,7 +126,7 @@ runSessionCommand sid cmd = do
       sessionEventStream
       (sessionStream sid)
       cmd
-      [sessionInlineProjection]
+      [sessionInlineProjection, l1TimerScheduleProjection]
   pure $
     case result of
       Left err -> Left (SessionCommandRejected err)

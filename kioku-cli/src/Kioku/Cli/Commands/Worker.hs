@@ -5,8 +5,13 @@ module Kioku.Cli.Commands.Worker
   )
 where
 
+import Control.Monad (unless, when)
 import Data.Text qualified as Text
+import Data.Time (getCurrentTime)
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.Distill.L1 (scopedScanCandidates)
+import Kioku.Distill.Runtime (newDistillRuntime)
+import Kioku.Distill.Timer.Worker (runL1TimerWorkerOnce)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Memory.Embedding.Worker (backfillMissingEmbeddings, runEmbeddingWorkerHost)
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
@@ -14,8 +19,9 @@ import Kiroku.Store.Connection (KirokuStore, defaultConnectionSettings, withStor
 import Options.Applicative
 import System.Environment (lookupEnv)
 
-newtype WorkerOptions = WorkerOptions
-  { backfill :: Bool
+data WorkerOptions = WorkerOptions
+  { backfill :: !Bool,
+    timersOnce :: !Bool
   }
   deriving stock (Eq, Show)
 
@@ -26,6 +32,10 @@ workerOptionsParser =
       ( long "backfill"
           <> help "Run one embedding backfill pass and exit"
       )
+    <*> switch
+      ( long "timers-once"
+          <> help "Claim and fire at most one due kioku L1 timer, then exit"
+      )
 
 runWorker :: WorkerOptions -> IO ()
 runWorker opts = do
@@ -34,6 +44,7 @@ runWorker opts = do
   withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
     tr <- noopTracer
     let env = AppEnv {store = st, tracer = tr, metrics = Nothing}
+    when opts.timersOnce (runTimerOnce env)
     result <- runAppIO env detectVectorCapability
     capability <- case result of
       Left storeErr -> ioError (userError ("kioku worker store error: " <> show storeErr))
@@ -41,11 +52,14 @@ runWorker opts = do
     case capability of
       VectorAvailable
         | opts.backfill -> runBackfill env capability config
+        | opts.timersOnce -> pure ()
         | otherwise -> runContinuousWorker env st capability config
       VectorExtensionUnavailable ->
-        putStrLn "pgvector is not available; recall will run FTS-only; nothing to embed."
+        unless opts.timersOnce $
+          putStrLn "pgvector is not available; recall will run FTS-only; nothing to embed."
       VectorColumnsUnavailable missing ->
-        putStrLn ("pgvector columns are missing (" <> Text.unpack (Text.intercalate ", " missing) <> "); nothing to embed.")
+        unless opts.timersOnce $
+          putStrLn ("pgvector columns are missing (" <> Text.unpack (Text.intercalate ", " missing) <> "); nothing to embed.")
 
 runBackfill :: AppEnv -> VectorCapability -> EmbeddingConfig -> IO ()
 runBackfill env capability config = do
@@ -62,6 +76,16 @@ runContinuousWorker env store capability config = do
   case result of
     Left storeErr -> ioError (userError ("kioku worker store error: " <> show storeErr))
     Right () -> pure ()
+
+runTimerOnce :: AppEnv -> IO ()
+runTimerOnce env = do
+  rt <- newDistillRuntime
+  now <- getCurrentTime
+  result <- runAppIO env (runL1TimerWorkerOnce Nothing rt (scopedScanCandidates 5) now)
+  case result of
+    Left storeErr -> ioError (userError ("kioku timer worker store error: " <> show storeErr))
+    Right Nothing -> putStrLn "No due kioku L1 timers."
+    Right (Just _) -> putStrLn "Processed one due kioku L1 timer."
 
 requireEnv :: String -> IO String
 requireEnv name = do

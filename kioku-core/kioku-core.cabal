@@ -41,6 +41,8 @@ library
     Kioku.Distill.Extract
     Kioku.Distill.L1
     Kioku.Distill.Runtime
+    Kioku.Distill.Timer
+    Kioku.Distill.Timer.Worker
     Kioku.Memory
     Kioku.Memory.Domain
     Kioku.Memory.Embedding

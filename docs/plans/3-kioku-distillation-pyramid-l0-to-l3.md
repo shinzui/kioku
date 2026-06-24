@@ -102,13 +102,18 @@ Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
       `kioku_consolidation_decisions` audit row. Completed 2026-06-24: `distillSessionL1` composes
       `extractProgram` + `consolidateProgram`, exposes `recallCandidates` and `scopedScanCandidates`,
       writes through `Kioku.Memory`, and inserts audit rows.
-- [ ] Add the timer arming (inline projection `sceneTimerScheduleProjection` on the session write
-      path) + the `kioku-l1-extract` timer dispatcher (turn-count threshold with warm-up ramp +
-      idle-timeout flush, self-rescheduling), modeled on Rei's `FireTimer.hs` / `DormancyTimer.hs`.
+- [x] Add the timer arming (inline projection `l1TimerScheduleProjection` on the session write path)
+      + the `kioku-l1-extract` timer dispatcher (turn-count threshold with warm-up ramp + idle-timeout
+      flush), modeled on Rei's `FireTimer.hs` / `DormancyTimer.hs`. Completed 2026-06-24:
+      `Kioku.Distill.Timer` arms ramp/idle/final keiro timers; `Kioku.Distill.Timer.Worker` exposes
+      `fireL1Timer`/`runL1TimerWorkerOnce`; `kioku worker --timers-once` claims at most one due L1 timer.
+- [ ] Integrate a continuous L1 timer loop into the default `kioku worker` host; current timer
+      dispatcher is exposed as a one-pass `--timers-once` operation.
 - [x] Add `kioku distill session <session-id>` CLI to force an L1 pass. Completed 2026-06-24:
       `kioku distill session SESSION_ID [--candidates scan|recall] [--limit N]` builds a
       `DistillRuntime`, selects the scoped-scan or recall candidate finder, runs `distillSessionL1`,
-      and prints the `L1Summary`. M1 acceptance still needs the sample transcript plus timer wiring.
+      and prints the `L1Summary`. M1 acceptance still needs the sample transcript plus the continuous
+      timer host loop.
 
 Milestone M2 — L2 scene generation:
 
@@ -159,6 +164,11 @@ implementation. Provide concise evidence.
   `superseded_by=mergedInto`. Since `Merged` is terminal, appending a later `MemorySuperseded` on the
   same loser stream would fight the aggregate state machine. The public `merge` writer therefore
   emits the reserved `MemoryMerged` event only.
+
+- **Keiro timer handlers must return an `EventId` marker for handled timers.** `runTimerWorker` only
+  marks a claimed row `fired` when the fire action returns `Just eventId`; `Nothing` means "not handled"
+  and leaves the row `firing` until stale recovery requeues it. The L1 timer fire action therefore
+  returns a deterministic marker derived from the `TimerId` after successful/no-op handling.
 
 
 ## Decision Log
@@ -751,12 +761,12 @@ Its algorithm, step by step (resolve all ambiguity here, per the spec):
 
 **The trigger timer.** Distillation fires from keiro durable timers, not synchronously. Add
 `kioku-core/src/Kioku/Distill/Timer.hs`, modeled jointly on Rei's `FireTimer.hs` (arming from an inline
-projection) and `DormancyTimer.hs` (self-rescheduling fire). Three pieces:
+projection) and `DormancyTimer.hs` (debounced durable timer fire). Three pieces:
 
 - A constant `l1ExtractProcessManagerName :: Text = "kioku-l1-extract"` and a deterministic
-  `l1TimerId :: SessionId -> UTCTime -> TimerId` (UUIDv5 of `"<pm>|<session>|<show fireAt>"`, exactly as
-  `reminderTimerId` in `FireTimer.hs`).
-- An inline projection `sceneTimerScheduleProjection :: InlineProjection SessionEvent` added to the
+  `l1TimerId :: SessionId -> Text -> UTCTime -> TimerId` (UUIDv5 of `"<pm>|<session>|<kind>|<show fireAt>"`,
+  exactly as `reminderTimerId` in `FireTimer.hs`).
+- An inline projection `l1TimerScheduleProjection :: InlineProjection SessionEvent` added to the
   **session write path** (the projection list passed to `runCommandWithProjections` in
   `Kioku.Session`). On `SessionStarted` it arms the first timer; on each `TurnRecorded` it re-arms,
   pushing the idle deadline forward and tracking the turn count; on `SessionCompleted`/`SessionFailed`
@@ -764,22 +774,19 @@ projection) and `DormancyTimer.hs` (self-rescheduling fire). Three pieces:
   `correlationId = idText sessionId`, `payload = {"turnCount": n, "kind": "ramp"|"idle"|"final"}`,
   `fireAt` = the next ramp threshold time or `now + idleFlushMinutes`. Use `scheduleTimerTx` (re-arms
   while still Scheduled). The warm-up ramp: fire after turn counts 1, 2, 4, 8, 16, then every 16.
-- A fire dispatcher branch. kioku's `kioku worker` host (from EP-2) registers a `TimerWorkerSpec` whose
-  `fire :: TimerRow -> Eff '[Store, Error StoreError, Tracing, IOE] (Maybe EventId)` routes on
-  `processManagerName`. Add the branch: when `processManagerName == l1ExtractProcessManagerName`,
-  recover the `SessionId` from `correlationId`, choose `recallCandidates` or `scopedScanCandidates`,
-  run `distillSessionL1 rt finder sessionId`, and return `Nothing` (the pass produces 0..N events
-  across streams; the chain continues via the next re-armed timer, not by marking this one). If the
-  timer kind is `idle` and a newer turn arrived after the
-  deadline (the read model shows a higher turn count), re-arm and skip (debounce). The dispatcher needs
-  the `DistillRuntime` — build it once at host startup (`newDistillRuntime`) and close over it, exactly
-  as Rei closes over `WorkspaceConfig`.
+- A fire dispatcher branch. `Kioku.Distill.Timer.Worker.fireL1Timer` routes only
+  `processManagerName == l1ExtractProcessManagerName`: recover the `SessionId` from `correlationId`,
+  choose `recallCandidates` or `scopedScanCandidates`, run `distillSessionL1 rt finder sessionId`, and
+  return `Just` a deterministic marker `EventId` derived from the `TimerId` so keiro marks the timer
+  `fired`. Return `Nothing` only for timers this fire action does not handle, or for retryable L1
+  failures. The dispatcher needs the `DistillRuntime` — build it once at host startup
+  (`newDistillRuntime`) and close over it, exactly as Rei closes over `WorkspaceConfig`.
 
-If kioku does not already host timers (EP-2 added only async/side-effect specs), add a `TimerWorkerSpec`
-list to the `kioku worker` host call (`runKirokuWorkerHost` takes `[TimerWorkerSpec]`) and a startup
-bootstrap (no global bootstrap timer is needed — the session write path arms per-session timers, like
-Rei's reminders). The `keiro_timers` table is owned by `keiro-migrations` (already in kioku's
-migration set via EP-1), so no schema work.
+The current implementation exposes a one-pass dispatcher through `kioku worker --timers-once`; a later
+slice should integrate a continuous timer loop into the default `kioku worker` host. No global bootstrap
+timer is needed — the session write path arms per-session timers, like Rei's reminders. The
+`keiro_timers` table is owned by `keiro-migrations` (already in kioku's migration set via EP-1), so no
+schema work.
 
 **The force-a-pass CLI.** Add `kioku distill session <session-id>` to kioku-cli: it opens the store,
 builds `newDistillRuntime`, selects `scopedScanCandidates` or `recallCandidates`, calls
@@ -1247,9 +1254,11 @@ End of M1:
   `data L1Summary = L1Summary { extracted, stored, merged, skipped :: Int }`; the internal
   `FindMergeCandidates` interface with `recallCandidates` and `scopedScanCandidates` implementations.
 - `kioku-core/src/Kioku/Distill/Timer.hs`: `l1ExtractProcessManagerName :: Text`;
-  `l1TimerId :: SessionId -> UTCTime -> TimerId`;
-  `sceneTimerScheduleProjection :: InlineProjection SessionEvent` (the L1-arming inline projection on the
-  session write path); the fire branch usable from the worker host's `TimerWorkerSpec.fire`.
+  `l1TimerId :: SessionId -> Text -> UTCTime -> TimerId`;
+  `l1TimerScheduleProjection :: InlineProjection SessionEvent` (the L1-arming inline projection on the
+  session write path).
+- `kioku-core/src/Kioku/Distill/Timer/Worker.hs`: `fireL1Timer` and `runL1TimerWorkerOnce`; kioku-cli:
+  `kioku worker --timers-once`.
 - kioku-cli: `kioku distill session <session-id>` printing an `L1Summary`.
 
 End of M2:
