@@ -96,10 +96,12 @@ Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
       and the consolidation shikumi program `Kioku.Distill.Consolidate`
       (`Program ConsolidateInput ConsolidationDecision`). Completed 2026-06-24: both modules are
       exposed by `kioku-core`, use shikumi strict-schema records, and `cabal build kioku-core` passed.
-- [ ] Add `Kioku.Distill.L1` orchestration: read recent L0 for a session, run extraction, for each
+- [x] Add `Kioku.Distill.L1` orchestration: read recent L0 for a session, run extraction, for each
       candidate run consolidation (candidate lookup via `Kioku.Recall` if present, else scoped scan),
       apply the decision via `Kioku.Memory` (record / merge / no-op), and write a
-      `kioku_consolidation_decisions` audit row.
+      `kioku_consolidation_decisions` audit row. Completed 2026-06-24: `distillSessionL1` composes
+      `extractProgram` + `consolidateProgram`, exposes `recallCandidates` and `scopedScanCandidates`,
+      writes through `Kioku.Memory`, and inserts audit rows.
 - [ ] Add the timer arming (inline projection `sceneTimerScheduleProjection` on the session write
       path) + the `kioku-l1-extract` timer dispatcher (turn-count threshold with warm-up ramp +
       idle-timeout flush, self-rescheduling), modeled on Rei's `FireTimer.hs` / `DormancyTimer.hs`.
@@ -697,13 +699,19 @@ leak out of `Distill.*`). Its public entry:
 distillSessionL1 ::
   (Store :> es, Error StoreError :> es, IOE :> es) =>
   DistillRuntime ->
-  StreamCategories ->          -- to find merge candidates by scope (EP-2 recall) or scan
+  FindMergeCandidates es ->    -- EP-2 recall finder or scoped scan fallback
   SessionId ->
-  Eff es L1Summary
+  Eff es (Either L1Error L1Summary)
 
 data L1Summary = L1Summary
   { extracted :: !Int, stored :: !Int, merged :: !Int, skipped :: !Int }
   deriving stock (Show, Eq)
+
+newtype FindMergeCandidates es =
+  FindMergeCandidates { runFindMergeCandidates :: MemoryScope -> Text -> Eff es [MemoryRecord] }
+
+recallCandidates :: EmbeddingModel -> VectorCapability -> Int -> FindMergeCandidates es
+scopedScanCandidates :: Int -> FindMergeCandidates es
 ```
 
 Its algorithm, step by step (resolve all ambiguity here, per the spec):
@@ -714,16 +722,16 @@ Its algorithm, step by step (resolve all ambiguity here, per the spec):
    text instead (the opt-in fallback). Build `ExtractInput { focus, scopeLabel = render scope,
    conversation = newline-join of turns-or-memories }`.
 2. Run extraction: `out <- liftIO (runDistillProgram rt extractProgram extractInput)`; on `Left err`
-   log and return a zero `L1Summary` (extraction is best-effort, never wedges the caller). Get
-   `atoms = unField (atoms out)`.
+   return a zero `L1Summary` (extraction is best-effort, never wedges the caller). Get
+   `atoms = atoms out`.
 3. For each extracted atom: find merge candidates with the internal interface
    `findMergeCandidates :: MemoryScope -> Text -> Eff es [MemoryRecord]`. **EP-2 present:** call
    `Kioku.Recall.recall model cap (RecallRequest scope (content atom) Hybrid 5)` and map hits to
    records. **EP-2 absent (placeholder):** run a scoped SQL scan
    `SELECT … FROM kiroku.kioku_memories WHERE status='active' AND namespace=$ns AND (scope predicate)
    ORDER BY created_at DESC LIMIT 5`. (The L1 module depends only on `findMergeCandidates`; provide
-   both bodies and pick at build time by whether `Kioku.Recall.recall` exists — note the choice in the
-   Decision Log.)
+   both bodies as `recallCandidates` and `scopedScanCandidates`; the CLI/worker chooses the right
+   finder from runtime capability.
 4. Run consolidation: `dec <- liftIO (runDistillProgram rt consolidateProgram (ConsolidateInput …))`.
    On `Left err`, default the decision to `store` (so a consolidation outage degrades to "record it"
    rather than dropping the atom) and note it in the audit `rationale`.
@@ -757,9 +765,10 @@ projection) and `DormancyTimer.hs` (self-rescheduling fire). Three pieces:
 - A fire dispatcher branch. kioku's `kioku worker` host (from EP-2) registers a `TimerWorkerSpec` whose
   `fire :: TimerRow -> Eff '[Store, Error StoreError, Tracing, IOE] (Maybe EventId)` routes on
   `processManagerName`. Add the branch: when `processManagerName == l1ExtractProcessManagerName`,
-  recover the `SessionId` from `correlationId`, run `distillSessionL1 rt cats sessionId`, and return
-  `Nothing` (the pass produces 0..N events across streams; the chain continues via the next re-armed
-  timer, not by marking this one). If the timer kind is `idle` and a newer turn arrived after the
+  recover the `SessionId` from `correlationId`, choose `recallCandidates` or `scopedScanCandidates`,
+  run `distillSessionL1 rt finder sessionId`, and return `Nothing` (the pass produces 0..N events
+  across streams; the chain continues via the next re-armed timer, not by marking this one). If the
+  timer kind is `idle` and a newer turn arrived after the
   deadline (the read model shows a higher turn count), re-arm and skip (debounce). The dispatcher needs
   the `DistillRuntime` — build it once at host startup (`newDistillRuntime`) and close over it, exactly
   as Rei closes over `WorkspaceConfig`.
@@ -1232,10 +1241,9 @@ End of M1:
   `ConsolidationAction`, `ConsolidationDecision`; `consolidateProgram :: Program ConsolidateInput
   ConsolidationDecision`.
 - `kioku-core/src/Kioku/Distill/L1.hs`: `distillSessionL1 :: (Store :> es, Error StoreError :> es,
-  IOE :> es) => DistillRuntime -> StreamCategories -> SessionId -> Eff es L1Summary`;
+  IOE :> es) => DistillRuntime -> FindMergeCandidates es -> SessionId -> Eff es (Either L1Error L1Summary)`;
   `data L1Summary = L1Summary { extracted, stored, merged, skipped :: Int }`; the internal
-  `findMergeCandidates :: MemoryScope -> Text -> Eff es [MemoryRecord]` with an EP-2 (recall) body and
-  an EP-2-absent (scoped scan) body.
+  `FindMergeCandidates` interface with `recallCandidates` and `scopedScanCandidates` implementations.
 - `kioku-core/src/Kioku/Distill/Timer.hs`: `l1ExtractProcessManagerName :: Text`;
   `l1TimerId :: SessionId -> UTCTime -> TimerId`;
   `sceneTimerScheduleProjection :: InlineProjection SessionEvent` (the L1-arming inline projection on the

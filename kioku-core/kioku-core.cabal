@@ -39,6 +39,7 @@ library
     Kioku.App
     Kioku.Distill.Consolidate
     Kioku.Distill.Extract
+    Kioku.Distill.L1
     Kioku.Distill.Runtime
     Kioku.Memory
     Kioku.Memory.Domain
