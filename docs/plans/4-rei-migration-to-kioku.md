@@ -148,9 +148,10 @@ This section must always reflect the actual current state of the work.
       module directly. The legacy table re-exports the row for old projections and migration
       fixtures while they remain. Remaining work covers the old command/domain types, inline
       projections/read-model helpers, store-handler facades, migration fixture dependence on old
-      transducers/projections, the old AgentSession modules, and the `rei today` memory summary,
-      which still reads `getActiveMemoryCounts` / `getLastRecordedMemory` through the old Hasql
-      `AgentMemoryReadModelEff`. `cabal test rei-core` green; AgentSchedule untouched.
+      transducers/projections, and the old AgentSession modules. The `rei today` memory summary now
+      requests a `StoreRunner` and derives active counts plus the most recent active memory from the
+      Kioku adapter instead of the old Hasql `AgentMemoryReadModelEff`. `cabal test rei-core` green;
+      AgentSchedule untouched.
 
 
 ## Surprises & Discoveries
@@ -250,11 +251,11 @@ implementation. Provide concise evidence.
   `cabal test rei-core-test --test-options='-p /rei-kioku-migrate/'`; Kioku `cabal test kioku-test`.
 
 - Extracting `AgentMemoryRow` exposed one remaining live read-model dependency outside the agent
-  memory command surface. `rei today` still builds its dashboard memory summary through the old
-  Hasql `AgentMemoryReadModelEff` (`getActiveMemoryCounts`, `getLastRecordedMemory`). The row shape
-  is now independent of the old table module for prompt rendering and agent-memory CLI paths, but
-  fully decommissioning the read model also needs a Kioku-backed dashboard query path or a
-  `StoreRunner`-fed memory summary. Evidence: Rei `rg "AgentMemoryReadModelEff|getActiveMemoryCounts|getLastRecordedMemory" rei-cli rei-core`.
+  memory command surface: `rei today` built its dashboard memory summary through the old Hasql
+  `AgentMemoryReadModelEff` (`getActiveMemoryCounts`, `getLastRecordedMemory`). That dependency is
+  now removed from the Today query by opening the existing `StoreRunner` and deriving the summary
+  from Kioku active rows. Evidence: Rei
+  `rg "Rei\\.Modules\\.AgentMemory|AgentMemoryReadModelEff|getActiveMemoryCounts|getLastRecordedMemory" rei-cli/src/Rei/Cli/Commands/Today/Query.hs`.
 
 (Add further discoveries as work proceeds.)
 
@@ -394,6 +395,14 @@ Record every decision made while working on the plan.
   decommission.
   Date: 2026-06-24
 
+- Decision: Move the `rei today` dashboard memory summary onto the Kioku adapter by making the
+  Today command require both the Hasql pool and the `StoreRunner`.
+  Rationale: the dashboard still has many unrelated Hasql read-model queries, but memory counts and
+  "last recorded" are part of the AgentMemory decommission. Computing only that summary through
+  `StoreRunner` keeps the dashboard rewrite small while removing its dependency on the legacy
+  `AgentMemoryReadModelEff`.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -468,6 +477,13 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   module. The legacy `AgentMemory.Infrastructure.Table` module only re-exports the row for old
   table/projection code while it remains. Verification: Rei
   `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
+
+- 2026-06-24: M3 Today dashboard memory summary migrated to Kioku. `Today` is now a pool-and-store
+  command; `runDashboardQuery` gets `MemorySummaryInfo` from the Kioku adapter via `StoreRunner`,
+  while the rest of the dashboard remains on its existing Hasql read models. The store-handler spec
+  now proves active count derivation and most-recent active memory selection from Kioku rows.
+  Verification: Rei `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`;
+  `git diff --check`.
 
 
 ## Context and Orientation
