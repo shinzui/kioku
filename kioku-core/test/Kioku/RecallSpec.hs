@@ -9,6 +9,7 @@ import Data.Time (UTCTime, addUTCTime)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Recall
+import Kioku.Recall.Capability (VectorCapability (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, testCase, (@?=))
 
@@ -18,7 +19,8 @@ tests =
     "Recall scoring"
     [ testCase "RRF fusion favors a memory present in both lists" testRrfFusion,
       testCase "signal blending maps recency priority and confidence" testSignalBlending,
-      testCase "character budgets truncate and stop before total cap" testBudgets
+      testCase "character budgets truncate and stop before total cap" testBudgets,
+      testCase "execution plan fails open to keyword when vectors are unavailable" testFailOpenPlan
     ]
 
 testRrfFusion :: Assertion
@@ -53,6 +55,19 @@ testBudgets = do
       hitId onlyHit @?= "a"
       onlyHit.memory.content @?= "ab..."
     other -> fail ("Expected one budgeted hit, got " <> show (hitId <$> other))
+
+testFailOpenPlan :: Assertion
+testFailOpenPlan = do
+  planRecallExecution VectorAvailable Keyword
+    @?= RecallExecutionPlan {runFts = True, runVector = False, needsQueryEmbedding = False}
+  planRecallExecution VectorAvailable Embedding
+    @?= RecallExecutionPlan {runFts = False, runVector = True, needsQueryEmbedding = True}
+  planRecallExecution VectorAvailable Hybrid
+    @?= RecallExecutionPlan {runFts = True, runVector = True, needsQueryEmbedding = True}
+  planRecallExecution VectorExtensionUnavailable Hybrid
+    @?= RecallExecutionPlan {runFts = True, runVector = False, needsQueryEmbedding = False}
+  planRecallExecution (VectorColumnsUnavailable ["embedding"]) Embedding
+    @?= RecallExecutionPlan {runFts = True, runVector = False, needsQueryEmbedding = False}
 
 row :: Text -> UTCTime -> Text -> MemoryRecord
 row memoryId createdAt content =

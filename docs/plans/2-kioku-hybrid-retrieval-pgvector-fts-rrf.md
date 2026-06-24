@@ -118,7 +118,10 @@ Milestone 3 — hybrid RRF recall replaces the placeholder:
       --show-scores`, returning FTS hits with `vec=-`. The true semantic-vector transcript still
       needs a pgvector-enabled DB and embedding endpoint. Progress 2026-06-24: unit coverage for
       RRF fusion, signal blending, character budgets, and embedding-worker idempotency passes in
-      `cabal test kioku-core` (6 tests).
+      `cabal test kioku-core` (6 tests). Progress 2026-06-24: `Kioku.Recall` now exposes a pure
+      `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that missing
+      pgvector extension/columns downgrade every strategy to keyword-only without needing a query
+      embedding; `cabal test kioku-core` now passes 8 tests.
 
 
 ## Surprises & Discoveries
@@ -241,6 +244,11 @@ recall, CLI wiring, and focused unit coverage for the pure ranking/budget math p
 idempotent skip predicate. The remaining gap is environmental rather than structural: this local
 Postgres lacks pgvector and no embedding endpoint/API key is configured, so the true vector
 backfill transcript and keyword-disjoint semantic recall transcript are still blocked.
+
+- 2026-06-24: Added an explicit `RecallExecutionPlan` seam to make fail-open behavior executable
+  without a pgvector database or embedding endpoint. The test suite now proves that unavailable
+  vector capability uses FTS-only recall and does not require a query embedding. Verification:
+  `cabal test kioku-core` (8 tests) and `cabal build all`.
 
 
 ## Context and Orientation

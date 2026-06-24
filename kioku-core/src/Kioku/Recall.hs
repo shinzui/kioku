@@ -2,7 +2,9 @@ module Kioku.Recall
   ( RecallStrategy (..),
     RecallRequest (..),
     RecallHit (..),
+    RecallExecutionPlan (..),
     recall,
+    planRecallExecution,
     fuseRecallCandidates,
     blendScore,
     rrfTerm,
@@ -81,6 +83,13 @@ data RecallHit = RecallHit
   }
   deriving stock (Generic, Eq, Show)
 
+data RecallExecutionPlan = RecallExecutionPlan
+  { runFts :: !Bool,
+    runVector :: !Bool,
+    needsQueryEmbedding :: !Bool
+  }
+  deriving stock (Generic, Eq, Show)
+
 data RecallCandidateQuery = RecallCandidateQuery
   { query :: !Text,
     namespace :: !Text,
@@ -114,43 +123,54 @@ recall ::
   Eff es [RecallHit]
 recall model capability req = do
   now <- liftIO getCurrentTime
+  executeRecallPlan now model req (planRecallExecution capability req.strategy)
+
+planRecallExecution :: VectorCapability -> RecallStrategy -> RecallExecutionPlan
+planRecallExecution capability strategy =
   case capability of
     VectorAvailable ->
-      recallWithVectorCapability now model req
+      case strategy of
+        Keyword -> RecallExecutionPlan {runFts = True, runVector = False, needsQueryEmbedding = False}
+        Embedding -> RecallExecutionPlan {runFts = False, runVector = True, needsQueryEmbedding = True}
+        Hybrid -> RecallExecutionPlan {runFts = True, runVector = True, needsQueryEmbedding = True}
     VectorExtensionUnavailable ->
-      keywordOnly now req
+      keywordExecutionPlan
     VectorColumnsUnavailable _ ->
-      keywordOnly now req
+      keywordExecutionPlan
 
-recallWithVectorCapability ::
+keywordExecutionPlan :: RecallExecutionPlan
+keywordExecutionPlan =
+  RecallExecutionPlan {runFts = True, runVector = False, needsQueryEmbedding = False}
+
+executeRecallPlan ::
   (IOE :> es, Store :> es) =>
   UTCTime ->
   EmbeddingModel ->
   RecallRequest ->
+  RecallExecutionPlan ->
   Eff es [RecallHit]
-recallWithVectorCapability now model req =
-  case req.strategy of
-    Keyword -> keywordOnly now req
-    Embedding -> embedThenRecall now model req
-    Hybrid -> embedThenRecall now model req
+executeRecallPlan now model req execution
+  | execution.needsQueryEmbedding =
+      embedThenRecall now model req execution
+  | otherwise = do
+      ftsRows <- selectIf execution.runFts (selectFtsCandidates req)
+      pure (finishRecall now req ftsRows [])
 
 embedThenRecall ::
   (IOE :> es, Store :> es) =>
   UTCTime ->
   EmbeddingModel ->
   RecallRequest ->
+  RecallExecutionPlan ->
   Eff es [RecallHit]
-embedThenRecall now model req = do
+embedThenRecall now model req execution = do
   embedded <- liftIO (embedWithRetry model 2 req.query)
   case embedded of
     Left _err ->
       keywordOnly now req
     Right queryVector -> do
-      ftsRows <-
-        if req.strategy == Embedding
-          then pure []
-          else selectFtsCandidates req
-      vecRows <- selectVectorCandidates req queryVector
+      ftsRows <- selectIf execution.runFts (selectFtsCandidates req)
+      vecRows <- selectIf execution.runVector (selectVectorCandidates req queryVector)
       pure (finishRecall now req ftsRows vecRows)
 
 keywordOnly ::
@@ -161,6 +181,10 @@ keywordOnly ::
 keywordOnly now req = do
   ftsRows <- selectFtsCandidates req
   pure (finishRecall now req ftsRows [])
+
+selectIf :: (Applicative f) => Bool -> f [a] -> f [a]
+selectIf True action = action
+selectIf False _ = pure []
 
 finishRecall :: UTCTime -> RecallRequest -> [MemoryRecord] -> [MemoryRecord] -> [RecallHit]
 finishRecall now req ftsRows vecRows =

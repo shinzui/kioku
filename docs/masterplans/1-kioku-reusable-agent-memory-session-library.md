@@ -227,7 +227,8 @@ Track milestone-level progress across all child plans.
       by `Kioku.EmbeddingWorkerSpec`
 - [ ] EP-2: hybrid RRF recall API and `kioku recall` CLI exist; local no-pgvector fail-open path
       returns FTS-ranked results, but true cosine/vector acceptance still needs a pgvector-enabled DB
-      and embedding endpoint; pure RRF/signal/budget unit coverage passes
+      and embedding endpoint; pure RRF/signal/budget unit coverage passes, and fail-open execution
+      planning is now unit-tested so missing pgvector never needs a query embedding
 - [ ] EP-3: shikumi/baikai Claude runtime wiring compiles; distillation tables and
       `MemoryMerged`/`Kioku.Memory.merge` exist; L1 atom extraction + LLM consolidation shikumi
       programs compile; L1 orchestration composes extraction, consolidation, memory writes, and audit
@@ -402,3 +403,8 @@ Track milestone-level progress across all child plans.
   tails, and rebuild Kioku inline read models. Verification:
   `cabal build rei-core:rei-kioku-migrate` and
   `cabal run rei-core:rei-kioku-migrate -- --help` in Rei.
+
+- 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
+  `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable
+  pgvector extension/columns downgrade recall to keyword-only without needing a query embedding.
+  Verification: `cabal test kioku-core` and `cabal build all`.
