@@ -40,7 +40,9 @@ library
     Kioku.Cli.Commands.DemoSession
     Kioku.Cli.Commands.Distill
     Kioku.Cli.Commands.Recall
+    Kioku.Cli.Commands.Scenes
     Kioku.Cli.Commands.Worker
+    Kioku.Cli.Scope
 
   build-depends:
     , base                  >=4.21 && <5

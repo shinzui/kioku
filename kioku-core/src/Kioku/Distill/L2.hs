@@ -4,14 +4,21 @@ module Kioku.Distill.L2
   ( L2Error (..),
     SceneRow (..),
     fireL2SceneTimer,
+    getScenesByScope,
     l2SceneProcessManagerName,
     l2SceneTimerId,
     l2SceneTimerScheduleProjection,
+    mirrorSceneToCurrentWorkspace,
+    mirrorSceneToWorkspace,
     regenerateScene,
+    sceneMirrorPath,
   )
 where
 
-import Contravariant.Extras (contrazip4)
+import Contravariant.Extras (contrazip3, contrazip4)
+import Control.Exception (IOException, try)
+import Crypto.Hash (Digest, SHA256)
+import Crypto.Hash qualified as Hash
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
@@ -20,6 +27,7 @@ import Data.Functor.Contravariant ((>$<))
 import Data.Maybe (catMaybes)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
+import Data.Text.IO qualified as TextIO
 import Data.Time (NominalDiffTime, addUTCTime)
 import Data.UUID (UUID)
 import Data.UUID qualified as UUID
@@ -44,6 +52,8 @@ import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
 import Kiroku.Store.Types (EventId (..))
 import Shikumi.Schema.Types (field, unField)
+import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
+import System.FilePath ((</>))
 
 data L2Error
   = L2MemoryReadFailed !ReadModelError
@@ -139,7 +149,9 @@ regenerateScene rt scope = do
       case existing of
         Left err -> pure (Left err)
         Right (Just row)
-          | row.sourceHash == sourceHash -> pure (Right (Just row))
+          | row.sourceHash == sourceHash -> do
+              liftIO (bestEffortMirrorScene row)
+              pure (Right (Just row))
         _ -> do
           outputResult <-
             liftIO $
@@ -169,6 +181,7 @@ regenerateScene rt scope = do
                         updatedAt = now
                       }
               runTransaction (Tx.statement row upsertSceneStmt)
+              liftIO (bestEffortMirrorScene row)
               pure (Right (Just row))
 
 fireL2SceneTimer ::
@@ -203,13 +216,67 @@ lookupScene scope sceneKey = do
         selectSceneByScopeKeyStmt
   pure (Right result)
 
+getScenesByScope ::
+  (Store :> es) =>
+  MemoryScope ->
+  Eff es [SceneRow]
+getScenesByScope scope =
+  runTransaction $
+    Tx.statement
+      (scopeNamespaceText scope, scopeKindText scope, scopeRefText scope)
+      selectScenesByScopeStmt
+
+mirrorSceneToCurrentWorkspace :: SceneRow -> IO FilePath
+mirrorSceneToCurrentWorkspace row = do
+  workspace <- getCurrentDirectory
+  mirrorSceneToWorkspace workspace row
+
+mirrorSceneToWorkspace :: FilePath -> SceneRow -> IO FilePath
+mirrorSceneToWorkspace workspace row = do
+  let path = sceneMirrorPath workspace row
+  createDirectoryIfMissing True (workspace </> ".kioku" </> "scenes")
+  TextIO.writeFile path (renderSceneFile row)
+  pure path
+
+sceneMirrorPath :: FilePath -> SceneRow -> FilePath
+sceneMirrorPath workspace row =
+  workspace </> ".kioku" </> "scenes" </> Text.unpack (sceneScopeSlug row <> ".md")
+
+bestEffortMirrorScene :: SceneRow -> IO ()
+bestEffortMirrorScene row = do
+  _ <- try (mirrorSceneToCurrentWorkspace row) :: IO (Either IOException FilePath)
+  pure ()
+
+renderSceneFile :: SceneRow -> Text
+renderSceneFile row =
+  "# " <> row.title <> "\n\n" <> row.bodyMd <> "\n"
+
+sceneScopeSlug :: SceneRow -> Text
+sceneScopeSlug row =
+  sanitizeSlug $
+    Text.intercalate "-" $
+      row.namespace : catMaybes [row.scopeKind, row.scopeRef]
+
+sanitizeSlug :: Text -> Text
+sanitizeSlug =
+  Text.map \ch ->
+    if isSafeSlugChar ch then ch else '-'
+
+isSafeSlugChar :: Char -> Bool
+isSafeSlugChar ch =
+  (ch >= 'a' && ch <= 'z')
+    || (ch >= 'A' && ch <= 'Z')
+    || (ch >= '0' && ch <= '9')
+    || ch == '-'
+    || ch == '_'
+
 sceneRowId :: MemoryScope -> Text
 sceneRowId scope =
   "kioku_scene:" <> renderScope scope <> ":" <> defaultSceneKey
 
 sceneSourceHash :: [MemoryRecord] -> Text
 sceneSourceHash atoms =
-  "v1:" <> TE.decodeUtf8 (BL.toStrict (Aeson.encode (atomSource <$> atoms)))
+  "v1:" <> Text.pack (show (Hash.hash (BL.toStrict (Aeson.encode (atomSource <$> atoms))) :: Digest SHA256))
 
 atomSource :: MemoryRecord -> (Text, Text, Int, Text, UTCTime)
 atomSource atom =
@@ -299,6 +366,25 @@ selectSceneByScopeKeyStmt =
         (E.param (E.nonNullable E.text))
     )
     (D.rowMaybe sceneRowDecoder)
+
+selectScenesByScopeStmt :: Statement (Text, Maybe Text, Maybe Text) [SceneRow]
+selectScenesByScopeStmt =
+  preparable
+    """
+    SELECT scene_id, namespace, scope_kind, scope_ref, scene_key, title, body_md,
+           atom_ids::text, source_hash, created_at, updated_at
+    FROM kioku_scenes
+    WHERE namespace = $1
+      AND ((scope_kind = $2 AND scope_ref = $3)
+           OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL))
+    ORDER BY scene_key ASC, updated_at DESC
+    """
+    ( contrazip3
+        (E.param (E.nonNullable E.text))
+        (E.param (E.nullable E.text))
+        (E.param (E.nullable E.text))
+    )
+    (D.rowList sceneRowDecoder)
 
 upsertSceneStmt :: Statement SceneRow ()
 upsertSceneStmt =

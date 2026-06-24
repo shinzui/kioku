@@ -134,10 +134,14 @@ Milestone M2 — L2 scene generation:
       `AsyncWorkerSpec`) that, when atoms in a scope change, groups them and regenerates the scene,
       upserting `kioku_scenes`; plus a side-effect leg mirroring the scene to
       `<workspace>/.kioku/scenes/<scope>.md`. Partial 2026-06-24: `kioku worker` now routes both L1
-      extract timers and L2 scene timers through the shared distillation timer worker. Remaining: add
-      the filesystem mirror and expose the `kioku scenes --scope ...` read path.
+      extract timers and L2 scene timers through the shared distillation timer worker; `regenerateScene`
+      writes a best-effort `.kioku/scenes/<scope-slug>.md` mirror after successful scene upsert/no-op;
+      `kioku scenes --scope ...` prints scene rows. Remaining: live scene-generation acceptance.
 - [ ] M2 acceptance: after the M1 pass, `kioku scenes --scope …` prints a scene block and the markdown
-      file exists.
+      file exists. Local CLI verification completed 2026-06-24 with
+      `kioku scenes --scope rei:intention:intention_demo`, which currently prints `(no scenes)`;
+      generating the scene row/file is blocked by the same missing `ANTHROPIC_API_KEY` live LLM
+      credential as M1 acceptance.
 
 Milestone M3 — L3 persona generation:
 
@@ -193,6 +197,11 @@ implementation. Provide concise evidence.
   is still `scheduled`; once a row is `fired`, reusing the same timer id will not resurrect it. The L2
   arming projection therefore uses deterministic source-scoped timer ids (`scope + memory id`) and
   relies on the `kioku_scenes.source_hash` guard to make repeated scene regeneration idempotent.
+
+- **L2 source hashes must be actual hashes, not serialized source text.** The first L2 core slice used
+  the JSON-encoded atom source directly with a `v1:` prefix. The plan explicitly calls for `sha256` of
+  the ordered atom ids+contents, so the source hash now uses the existing `crypton` SHA-256 helper
+  pattern from `Kioku.Memory.Embedding`.
 
 
 ## Decision Log

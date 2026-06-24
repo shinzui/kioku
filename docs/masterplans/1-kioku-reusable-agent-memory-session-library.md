@@ -232,8 +232,9 @@ Track milestone-level progress across all child plans.
       programs compile; L1 orchestration composes extraction, consolidation, memory writes, and audit
       rows; manual `kioku distill session` CLI exists; timer arming and one-pass dispatch exist;
       continuous timer host exists; local sample acceptance is blocked on `ANTHROPIC_API_KEY`
-- [ ] EP-3: L2 scene program plus regeneration/timer-arming core exist and L2 timers are routed by
-      the worker; L2 CLI/filesystem mirror and L3 persona projections remain
+- [ ] EP-3: L2 scene program plus regeneration/timer-arming core exist, L2 timers are routed by
+      the worker, and scenes CLI/filesystem mirror exist; live L2 acceptance and L3 persona
+      projections remain
 - [ ] EP-4: Rei AgentMemory/AgentSession re-homed onto kioku with `IntentionId`/`HabitId` scope mapping
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially

@@ -7,10 +7,11 @@ import Kioku.Cli.Commands.Demo (runDemo)
 import Kioku.Cli.Commands.DemoSession (runDemoSession)
 import Kioku.Cli.Commands.Distill (DistillOptions, distillOptionsParser, runDistill)
 import Kioku.Cli.Commands.Recall (RecallOptions, recallOptionsParser, runRecall)
+import Kioku.Cli.Commands.Scenes (ScenesOptions, runScenes, scenesOptionsParser)
 import Kioku.Cli.Commands.Worker (WorkerOptions, runWorker, workerOptionsParser)
 import Options.Applicative
 
-data Command = Demo | DemoSession | Distill DistillOptions | Recall RecallOptions | Worker WorkerOptions
+data Command = Demo | DemoSession | Distill DistillOptions | Recall RecallOptions | Scenes ScenesOptions | Worker WorkerOptions
 
 main :: IO ()
 main = run =<< execParser opts
@@ -39,6 +40,9 @@ commandParser =
         "recall"
         (info (Recall <$> (helper <*> recallOptionsParser)) (progDesc "Recall memories by query"))
       <> command
+        "scenes"
+        (info (Scenes <$> (helper <*> scenesOptionsParser)) (progDesc "Print distilled L2 scenes"))
+      <> command
         "worker"
         (info (Worker <$> (helper <*> workerOptionsParser)) (progDesc "Run kioku background workers"))
 
@@ -47,4 +51,5 @@ run Demo = runDemo
 run DemoSession = runDemoSession
 run (Distill opts) = runDistill opts
 run (Recall opts) = runRecall opts
+run (Scenes opts) = runScenes opts
 run (Worker opts) = runWorker opts

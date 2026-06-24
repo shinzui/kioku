@@ -7,9 +7,10 @@ where
 
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
+import Kioku.Api.Scope (MemoryScope)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.Cli.Scope (parseScope)
 import Kioku.Memory.Embedding (resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Recall (RecallHit (..), RecallRequest (..), RecallStrategy (..), recall)
 import Kioku.Recall.Capability (detectVectorCapability)
@@ -78,17 +79,6 @@ runRecall opts = do
       Left storeErr -> ioError (userError ("kioku recall store error: " <> show storeErr))
       Right [] -> putStrLn "(no matches)"
       Right hits -> mapM_ (printHit opts.showScores) (zip [(1 :: Int) ..] hits)
-
-parseScope :: String -> Either String MemoryScope
-parseScope raw =
-  case Text.splitOn ":" (Text.pack raw) of
-    [ns]
-      | not (Text.null ns) -> Right (ScopeGlobal (Namespace ns))
-    [ns, kind, ref]
-      | not (Text.null ns) && not (Text.null kind) && not (Text.null ref) ->
-          Right (ScopeEntity (Namespace ns) (ScopeKind kind) ref)
-    _ ->
-      Left "expected NAMESPACE or NAMESPACE:KIND:REF"
 
 parseStrategy :: String -> Either String RecallStrategy
 parseStrategy = \case
