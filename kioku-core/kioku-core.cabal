@@ -42,6 +42,7 @@ library
     Kioku.Memory.EventStream
     Kioku.Memory.ReadModel
     Kioku.Recall
+    Kioku.Recall.Capability
     Kioku.Session
     Kioku.Session.Domain
     Kioku.Session.EventStream

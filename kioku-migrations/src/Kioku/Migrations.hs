@@ -14,6 +14,7 @@ import Codd.Logging (runCoddLogger)
 import Codd.Parsing (AddedSqlMigration, EnvVars, PureStream (..), parseAddedSqlMigration)
 import Data.ByteString (ByteString)
 import Data.FileEmbed (embedDir)
+import Data.List (sortOn)
 import Data.Text.Encoding qualified as TE
 import Data.Time (DiffTime)
 import Keiro.Migrations (keiroFrameworkMigrations)
@@ -53,4 +54,4 @@ runKiokuMigrationsNoCheck settings connectTimeout =
     applyMigrationsNoCheck settings (Just migrations) connectTimeout (const (pure SchemasNotVerified))
 
 embeddedKiokuFiles :: [(FilePath, ByteString)]
-embeddedKiokuFiles = $(embedDir "sql-migrations")
+embeddedKiokuFiles = sortOn fst $(embedDir "sql-migrations")

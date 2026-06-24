@@ -59,17 +59,24 @@ point. Steps are grouped by milestone (see **Plan of Work**).
 
 Milestone 1 — vector column, ANN index, capability detection:
 
-- [ ] Add migration `kioku-migrations/sql-migrations/<ts>-kioku-memory-embeddings.sql` that
+- [x] Add migration `kioku-migrations/sql-migrations/<ts>-kioku-memory-embeddings.sql` that
       runs `CREATE EXTENSION IF NOT EXISTS vector`, adds `embedding vector(1536)`,
       `embedding_model text`, `dimensions int`, `content_hash text` to `kioku_memories`, and
-      creates an HNSW ANN index `kioku_memories_embedding_hnsw` using `vector_cosine_ops`.
-- [ ] Make the migration tolerate a missing `vector` extension (a guarded `DO $$ ... $$` block
+      creates an HNSW ANN index `kioku_memories_embedding_hnsw` using `vector_cosine_ops` when
+      pgvector is installed.
+- [x] Make the migration tolerate a missing `vector` extension (a guarded `DO $$ ... $$` block
       that skips the vector column + index when the extension is unavailable) and document the
-      privilege requirement.
-- [ ] Add `Kioku.Recall.Capability` with `detectVectorCapability :: ... -> Eff es VectorCapability`
-      that probes `pg_extension` / `information_schema.columns` once at startup.
-- [ ] `cabal run kioku-migrations:kioku-migrate` applies cleanly to a fresh DB; verify the
-      column and index exist with `\d+ kioku.kioku_memories`.
+      privilege requirement. Completed 2026-06-24: the local Postgres lacks pgvector and the
+      migration emitted a NOTICE, committed, and left the optional columns absent.
+- [x] Add `Kioku.Recall.Capability` with `detectVectorCapability :: ... -> Eff es VectorCapability`
+      that probes `pg_extension` / `information_schema.columns` once at startup. Completed
+      2026-06-24: `Kioku.Recall.Capability` exposes `VectorAvailable`,
+      `VectorExtensionUnavailable`, and `VectorColumnsUnavailable`.
+- [x] `cabal run kioku-migrations:kioku-migrate` applies cleanly to a fresh DB; verify the
+      local no-pgvector fallback with metadata queries. Completed 2026-06-24: `just migrate`
+      applied `2026-06-24-01-00-00-kioku-memory-embeddings.sql`; `pg_extension` showed
+      `has_vector_extension = f`; `information_schema.columns` returned no optional vector
+      columns, as expected for the degraded path.
 
 Milestone 2 — async embedding worker backfills vectors (idempotent on `content_hash`):
 
@@ -104,7 +111,17 @@ Document unexpected behaviors, bugs, optimizations, or insights discovered durin
 implementation. Provide concise evidence here with short snippets (psql output, test output)
 as they are found.
 
-(None yet — implementation not started.)
+- **Local Postgres does not have pgvector installed.** The first migration attempt revealed that
+  missing pgvector reports SQLSTATE `0A000` (`extension "vector" is not available`), not one of the
+  narrower `undefined_file`/`undefined_object` cases. The migration now catches any failure inside
+  only the `CREATE EXTENSION vector` sub-block, then skips vector DDL if `pg_extension` does not show
+  the extension. Evidence: `just migrate` committed the migration with a NOTICE, and
+  `SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')` returned `f`.
+
+- **`embedDir` needed a source change to pick up the new SQL file locally.** `just migrate` initially
+  saw zero pending migrations until `Kioku.Migrations` changed. M1 now sorts the embedded SQL files
+  by filename (`sortOn fst $(embedDir "sql-migrations")`), which both makes migration order explicit
+  and invalidated the stale TH object for the local run.
 
 
 ## Decision Log
