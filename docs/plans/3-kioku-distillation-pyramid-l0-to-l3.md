@@ -123,8 +123,9 @@ Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
 
 Milestone M2 — L2 scene generation:
 
-- [ ] Add the scene shikumi program `Kioku.Distill.Scene` (`Program SceneInput SceneOutput`,
-      output a Markdown scene block).
+- [x] Add the scene shikumi program `Kioku.Distill.Scene` (`Program SceneInput SceneOutput`,
+      output a Markdown scene block). Completed 2026-06-24: the module is exposed by `kioku-core`,
+      defines strict-schema `SceneInput`/`SceneOutput`, and compiles as a pure shikumi `sceneProgram`.
 - [ ] Add the L2 async reactor `Kioku.Distill.L2.sceneReactor`: a downward-only timer (or
       `AsyncWorkerSpec`) that, when atoms in a scope change, groups them and regenerates the scene,
       upserting `kioku_scenes`; plus a side-effect leg mirroring the scene to
