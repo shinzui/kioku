@@ -107,8 +107,10 @@ This section must always reflect the actual current state of the work.
       `StoreRunner`. `Kioku.Recall.getById` was added for by-id show/resolve; read rows are
       re-prefixed back to Rei `agent_memory_*` / `agent_session_*` IDs at the adapter boundary so
       existing CLI parsing and archive command data remain compatible.
-- [ ] M2: `{{agent_memories}}` rendered section proven byte-identical on a captured sample (golden
-      comparison before/after).
+- [x] M2: `{{agent_memories}}` rendered section is proven byte-identical on a fixture spanning
+      fact/pattern/preference/constraint memories. The regression compares legacy
+      `AgentMemoryRow` fixtures against equivalent `Kioku.MemoryRecord` fixtures converted through
+      the adapter, and also covers the empty placeholder plus unknown-type dropping.
 - [ ] M3: historical `agent_memory`/`agent_session` kiroku streams copied into kioku streams by a
       one-shot transform; kioku projection rebuilt; counts match; coaching recall returns the same
       memories.
@@ -304,8 +306,14 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
 
 - 2026-06-24: M2 CLI memory read slice compiles and passes focused tests. Verification:
   `cabal test kioku-test`; Rei `cabal build rei-core rei-cli`;
-  `cabal test rei-core-test --test-options '-p Kioku'`; `cabal test rei-cli-test`. Remaining M2
-  work is the captured `{{agent_memories}}` byte-stability comparison.
+  `cabal test rei-core-test --test-options '-p Kioku'`; `cabal test rei-cli-test`. At this point,
+  the remaining M2 work was the captured `{{agent_memories}}` byte-stability comparison.
+
+- 2026-06-24: M2 `{{agent_memories}}` byte-stability proof added to
+  `Rei.Modules.Agent.Memory.KiokuAdapterSpec`. The test renders the public `agent_memories` prompt
+  variable from legacy rows and Kioku-converted rows and asserts identical bytes for the four known
+  memory type groups, the empty placeholder, and unknown-type dropping. Verification:
+  Rei `cabal test rei-core-test --test-options='-p Kioku'`.
 
 
 ## Context and Orientation

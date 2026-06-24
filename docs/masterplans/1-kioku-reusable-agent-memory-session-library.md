@@ -243,7 +243,8 @@ Track milestone-level progress across all child plans.
       migration runner, has a tested `Rei.Modules.Agent.Memory.KiokuAdapter` for scope/focus/row
       mapping, delegates AgentMemory/AgentSession writes to `Kioku.Memory`/`Kioku.Session`, and
       rewires `ContextBuilder` and `rei agent memory list/show/archive` memory reads onto scoped
-      `Kioku.Recall` adapter functions. Byte-stability proof and historical stream migration remain.
+      `Kioku.Recall` adapter functions. The `{{agent_memories}}` byte-stability proof is covered;
+      historical stream migration remains.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -379,4 +380,8 @@ Track milestone-level progress across all child plans.
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+- 2026-06-24: EP-4 M2 now has a focused byte-stability regression for the `{{agent_memories}}`
+  prompt variable. Rei compares legacy `AgentMemoryRow` fixtures against equivalent
+  `Kioku.MemoryRecord` fixtures converted through the adapter, covering fact/pattern/preference/
+  constraint grouping, the empty placeholder, and unknown-type dropping. Verification:
+  `cabal test rei-core-test --test-options='-p Kioku'` in Rei.
