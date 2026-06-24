@@ -97,7 +97,10 @@ Milestone 2 — async embedding worker backfills vectors (idempotent on `content
 - [ ] Backfill existing rows: run the worker, then `SELECT id, embedding IS NOT NULL,
       embedding_model, dimensions FROM kioku.kioku_memories` shows non-null vectors. Progress
       2026-06-24: local no-pgvector path verified with `cabal run kioku -- worker --backfill`,
-      which reports that recall will run FTS-only and does not touch vector columns.
+      which reports that recall will run FTS-only and does not touch vector columns. Progress
+      2026-06-24: the idempotent hash-skip predicate is now a pure helper covered by
+      `Kioku.EmbeddingWorkerSpec`; true vector backfill still needs a pgvector-enabled DB and
+      embedding endpoint.
 
 Milestone 3 — hybrid RRF recall replaces the placeholder:
 
@@ -113,7 +116,9 @@ Milestone 3 — hybrid RRF recall replaces the placeholder:
       disabled. Progress 2026-06-24: local no-pgvector fail-open path verified with
       `cabal run kioku -- recall "concise" --scope rei:intention:intention_demo --strategy hybrid
       --show-scores`, returning FTS hits with `vec=-`. The true semantic-vector transcript still
-      needs a pgvector-enabled DB and embedding endpoint.
+      needs a pgvector-enabled DB and embedding endpoint. Progress 2026-06-24: unit coverage for
+      RRF fusion, signal blending, character budgets, and embedding-worker idempotency passes in
+      `cabal test kioku-core` (6 tests).
 
 
 ## Surprises & Discoveries
@@ -230,7 +235,12 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
 result against the original purpose (hybrid recall that surfaces a keyword-disjoint memory a
 paraphrased query would otherwise miss).
 
-(To be filled during and after implementation.)
+As of 2026-06-24, EP-2's structural implementation is in place: optional pgvector migration,
+capability detection, embedding config/retry, one-shot and continuous embedding workers, hybrid
+recall, CLI wiring, and focused unit coverage for the pure ranking/budget math plus the worker's
+idempotent skip predicate. The remaining gap is environmental rather than structural: this local
+Postgres lacks pgvector and no embedding endpoint/API key is configured, so the true vector
+backfill transcript and keyword-disjoint semantic recall transcript are still blocked.
 
 
 ## Context and Orientation
@@ -1070,6 +1080,11 @@ the Decision Log and adjust the SQL accordingly.
   `Keiro.Projection.AsyncProjection`; and kizashi's `Migrations.hs` + read-model SQL for the
   migration/`kiroku`-schema conventions. Reason: convert the binding MasterPlan integration
   points into a self-contained, novice-followable execution plan for hybrid retrieval.
+
+- 2026-06-24 — Recorded the current EP-2 implementation state after adding
+  `Kioku.EmbeddingWorkerSpec`. Reason: the plan's unit-test acceptance is now covered for RRF,
+  signal blending, budgets, and embedding-worker idempotency, while the live semantic-vector
+  acceptance remains blocked by the local no-pgvector/no-embedding-endpoint environment.
 
 
 ## Coding Conventions (haskell-jitsurei)

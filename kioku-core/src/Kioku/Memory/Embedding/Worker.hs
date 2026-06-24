@@ -2,6 +2,7 @@ module Kioku.Memory.Embedding.Worker
   ( backfillMissingEmbeddings,
     embeddingWorkerProcessor,
     runEmbeddingWorkerHost,
+    shouldSkipEmbedding,
   )
 where
 
@@ -149,7 +150,7 @@ backfillMissingEmbeddings VectorAvailable model dims = do
   foldM embedCandidate 0 candidates
   where
     embedCandidate count candidate
-      | candidate.hasEmbedding && candidate.contentHash == Just contentHash =
+      | shouldSkipEmbedding candidate.hasEmbedding candidate.contentHash contentHash =
           pure count
       | otherwise = do
           embedded <- embedAndStore candidate.memoryId model dims candidate.content contentHash
@@ -171,13 +172,17 @@ embedMemoryContent VectorAvailable model dims memoryId content = do
   case existing of
     Nothing -> pure False
     Just state
-      | state.hasEmbedding && state.contentHash == Just contentHash ->
+      | shouldSkipEmbedding state.hasEmbedding state.contentHash contentHash ->
           pure False
       | otherwise ->
           embedAndStore memoryId model dims content contentHash
   where
     contentHash = sha256Hex content
 embedMemoryContent _ _ _ _ _ = pure False
+
+shouldSkipEmbedding :: Bool -> Maybe Text -> Text -> Bool
+shouldSkipEmbedding hasEmbedding storedContentHash contentHash =
+  hasEmbedding && storedContentHash == Just contentHash
 
 embedAndStore ::
   (IOE :> es, Store :> es) =>

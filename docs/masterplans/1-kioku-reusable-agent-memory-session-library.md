@@ -223,10 +223,11 @@ Track milestone-level progress across all child plans.
 - [x] EP-1: Rei legacy memory/session JSON decode is covered by a golden compatibility test
 - [ ] EP-2: optional `pgvector` migration + capability probe exist; Baikai embedding config/retry,
       `kioku worker --backfill`, and the continuous Shibuya/Kiroku embedding worker exist; true
-      vector backfill acceptance still needs a pgvector-enabled DB
+      vector backfill acceptance still needs a pgvector-enabled DB; worker idempotency is covered
+      by `Kioku.EmbeddingWorkerSpec`
 - [ ] EP-2: hybrid RRF recall API and `kioku recall` CLI exist; local no-pgvector fail-open path
       returns FTS-ranked results, but true cosine/vector acceptance still needs a pgvector-enabled DB
-      and embedding endpoint
+      and embedding endpoint; pure RRF/signal/budget unit coverage passes
 - [ ] EP-3: shikumi/baikai Claude runtime wiring compiles; distillation tables and
       `MemoryMerged`/`Kioku.Memory.merge` exist; L1 atom extraction + LLM consolidation shikumi
       programs compile; L1 orchestration composes extraction, consolidation, memory writes, and audit
