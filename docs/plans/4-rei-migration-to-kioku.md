@@ -169,7 +169,10 @@ This section must always reflect the actual current state of the work.
       `Rei.Modules.AgentSession.Domain.{Types,Command}`, and old store-handler modules are
       compatibility re-exports. Live CLI, AgentSchedule, Kioku adapter, filesystem projection, and
       Kioku-focused tests import the new modules; migration fixtures and old replay specs still use
-      the compatibility namespace.
+      the compatibility namespace. The unused top-level `Rei.Modules.AgentMemory` and
+      `Rei.Modules.AgentSession` facades are now removed from `rei-core.cabal` and the tree, and
+      `AgentMemoryHandlerError` lives under `Rei.Modules.Agent.Memory.Errors` with the old
+      `AgentMemory.Application.Errors` module kept as a compatibility re-export.
       `cabal test rei-core` green; AgentSchedule untouched.
 
 
@@ -292,6 +295,15 @@ implementation. Provide concise evidence.
   `Rei.Modules.Agent.Session.{Types,Command}` let live CLI, AgentSchedule, the Kioku adapter, and
   Kioku-backed store-handler tests stop importing the legacy aggregate namespaces while old replay
   code keeps compiling. Evidence: Rei `cabal build rei-cli`;
+  `cabal build rei-core:rei-kioku-migrate`;
+  `cabal test rei-core-test --test-options='-p Kioku'`.
+
+- The top-level `Rei.Modules.AgentMemory` and `Rei.Modules.AgentSession` facades had no remaining
+  imports after live code moved to the adapter-side namespaces. Deleting them was safe once cabal no
+  longer exposed them; the remaining old modules are targeted compatibility shims for replay,
+  projection, or migration fixtures. Evidence: Rei
+  `rg "import Rei\\.Modules\\.AgentMemory(\\s|$|\\()|import Rei\\.Modules\\.AgentSession(\\s|$|\\()" rei-core/src rei-cli/src rei-core/test`
+  returned no callers before deletion; Rei `cabal build rei-cli`;
   `cabal build rei-core:rei-kioku-migrate`;
   `cabal test rei-core-test --test-options='-p Kioku'`.
 
@@ -478,6 +490,13 @@ Record every decision made while working on the plan.
   names without breaking migration fixtures before the old replay path is retired.
   Date: 2026-06-24
 
+- Decision: Delete the unused top-level AgentMemory/AgentSession facades once all live callers moved
+  to `Rei.Modules.Agent.*`, and move `AgentMemoryHandlerError` to the runtime namespace.
+  Rationale: the facades were broad compatibility surfaces with no remaining imports. Removing them
+  reduces the apparent public API of the old aggregates, while keeping narrower compatibility
+  modules only where legacy replay and migration fixtures still need them.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -589,6 +608,13 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   AgentMemory/AgentSession domain and store-handler modules are compatibility re-exports, and live
   CLI/adapter/AgentSchedule imports moved to the new namespace. Verification: Rei
   `cabal build rei-cli`; `cabal build rei-core:rei-kioku-migrate`;
+  `cabal test rei-core-test --test-options='-p Kioku'`.
+
+- 2026-06-24: M3 top-level legacy facade cleanup landed. `Rei.Modules.AgentMemory` and
+  `Rei.Modules.AgentSession` are no longer exposed or present in the tree, and
+  `AgentMemoryHandlerError` now lives in `Rei.Modules.Agent.Memory.Errors` with the old errors
+  module retained as a compatibility re-export. Verification: Rei `cabal build rei-cli`;
+  `cabal build rei-core:rei-kioku-migrate`;
   `cabal test rei-core-test --test-options='-p Kioku'`.
 
 
