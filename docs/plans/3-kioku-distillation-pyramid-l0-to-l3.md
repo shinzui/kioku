@@ -50,8 +50,8 @@ run one command, and watch the pyramid build itself: atoms are extracted from th
 written to `kioku_scenes` and to a markdown file, and a `persona.md` is produced — all of it
 inspectable through new CLI commands (`kioku persona --scope …`, `kioku scenes --scope …`) and through
 the underlying events. The headline observable proof is: a second, paraphrased copy of an existing
-memory does **not** create a second row; instead a `MemoryMerged` + `MemorySuperseded` event pair is
-appended and `kioku_memories` still shows one active atom.
+memory does **not** create a second row; instead a `MemoryMerged` event is appended to the loser
+stream and `kioku_memories` still shows one active atom.
 
 The LLM work is done with **shikumi** typed programs over **baikai-claude** (never hand-rolled
 Anthropic HTTP calls). A shikumi *program* is a typed value `Program input output` whose output is a
@@ -92,9 +92,10 @@ Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
       losers), since EP-1 reserved the event but added no edge. Completed 2026-06-24: the public
       `Kioku.Memory.merge loser winner` API appends `MemoryMerged` on the loser stream and the
       existing read model marks the loser `status='merged'` / `superseded_by=winner`.
-- [ ] Add the extraction shikumi program `Kioku.Distill.Extract` (`Program ExtractInput ExtractOutput`)
+- [x] Add the extraction shikumi program `Kioku.Distill.Extract` (`Program ExtractInput ExtractOutput`)
       and the consolidation shikumi program `Kioku.Distill.Consolidate`
-      (`Program ConsolidateInput ConsolidateDecision`).
+      (`Program ConsolidateInput ConsolidationDecision`). Completed 2026-06-24: both modules are
+      exposed by `kioku-core`, use shikumi strict-schema records, and `cabal build kioku-core` passed.
 - [ ] Add `Kioku.Distill.L1` orchestration: read recent L0 for a session, run extraction, for each
       candidate run consolidation (candidate lookup via `Kioku.Recall` if present, else scoped scan),
       apply the decision via `Kioku.Memory` (record / merge / no-op), and write a
@@ -132,7 +133,7 @@ Milestone M4 — deterministic end-to-end test:
       a duplicate), a scene row, and a persona row — all from the events. `cabal test kioku-core`
       passes.
 
-(M0 is complete; M1 has not started.)
+(M0 is complete; M1 is in progress.)
 
 
 ## Surprises & Discoveries
@@ -489,10 +490,10 @@ baikai-claude's configured key; compilation is the M0 gate.)
 **Scope and result.** At the end of M1, kioku can take a multi-turn session and distill it into L1
 atoms: an LLM **extraction** step proposes candidate atoms from the session's L0, and an LLM
 **consolidation** step decides `store | update | merge | skip` per candidate. Decisions are applied as
-*events*: `store` records a new memory; `merge`/`update` records `MemoryMerged` on the loser streams +
-a `MemorySuperseded`; `skip` records only an audit row. The headline observable: feeding a near-
-duplicate of an existing atom produces a **merge** (one active row, a `MemoryMerged`+`MemorySuperseded`
-event pair), not a second row. A `kioku distill session <id>` command forces a pass; a keiro timer
+*events*: `store` records a new memory; `merge`/`update` records `MemoryMerged` on the loser streams;
+`skip` records only an audit row. The headline observable: feeding a near-duplicate of an existing
+atom produces a **merge** (one active row and a `MemoryMerged` event on the loser stream), not a second
+row. A `kioku distill session <id>` command forces a pass; a keiro timer
 fires passes automatically.
 
 **The migration.** Create
@@ -577,19 +578,15 @@ already maps `MemoryMerged` → status `'merged'` (EP-1 wrote it to handle all s
 **The merge writer.** In `kioku-core/src/Kioku/Memory.hs`, add:
 
 ```haskell
--- Mark `loser` as merged into `winner`. Records MemoryMerged on loser's stream and a
--- MemorySuperseded pointing loser -> winner, so recall stops returning the loser. Idempotent:
--- if loser is already Merged/Superseded the transducer no-ops (pre-check the inline row, like
--- the other writers).
+-- Mark `loser` as merged into `winner`. Records MemoryMerged on loser's stream,
+-- so recall stops returning the loser once the read model projects status='merged'.
 merge :: (es-row) => MemoryId -> MemoryId -> Eff es (Either CommandError ())
 merge loser winner = do
   now <- liftIO getCurrentTime
-  _ <- runMemoryCommand loser (MergeMemory (MergeMemoryData loser winner now))
-  runMemoryCommand loser (Supersede (MemorySupersededData loser winner now))
+  runMemoryCommand loser (MergeMemory (MergeMemoryData loser winner now))
 ```
 
-(Exact constructor names follow EP-1's `MemoryCommand`. If EP-1 named supersede's command differently,
-match it — this plan only adds `MergeMemory`/`MemoryMerged` edge; supersede already exists.)
+(Exact constructor names follow EP-1's `MemoryCommand`.)
 
 **The two shikumi programs.** Model both on handan's `ReleaseClassify.hs`. Add
 `kioku-core/src/Kioku/Distill/Extract.hs`:
@@ -628,7 +625,7 @@ data ExtractedAtom = ExtractedAtom
   deriving anyclass (ToSchema, FromModel, ToPrompt)
 
 newtype ExtractOutput = ExtractOutput
-  { atoms :: Field "the distilled atoms; [] if nothing memory-worthy" [ExtractedAtom] }
+  { atoms :: [ExtractedAtom] }
   deriving stock (Generic, Show, Eq)
   deriving anyclass (ToSchema, FromModel, ToPrompt)
 
@@ -644,40 +641,45 @@ Add `kioku-core/src/Kioku/Distill/Consolidate.hs`:
 ```haskell
 {-# LANGUAGE DataKinds #-}
 module Kioku.Distill.Consolidate
-  ( ConsolidateInput (..), CandidateMemory (..)
-  , ConsolidateDecision (..)
+  ( ConsolidateInput (..), ExistingMemory (..)
+  , ConsolidationAction (..), ConsolidationDecision (..)
   , consolidateProgram
   ) where
 -- imports as above
 
+data ConsolidationAction = StoreAtom | UpdateAtom | MergeAtom | SkipAtom
+  deriving stock (Generic, Show, Eq)
+  deriving anyclass (ToSchema, FromModel)
+
 -- One extracted atom plus the existing atoms it might duplicate (found via recall/scan).
-data CandidateMemory = CandidateMemory
-  { existingId :: Field "the existing memory id" Text
-  , existing   :: Field "the existing memory content" Text
+data ExistingMemory = ExistingMemory
+  { memoryId   :: Field "existing memory identifier" Text
+  , memoryType :: Field "existing memory type or category" Text
+  , content    :: Field "existing memory content" Text
+  , priority   :: Field "existing memory priority where lower is more important" Int
+  , confidence :: Field "existing confidence label" Text
   }
   deriving stock (Generic, Show, Eq)
   deriving anyclass (ToSchema, FromModel, ToPrompt)
 
 data ConsolidateInput = ConsolidateInput
-  { newAtom    :: Field "the newly extracted atom content" Text
-  , newType    :: Field "the new atom's type" Text
-  , candidates :: Field "existing nearby memories that might overlap" [CandidateMemory]
+  { scopeLabel :: Field "human-readable memory scope label" Text
+  , candidate  :: ExtractedAtom
+  , existing   :: [ExistingMemory]
   }
   deriving stock (Generic, Show, Eq)
   deriving anyclass (ToSchema, FromModel, ToPrompt)
 
-data ConsolidateDecision = ConsolidateDecision
-  { decision      :: Field "one of: store | update | merge | skip" Text
-  , targetIds     :: Field "existing ids to update/merge (empty for store/skip)" [Text]
-  , mergedContent :: Field "the resolved content for update/merge (else the new atom)" Text
-  , mergedType    :: Field "the resolved type for update/merge" Text
-  , mergedPriority :: Field "resolved priority" Int
-  , rationale     :: Field "one short sentence explaining the choice" Text
+data ConsolidationDecision = ConsolidationDecision
+  { action          :: ConsolidationAction
+  , targetMemoryIds :: [Text]
+  , resultContent   :: Maybe Text
+  , rationale       :: Field "one concise reason for the decision" Text
   }
   deriving stock (Generic, Show, Eq)
   deriving anyclass (ToSchema, FromModel, ToPrompt)
 
-consolidateProgram :: Program ConsolidateInput ConsolidateDecision
+consolidateProgram :: Program ConsolidateInput ConsolidationDecision
 consolidateProgram = predict (mkSignature
   "Decide how a newly extracted memory atom relates to existing nearby memories. \
   \store: it is genuinely new. update: it refines exactly one existing memory. \
@@ -730,8 +732,8 @@ Its algorithm, step by step (resolve all ambiguity here, per the spec):
    - `update`: treat as record-the-resolved-content-then-supersede-the-single-target — i.e.
      `winner <- record (resolved fields)`; `merge target winner` for the one target id.
    - `merge`: `winner <- record (mergedContent/mergedType/mergedPriority)`; then for each id in
-     `targetIds`, `Kioku.Memory.merge id winner` (records `MemoryMerged` + `MemorySuperseded` on each
-     loser). This is the headline path.
+     `targetMemoryIds`, `Kioku.Memory.merge id winner` (records `MemoryMerged` on each loser). This is
+     the headline path.
    - `skip`: do nothing to memory streams.
    In all four cases write one `kioku_consolidation_decisions` audit row (`decision`, `target_ids`,
    `result_memory_id`, `rationale`) via a `Tx.statement` on the store pool.
@@ -1226,8 +1228,9 @@ End of M1:
 - `kioku-core/src/Kioku/Distill/Extract.hs`: `ExtractInput`, `ExtractedAtom`, `ExtractOutput` (each
   `deriving anyclass (ToSchema, FromModel, ToPrompt)`); `extractProgram :: Program ExtractInput
   ExtractOutput`.
-- `kioku-core/src/Kioku/Distill/Consolidate.hs`: `ConsolidateInput`, `CandidateMemory`,
-  `ConsolidateDecision`; `consolidateProgram :: Program ConsolidateInput ConsolidateDecision`.
+- `kioku-core/src/Kioku/Distill/Consolidate.hs`: `ConsolidateInput`, `ExistingMemory`,
+  `ConsolidationAction`, `ConsolidationDecision`; `consolidateProgram :: Program ConsolidateInput
+  ConsolidationDecision`.
 - `kioku-core/src/Kioku/Distill/L1.hs`: `distillSessionL1 :: (Store :> es, Error StoreError :> es,
   IOE :> es) => DistillRuntime -> StreamCategories -> SessionId -> Eff es L1Summary`;
   `data L1Summary = L1Summary { extracted, stored, merged, skipped :: Int }`; the internal

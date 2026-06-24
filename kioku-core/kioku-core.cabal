@@ -37,6 +37,8 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Kioku.App
+    Kioku.Distill.Consolidate
+    Kioku.Distill.Extract
     Kioku.Distill.Runtime
     Kioku.Memory
     Kioku.Memory.Domain
