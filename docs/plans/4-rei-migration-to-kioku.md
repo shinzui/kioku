@@ -135,8 +135,11 @@ This section must always reflect the actual current state of the work.
       stream category. A new `Rei.Modules.Agent.Memory.FilesystemProjection` decodes native Kioku
       memory events from the `kioku_memory` category, filters to the `rei` namespace, preserves
       historical `agent_memory_*` / `agent_session_*` artifact IDs, and keeps the markdown mirror
-      replay-safe for record/update/supersede/archive/merge. Verification: Rei
-      `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`.
+      replay-safe for record/update/supersede/archive/merge. Follow-up cleanup removed the unused
+      legacy `resolveMemoryPath` export and old AgentMemory-event wrappers from
+      `Rei.Workspace.{Config,Memory}`, so the workspace memory renderer no longer imports legacy
+      AgentMemory domain/event modules. Verification: Rei `cabal build rei-cli`;
+      `cabal test rei-core-test --test-options='-p Kioku'`.
 - [ ] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
       decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters.
       The old AgentMemory filesystem reactor is already removed; remaining work covers the old
@@ -430,6 +433,13 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   markdown files replay-safely, ignore non-Rei namespaces, and preserve the historical
   `agent_memory_*` / `agent_session_*` IDs in artifacts. Verification: Rei
   `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
+
+- 2026-06-24: M3 workspace-memory compatibility wrappers removed. After the Kioku-backed filesystem
+  mirror landed, `Rei.Workspace.Config.resolveMemoryPath` and the old `Rei.Workspace.Memory`
+  functions that accepted `AgentMemoryRecordedData`/`AgentMemoryTagsUpdatedData`/
+  `AgentMemoryConfidenceUpdatedData` had no remaining callers. Removing them leaves the workspace
+  memory renderer on generic text/scope data owned by the Kioku adapter path. Verification: Rei
+  `cabal build rei-cli`; `cabal test rei-core-test --test-options='-p Kioku'`; `git diff --check`.
 
 
 ## Context and Orientation

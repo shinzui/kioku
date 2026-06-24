@@ -251,9 +251,10 @@ Track milestone-level progress across all child plans.
       proves copy, verify, and idempotent re-copy over legacy Rei streams; live `ContextBuilder`
       integration coverage now proves coaching context recall reads Kioku-backed intention and
       workspace memories; the Rei workspace filesystem mirror now decodes native Kioku memory events
-      from `kioku_memory` and the old AgentMemory filesystem reactor is removed; disposable
-      production data-copy execution and the remaining old AgentMemory/AgentSession decommission work
-      remain.
+      from `kioku_memory`, the old AgentMemory filesystem reactor is removed, and the workspace
+      memory renderer no longer imports legacy AgentMemory event/domain modules; disposable
+      production data-copy execution and the remaining old AgentMemory/AgentSession decommission
+      work remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -457,6 +458,12 @@ Track milestone-level progress across all child plans.
   coverage proves native Kioku memory events maintain Rei workspace markdown artifacts while
   preserving historical Rei-shaped IDs. Verification: Rei
   `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
+
+- 2026-06-24: EP-4 M3 workspace-memory compatibility wrappers removed. `Rei.Workspace.Config` and
+  `Rei.Workspace.Memory` no longer expose unused AgentMemory-event path/rendering wrappers; the
+  workspace memory renderer now consumes generic text/scope data from the Kioku adapter path.
+  Verification: Rei `cabal build rei-cli`; `cabal test rei-core-test --test-options='-p Kioku'`;
+  `git diff --check`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable
