@@ -88,10 +88,12 @@ This section must always reflect the actual current state of the work.
       `kiroku.kioku_memories` / `kiroku.kioku_sessions` / `kiroku.kioku_turns`.
 - [x] M1: new adapter module `Rei.Modules.Agent.Memory.KiokuAdapter` maps `MemoryAnchor ↔ MemoryScope`,
       `CoachingFocusType → focus :: Text`, session intention scope, and `Kioku` read rows →
-      Rei `AgentMemoryRow`. `cabal test rei-core-test --test-options '-p Kioku'` passes the 5
-      focused adapter tests.
-- [ ] M1 remaining: AgentMemory/AgentSession write paths still need to be re-homed onto
-      `Kioku.Memory`/`Kioku.Session`; the old read-model path still serves reads.
+      Rei `AgentMemoryRow`; it also owns Rei→Kioku ID re-prefixing and command-data conversion.
+- [x] M1: AgentMemory/AgentSession write paths are re-homed onto `Kioku.Memory`/`Kioku.Session`
+      while preserving the existing Rei handler signatures. `cabal test rei-core-test
+      --test-options '-p Kioku'` passes 10 focused tests, including integration checks that call
+      Rei's public write handlers and read the resulting rows from `kioku_memories` /
+      `kioku_sessions`. The old read-model path still serves reads until M2.
 - [ ] M2: `ContextBuilder.hs` recall (the three call sites) rewired onto `Kioku.Recall`; `rei agent
       memory list/show/archive` rewired onto kioku reads/writes.
 - [ ] M2: `{{agent_memories}}` rendered section proven byte-identical on a captured sample (golden
@@ -143,6 +145,11 @@ implementation. Provide concise evidence.
 - On Apple Silicon, Cabal's existing `package blake3` flag stanza did not prevent `blake3-0.3.1`
   from compiling x86 SIMD C files. Adding the flag assignment to the solver `constraints:` block
   (`blake3 -avx512 -avx2 -sse41 -sse2`) let Rei compile kioku-core and the test suite.
+
+- Rei's existing shared ephemeral-Postgres test harness only applies Keiro/Kiroku migrations.
+  Testing the Kioku-backed write handlers against real read models needed a narrower opt-in helper,
+  `withKiokuTestStore`, that applies Kioku's full migration bundle on a fresh test database without
+  changing the existing Keiro-only tests.
 
 (Add further discoveries as work proceeds.)
 
@@ -219,6 +226,21 @@ Record every decision made while working on the plan.
   Rationale: `Rei.Modules.AgentSession.Projection.InlineReadModel.focusTypeToText` is the live
   storage contract for `agent_sessions.focus_type`; keeping those strings (`general_coaching`,
   `today`, etc.) preserves historical session rendering and avoids a needless data transform.
+  Date: 2026-06-24
+
+- Decision: Preserve Rei's public `AgentMemoryId` / `AgentSessionId` inputs but re-prefix them to
+  Kioku IDs with `Kioku.Id.parseIdAnyPrefix`, keeping the same TypeID UUID body
+  (`agent_memory_...` → `kioku_memory_...`, `agent_session_...` → `kioku_session_...`).
+  Rationale: callers and CLI data construction remain unchanged while Kioku owns the event streams
+  and read models. The same rule also matches the planned M3 historical stream-copy transform.
+  Date: 2026-06-24
+
+- Decision: Map `StartAgentSessionData.focusTarget` to Kioku session `subjectRef` when present,
+  falling back to the intention ID text; interactive sessions, which have no `focusTarget`, use the
+  intention ID text when available.
+  Rationale: `subjectRef` is Kioku's generic slot for the concrete thing a session was about.
+  Preserving Rei's explicit `focusTarget` avoids dropping useful note/topic/task text while still
+  retaining intention scoping in `MemoryScope`.
   Date: 2026-06-24
 
 

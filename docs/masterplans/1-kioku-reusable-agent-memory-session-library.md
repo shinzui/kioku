@@ -240,8 +240,9 @@ Track milestone-level progress across all child plans.
       access
 - [ ] EP-4: Rei AgentMemory/AgentSession re-homed onto kioku with `IntentionId`/`HabitId` scope mapping
       has started: Rei now consumes local kioku packages, composes kioku's own migrations into the
-      migration runner, and has a tested `Rei.Modules.Agent.Memory.KiokuAdapter` for scope/focus/row
-      mapping; AgentMemory/AgentSession write-path rehoming remains.
+      migration runner, has a tested `Rei.Modules.Agent.Memory.KiokuAdapter` for scope/focus/row
+      mapping, and delegates AgentMemory/AgentSession writes to `Kioku.Memory`/`Kioku.Session`.
+      Rei recall/read CLI paths and historical stream migration remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -291,6 +292,12 @@ Track milestone-level progress across all child plans.
   `focusTypeToText` table in `Rei.Modules.AgentSession.Projection.InlineReadModel`, where
   `FocusGeneralCoaching` stores as `general_coaching`, not `focus_general_coaching`. EP-4's adapter
   follows that live contract and tests all 15 constructors. Discovered during EP-4 implementation.
+
+- **EP-4 preserves Rei IDs at the API edge and re-prefixes inside the adapter.**
+  `Kioku.Id.parseIdAnyPrefix` lets Rei keep accepting `agent_memory_*` / `agent_session_*` typed
+  IDs while Kioku writes `kioku_memory_*` / `kioku_session_*` streams with the same TypeID UUID
+  body. This is now covered by Rei's Kioku adapter tests and matches the planned historical stream
+  copy rule. Discovered during EP-4 implementation.
 
 
 ## Decision Log
