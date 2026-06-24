@@ -118,11 +118,12 @@ This section must always reflect the actual current state of the work.
       through Kioku's compatibility parsers, re-encodes native Kioku events, appends only missing
       destination-stream tails, and reapplies Kioku inline projections. `verify` now checks
       migrated Rei-scoped read-model counts plus missing/extra/mismatched business rows for
-      memories and sessions. A focused disposable-Postgres rehearsal now seeds legacy Rei
-      memory/session streams through the old transducers, runs the copy, proves `verify` passes,
-      and proves a second copy appends zero events. Remaining: run against a disposable production
-      data copy, add any needed stream-replay/recall equivalence probes, and prove coaching recall
-      returns the same memories.
+      memories and sessions, plus active recall-equivalent memory sets by scope. A focused
+      disposable-Postgres rehearsal now seeds legacy Rei memory/session streams through the old
+      transducers, runs the copy, proves `verify` passes for intention and workspace-global active
+      recall scopes, and proves a second copy appends zero events. Remaining: run against a
+      disposable production data copy, add any production-derived stream-replay probes needed, and
+      prove live coaching recall returns the same memories.
 - [ ] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
       decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters;
       `cabal test rei-core` green; AgentSchedule untouched.
@@ -214,6 +215,15 @@ implementation. Provide concise evidence.
   read model stores normalized strings such as `intention_assist`; Kioku's compatibility parser now
   normalizes every legacy focus constructor to the read-model string. Evidence:
   `cabal test kioku-core`; Rei `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`.
+
+- The M3 verifier needs an explicit recall-level assertion in addition to full-row equivalence.
+  Full rows catch drift in all projected fields, but the user-visible coaching path depends on the
+  active memory set returned for each scope. `rei-kioku-migrate verify` now compares active
+  `agent_memories` against active `kioku_memories` as recall items keyed by namespace, scope, memory
+  ID, and content, and separately checks that the set of recall scopes matches. The fixture now
+  covers both an intention-scoped active memory and a workspace-global active memory while keeping a
+  superseded workspace memory excluded. Evidence: Rei
+  `cabal test rei-core-test --test-options='-p /rei-kioku-migrate/'`; Kioku `cabal test kioku-test`.
 
 (Add further discoveries as work proceeds.)
 

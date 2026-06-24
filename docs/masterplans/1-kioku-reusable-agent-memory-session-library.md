@@ -247,9 +247,9 @@ Track milestone-level progress across all child plans.
       `Kioku.Recall` adapter functions. The `{{agent_memories}}` byte-stability proof is covered;
       the additive `rei-kioku-migrate` executable for historical stream copy now builds; its
       verifier checks Rei-scoped read-model counts plus missing/extra/mismatched memory/session
-      rows; a disposable fixture rehearsal now proves copy, verify, and idempotent re-copy over
-      legacy Rei streams; disposable production data-copy execution, recall proof, and decommission
-      remain.
+      rows plus active recall-equivalent memory sets by scope; a disposable fixture rehearsal now
+      proves copy, verify, and idempotent re-copy over legacy Rei streams; disposable production
+      data-copy execution, live coaching recall proof, and decommission remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -434,6 +434,12 @@ Track milestone-level progress across all child plans.
   `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
   `cabal build rei-core:rei-kioku-migrate`;
   `cabal run rei-core:rei-kioku-migrate -- --help`.
+
+- 2026-06-24: EP-4 M3 migration verifier now includes recall-equivalence checks. `verify` compares
+  active Rei memories against active Kioku memories by namespace, scope, memory ID, and content, and
+  checks the set of active recall scopes separately; the disposable rehearsal fixture now includes
+  both intention-scoped and workspace-global active memories. Verification: Rei
+  `cabal test rei-core-test --test-options='-p /rei-kioku-migrate/'`; Kioku `cabal test kioku-test`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable
