@@ -126,10 +126,15 @@ Milestone M2 — L2 scene generation:
 - [x] Add the scene shikumi program `Kioku.Distill.Scene` (`Program SceneInput SceneOutput`,
       output a Markdown scene block). Completed 2026-06-24: the module is exposed by `kioku-core`,
       defines strict-schema `SceneInput`/`SceneOutput`, and compiles as a pure shikumi `sceneProgram`.
+- [x] Add the L2 scene regeneration core and memory-write timer arming. Completed 2026-06-24:
+      `Kioku.Distill.L2.regenerateScene` loads active atoms for a scope, skips unchanged inputs via
+      `source_hash`, runs `sceneProgram`, and upserts the `kioku_scenes` default scene; memory
+      `MemoryRecorded` writes now arm `kioku-l2-scene` timers.
 - [ ] Add the L2 async reactor `Kioku.Distill.L2.sceneReactor`: a downward-only timer (or
       `AsyncWorkerSpec`) that, when atoms in a scope change, groups them and regenerates the scene,
       upserting `kioku_scenes`; plus a side-effect leg mirroring the scene to
-      `<workspace>/.kioku/scenes/<scope>.md`.
+      `<workspace>/.kioku/scenes/<scope>.md`. Remaining: route `kioku-l2-scene` timers from the
+      worker host, add the filesystem mirror, and expose the `kioku scenes --scope ...` read path.
 - [ ] M2 acceptance: after the M1 pass, `kioku scenes --scope …` prints a scene block and the markdown
       file exists.
 
@@ -182,6 +187,11 @@ implementation. Provide concise evidence.
   live-provider failures from operators and from M1 acceptance. `distillSessionL1` now returns
   `L1ExtractionFailed ...` when the extraction program fails, while consolidation failures still fall
   back to storing the already-extracted atom conservatively.
+
+- **L2 timer ids cannot be one permanent id per scope.** `scheduleTimerTx` only re-arms a row while it
+  is still `scheduled`; once a row is `fired`, reusing the same timer id will not resurrect it. The L2
+  arming projection therefore uses deterministic source-scoped timer ids (`scope + memory id`) and
+  relies on the `kioku_scenes.source_hash` guard to make repeated scene regeneration idempotent.
 
 
 ## Decision Log

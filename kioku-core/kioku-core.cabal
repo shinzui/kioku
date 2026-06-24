@@ -40,6 +40,7 @@ library
     Kioku.Distill.Consolidate
     Kioku.Distill.Extract
     Kioku.Distill.L1
+    Kioku.Distill.L2
     Kioku.Distill.Runtime
     Kioku.Distill.Scene
     Kioku.Distill.Timer

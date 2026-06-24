@@ -15,6 +15,7 @@ import Keiro.Command (CommandError, defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
 import Kioku.Api.Types (confidenceToText)
+import Kioku.Distill.L2 (l2SceneTimerScheduleProjection)
 import Kioku.Id (MemoryId, idText)
 import Kioku.Memory.Domain
 import Kioku.Memory.EventStream (memoryEventStream, memoryStream)
@@ -131,7 +132,7 @@ runMemoryCommand mid cmd = do
       memoryEventStream
       (memoryStream mid)
       cmd
-      [memoryInlineProjection]
+      [memoryInlineProjection, l2SceneTimerScheduleProjection]
   pure $
     case result of
       Left err -> Left (MemoryCommandRejected err)
