@@ -1,11 +1,17 @@
 module Kioku.Session
-  ( SessionWriteError (..),
+  ( SessionRow (..),
+    SessionWriteError (..),
     start,
     complete,
     failSession,
     recordInteractive,
     recordTurn,
     getById,
+    getRecentInNamespace,
+    getByScope,
+    getByFocus,
+    getByStartedRange,
+    getChain,
     getTurns,
   )
 where
@@ -15,6 +21,7 @@ import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError, defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
+import Kioku.Api.Scope (MemoryScope, Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Timer (l1TimerScheduleProjection)
 import Kioku.Id (SessionId, idText)
 import Kioku.Prelude
@@ -22,11 +29,21 @@ import Kioku.Session.Domain
 import Kioku.Session.EventStream (sessionEventStream, sessionStream)
 import Kioku.Session.ReadModel
   ( SessionByIdQuery (..),
+    SessionChainQuery (..),
     SessionRow (..),
+    SessionsByFocusQuery (..),
+    SessionsByNamespaceQuery (..),
+    SessionsByScopeQuery (..),
+    SessionsByStartedRangeQuery (..),
     TurnRow,
     TurnsBySessionQuery (..),
     sessionByIdReadModel,
+    sessionChainReadModel,
     sessionInlineProjection,
+    sessionsByFocusReadModel,
+    sessionsByNamespaceReadModel,
+    sessionsByScopeReadModel,
+    sessionsByStartedRangeReadModel,
     turnsBySessionReadModel,
   )
 import Kiroku.Store.Effect (Store)
@@ -106,6 +123,52 @@ getById ::
   Eff es (Either ReadModelError (Maybe SessionRow))
 getById sid =
   runQueryWith Nothing Eventual sessionByIdReadModel (SessionByIdQuery (idText sid))
+
+getRecentInNamespace ::
+  (IOE :> es, Store :> es) =>
+  Namespace ->
+  Int ->
+  Eff es (Either ReadModelError [SessionRow])
+getRecentInNamespace ns limit =
+  runQueryWith Nothing Eventual sessionsByNamespaceReadModel (SessionsByNamespaceQuery (namespaceText ns) limit)
+
+getByScope ::
+  (IOE :> es, Store :> es) =>
+  MemoryScope ->
+  Eff es (Either ReadModelError [SessionRow])
+getByScope scope =
+  runQueryWith
+    Nothing
+    Eventual
+    sessionsByScopeReadModel
+    (SessionsByScopeQuery (scopeNamespaceText scope) (scopeKindText scope) (scopeRefText scope))
+
+getByFocus ::
+  (IOE :> es, Store :> es) =>
+  Namespace ->
+  Text ->
+  Eff es (Either ReadModelError [SessionRow])
+getByFocus ns focus =
+  runQueryWith Nothing Eventual sessionsByFocusReadModel (SessionsByFocusQuery (namespaceText ns) focus)
+
+getByStartedRange ::
+  (IOE :> es, Store :> es) =>
+  Namespace ->
+  UTCTime ->
+  UTCTime ->
+  Eff es (Either ReadModelError [SessionRow])
+getByStartedRange ns startedAfter startedBefore =
+  runQueryWith Nothing Eventual sessionsByStartedRangeReadModel (SessionsByStartedRangeQuery (namespaceText ns) startedAfter startedBefore)
+
+getChain ::
+  (IOE :> es, Store :> es) =>
+  SessionId ->
+  Eff es (Either ReadModelError [SessionRow])
+getChain sid =
+  runQueryWith Nothing Eventual sessionChainReadModel (SessionChainQuery (idText sid))
+
+namespaceText :: Namespace -> Text
+namespaceText (Namespace ns) = ns
 
 getTurns ::
   (IOE :> es, Store :> es) =>

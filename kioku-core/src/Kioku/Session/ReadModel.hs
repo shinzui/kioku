@@ -3,8 +3,18 @@ module Kioku.Session.ReadModel
     SessionRow (..),
     TurnRow (..),
     SessionByIdQuery (..),
+    SessionsByNamespaceQuery (..),
+    SessionsByScopeQuery (..),
+    SessionsByFocusQuery (..),
+    SessionsByStartedRangeQuery (..),
+    SessionChainQuery (..),
     TurnsBySessionQuery (..),
     sessionByIdReadModel,
+    sessionsByNamespaceReadModel,
+    sessionsByScopeReadModel,
+    sessionsByFocusReadModel,
+    sessionsByStartedRangeReadModel,
+    sessionChainReadModel,
     turnsBySessionReadModel,
   )
 where
@@ -56,6 +66,16 @@ data TurnRow = TurnRow
   deriving stock (Generic, Eq, Show)
 
 newtype SessionByIdQuery = SessionByIdQuery Text
+
+data SessionsByNamespaceQuery = SessionsByNamespaceQuery Text Int
+
+data SessionsByScopeQuery = SessionsByScopeQuery Text (Maybe Text) (Maybe Text)
+
+data SessionsByFocusQuery = SessionsByFocusQuery Text Text
+
+data SessionsByStartedRangeQuery = SessionsByStartedRangeQuery Text UTCTime UTCTime
+
+newtype SessionChainQuery = SessionChainQuery Text
 
 newtype TurnsBySessionQuery = TurnsBySessionQuery Text
 
@@ -145,6 +165,66 @@ sessionByIdReadModel =
       query = \(SessionByIdQuery sid) -> Tx.statement sid selectSessionByIdStmt
     }
 
+sessionsByNamespaceReadModel :: ReadModel SessionsByNamespaceQuery [SessionRow]
+sessionsByNamespaceReadModel =
+  ReadModel
+    { name = "kioku-sessions-by-namespace",
+      tableName = "kioku_sessions",
+      subscriptionName = "kioku-session-inline",
+      version = 1,
+      shapeHash = "kioku-session-v1",
+      defaultConsistency = Eventual,
+      query = \q -> Tx.statement q selectSessionsByNamespaceStmt
+    }
+
+sessionsByScopeReadModel :: ReadModel SessionsByScopeQuery [SessionRow]
+sessionsByScopeReadModel =
+  ReadModel
+    { name = "kioku-sessions-by-scope",
+      tableName = "kioku_sessions",
+      subscriptionName = "kioku-session-inline",
+      version = 1,
+      shapeHash = "kioku-session-v1",
+      defaultConsistency = Eventual,
+      query = \q -> Tx.statement q selectSessionsByScopeStmt
+    }
+
+sessionsByFocusReadModel :: ReadModel SessionsByFocusQuery [SessionRow]
+sessionsByFocusReadModel =
+  ReadModel
+    { name = "kioku-sessions-by-focus",
+      tableName = "kioku_sessions",
+      subscriptionName = "kioku-session-inline",
+      version = 1,
+      shapeHash = "kioku-session-v1",
+      defaultConsistency = Eventual,
+      query = \q -> Tx.statement q selectSessionsByFocusStmt
+    }
+
+sessionsByStartedRangeReadModel :: ReadModel SessionsByStartedRangeQuery [SessionRow]
+sessionsByStartedRangeReadModel =
+  ReadModel
+    { name = "kioku-sessions-by-started-range",
+      tableName = "kioku_sessions",
+      subscriptionName = "kioku-session-inline",
+      version = 1,
+      shapeHash = "kioku-session-v1",
+      defaultConsistency = Eventual,
+      query = \q -> Tx.statement q selectSessionsByStartedRangeStmt
+    }
+
+sessionChainReadModel :: ReadModel SessionChainQuery [SessionRow]
+sessionChainReadModel =
+  ReadModel
+    { name = "kioku-session-chain",
+      tableName = "kioku_sessions",
+      subscriptionName = "kioku-session-inline",
+      version = 1,
+      shapeHash = "kioku-session-v1",
+      defaultConsistency = Eventual,
+      query = \(SessionChainQuery sid) -> Tx.statement sid selectSessionChainStmt
+    }
+
 turnsBySessionReadModel :: ReadModel TurnsBySessionQuery [TurnRow]
 turnsBySessionReadModel =
   ReadModel
@@ -199,6 +279,97 @@ selectSessionByIdStmt =
     """
     (E.param (E.nonNullable E.text))
     (D.rowMaybe sessionRowDecoder)
+
+selectSessionsByNamespaceStmt :: Statement SessionsByNamespaceQuery [SessionRow]
+selectSessionsByNamespaceStmt =
+  preparable
+    """
+    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
+           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+    FROM kioku_sessions
+    WHERE namespace = $1
+    ORDER BY started_at DESC
+    LIMIT $2
+    """
+    ( ((\(SessionsByNamespaceQuery ns _) -> ns) >$< E.param (E.nonNullable E.text))
+        <> ((\(SessionsByNamespaceQuery _ limit) -> fromIntegral @Int @Int32 limit) >$< E.param (E.nonNullable E.int4))
+    )
+    (D.rowList sessionRowDecoder)
+
+selectSessionsByScopeStmt :: Statement SessionsByScopeQuery [SessionRow]
+selectSessionsByScopeStmt =
+  preparable
+    """
+    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
+           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+    FROM kioku_sessions
+    WHERE namespace = $1
+      AND scope_kind IS NOT DISTINCT FROM $2
+      AND scope_ref IS NOT DISTINCT FROM $3
+    ORDER BY started_at DESC
+    """
+    ( ((\(SessionsByScopeQuery ns _ _) -> ns) >$< E.param (E.nonNullable E.text))
+        <> ((\(SessionsByScopeQuery _ sk _) -> sk) >$< E.param (E.nullable E.text))
+        <> ((\(SessionsByScopeQuery _ _ sr) -> sr) >$< E.param (E.nullable E.text))
+    )
+    (D.rowList sessionRowDecoder)
+
+selectSessionsByFocusStmt :: Statement SessionsByFocusQuery [SessionRow]
+selectSessionsByFocusStmt =
+  preparable
+    """
+    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
+           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+    FROM kioku_sessions
+    WHERE namespace = $1
+      AND focus = $2
+    ORDER BY started_at DESC
+    """
+    ( ((\(SessionsByFocusQuery ns _) -> ns) >$< E.param (E.nonNullable E.text))
+        <> ((\(SessionsByFocusQuery _ focus) -> focus) >$< E.param (E.nonNullable E.text))
+    )
+    (D.rowList sessionRowDecoder)
+
+selectSessionsByStartedRangeStmt :: Statement SessionsByStartedRangeQuery [SessionRow]
+selectSessionsByStartedRangeStmt =
+  preparable
+    """
+    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
+           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+    FROM kioku_sessions
+    WHERE namespace = $1
+      AND started_at >= $2
+      AND started_at < $3
+    ORDER BY started_at DESC
+    """
+    ( ((\(SessionsByStartedRangeQuery ns _ _) -> ns) >$< E.param (E.nonNullable E.text))
+        <> ((\(SessionsByStartedRangeQuery _ start _) -> start) >$< E.param (E.nonNullable E.timestamptz))
+        <> ((\(SessionsByStartedRangeQuery _ _ end) -> end) >$< E.param (E.nonNullable E.timestamptz))
+    )
+    (D.rowList sessionRowDecoder)
+
+selectSessionChainStmt :: Statement Text [SessionRow]
+selectSessionChainStmt =
+  preparable
+    """
+    WITH RECURSIVE chain AS (
+      SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
+             previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+      FROM kioku_sessions
+      WHERE session_id = $1
+      UNION ALL
+      SELECT s.session_id, s.agent_id, s.focus, s.namespace, s.scope_kind, s.scope_ref, s.subject_ref,
+             s.previous_session_id, s.status, s.started_at, s.completed_at, s.model_used, s.summary, s.error_message
+      FROM kioku_sessions s
+      INNER JOIN chain c ON s.session_id = c.previous_session_id
+    )
+    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
+           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+    FROM chain
+    ORDER BY started_at ASC
+    """
+    (E.param (E.nonNullable E.text))
+    (D.rowList sessionRowDecoder)
 
 selectTurnsBySessionStmt :: Statement Text [TurnRow]
 selectTurnsBySessionStmt =
