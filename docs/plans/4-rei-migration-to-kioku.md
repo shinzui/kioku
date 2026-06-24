@@ -140,41 +140,21 @@ This section must always reflect the actual current state of the work.
       `Rei.Workspace.{Config,Memory}`, so the workspace memory renderer no longer imports legacy
       AgentMemory domain/event modules. Verification: Rei `cabal build rei-cli`;
       `cabal test rei-core-test --test-options='-p Kioku'`.
-- [ ] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
-      decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters.
-      The old AgentMemory filesystem reactor is already removed, and `AgentMemoryRow` has moved to
-      `Rei.Modules.Agent.Memory.Types` so live context rendering, Kioku adapter code, agent memory
-      CLI output, and FZF selection no longer import the legacy `AgentMemory.Infrastructure.Table`
-      module directly. The legacy table re-exports the row for old projections and migration
-      fixtures while they remain. Remaining work covers the old command/domain types, inline
-      projections/read-model helpers, store-handler facades, migration fixture dependence on old
-      transducers/projections, and the old AgentSession modules. The `rei today` memory summary now
-      requests a `StoreRunner` and derives active counts plus the most recent active memory from the
-      Kioku adapter instead of the old Hasql `AgentMemoryReadModelEff`. `AgentSessionRow` has also
-      moved to `Rei.Modules.Agent.Session.Types`, so live agent-session CLI output and Today session
-      activity formatting no longer import the legacy `AgentSession.Infrastructure.Table` module for
-      the row shape. Kioku now exposes session read queries for recent sessions, scope, focus,
-      started-at range, and previous-session chains; `rei agent sessions`, `rei agent session
-      <id>`, `rei agent session <id> --chain`, and the `rei today` session-activity summary use
-      those adapter functions via `StoreRunner` instead of the old Hasql AgentSession read model.
-      The unused legacy Hasql helper modules
-      `Rei.Modules.AgentMemory.Infrastructure.ReadModel` and
-      `Rei.Modules.AgentSession.Infrastructure.ReadModel` are removed from `rei-core.cabal` and
-      the tree, and the AgentMemory/AgentSession facades no longer re-export their query functions.
-      Legacy table/projection/transducer modules remain intentionally because migration fixtures
-      and old inline projections still depend on their SQL statements and replay behavior. The
-      runtime-facing memory/session IDs, enums, command data, and Kioku-backed store handlers now
-      live under `Rei.Modules.Agent.Memory.*` and `Rei.Modules.Agent.Session.*`. The old
-      `Rei.Modules.AgentMemory.Domain.{Types,Command}`,
-      `Rei.Modules.AgentSession.Domain.{Types,Command}`,
-      `Rei.Modules.AgentMemory.Application.{Errors,StoreHandler}`, and
-      `Rei.Modules.AgentSession.Application.StoreHandler` compatibility re-export modules are now
-      removed from `rei-core.cabal` and the tree. Legacy event/transducer/projection/table modules
-      remain intentionally for historical stream replay, but they import the runtime command/type
-      modules directly. Verification: Rei `nix fmt`; `cabal build rei-cli`;
-      `cabal build rei-core:rei-kioku-migrate`;
+- [x] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
+      decommissioned from the build and tree, keeping only the thin runtime adapters under
+      `Rei.Modules.Agent.Memory.*` and `Rei.Modules.Agent.Session.*`. The migration rehearsal no
+      longer imports old transducers or inline projections; it seeds explicit legacy Kiroku event
+      payloads plus old `agent_memories` / `agent_sessions` rows, then proves the production
+      migration copy, verifier, and idempotent re-copy still pass. Removed surfaces include the old
+      filesystem reactor, read-model helper modules, top-level AgentMemory/AgentSession facades,
+      command/type/application compatibility aliases, and finally the legacy
+      event/transducer/projection/table modules and their tests/diagram entries. Verification: Rei
+      `nix fmt`; `cabal build rei-cli rei-core:rei-kioku-migrate`;
+      `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
       `cabal test rei-core-test --test-options='-p Kioku'`;
-      `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`; `git diff --check`.
+      `cabal test rei-core-test --test-option=-p --test-option='Transducer diagrams'`;
+      stale-reference `rg` sweep over `rei-core/src rei-cli/src rei-core/test docs/dev/architecture/transducer-diagrams.md`;
+      `git diff --check`.
 
 
 ## Surprises & Discoveries
@@ -319,6 +299,17 @@ implementation. Provide concise evidence.
   `cabal build rei-core:rei-kioku-migrate`;
   `cabal test rei-core-test --test-options='-p Kioku'`;
   `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`.
+
+- The final legacy event/transducer/projection/table modules were only needed by tests as fixture
+  scaffolding, not by the production migration executable. Replacing the migration rehearsal's
+  dependency on old Rei transducers/projections with explicit legacy `Store.EventData` payloads and
+  direct old read-model row inserts preserved the important proof (copy + verify + idempotency over
+  historical stream/read-model shapes) while allowing the old aggregate modules and their dedicated
+  tests/diagrams to be deleted. Evidence: Rei stale-reference sweep over
+  `rei-core/src rei-cli/src rei-core/test docs/dev/architecture/transducer-diagrams.md` returned no
+  `Rei.Modules.AgentMemory` / `Rei.Modules.AgentSession` module references; Rei
+  `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
+  `cabal test rei-core-test --test-options='-p Kioku'`.
 
 (Add further discoveries as work proceeds.)
 
@@ -510,6 +501,16 @@ Record every decision made while working on the plan.
   narrows Rei's exposed legacy surface without weakening the historical migration fixture.
   Date: 2026-06-24
 
+- Decision: Seed the M3 migration rehearsal with explicit legacy event payloads and direct old
+  read-model rows instead of importing old Rei transducers, inline projections, or SQL table
+  modules.
+  Rationale: the production `rei-kioku-migrate` executable already reads stored legacy Kiroku
+  payloads and old read-model rows directly; keeping the old aggregate implementation only to build
+  test fixtures preserved dead public surface. Explicit fixtures keep the test anchored to the
+  on-disk historical JSON/table shapes that matter at migration time and allow the legacy
+  event/transducer/projection/table modules to be removed.
+  Date: 2026-06-24
+
 - Decision: Delete the unused top-level AgentMemory/AgentSession facades once all live callers moved
   to `Rei.Modules.Agent.*`, and move `AgentMemoryHandlerError` to the runtime namespace.
   Rationale: the facades were broad compatibility surfaces with no remaining imports. Removing them
@@ -647,6 +648,18 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   `cabal build rei-core:rei-kioku-migrate`;
   `cabal test rei-core-test --test-options='-p Kioku'`;
   `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`; `git diff --check`.
+
+- 2026-06-24: M3 legacy replay module deletion landed. The old
+  `Rei.Modules.AgentMemory.{Domain,Infrastructure,Projection}` and
+  `Rei.Modules.AgentSession.{Domain,Infrastructure,Projection}` event/transducer/table/projection
+  modules, their dedicated specs, and their transducer diagram sections are gone. The migration
+  rehearsal now seeds legacy Kiroku payloads and old read-model rows directly, so it still proves
+  copy, verify, and idempotency without keeping the old aggregate implementation in the build.
+  Verification: Rei `nix fmt`; `cabal build rei-cli rei-core:rei-kioku-migrate`;
+  `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
+  `cabal test rei-core-test --test-options='-p Kioku'`;
+  `cabal test rei-core-test --test-option=-p --test-option='Transducer diagrams'`;
+  stale-reference `rg` sweep; `git diff --check`.
 
 
 ## Context and Orientation

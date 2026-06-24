@@ -262,16 +262,16 @@ Track milestone-level progress across all child plans.
       reads and live `rei agent sessions`, `rei agent session show`, and Today session activity use
       those reads through `StoreRunner`; Rei no longer exposes or builds the unused legacy Hasql
       helper modules `Rei.Modules.AgentMemory.Infrastructure.ReadModel` and
-      `Rei.Modules.AgentSession.Infrastructure.ReadModel`. Legacy table/projection/transducer
-      modules remain because migration fixtures and old inline projections still depend on their
-      SQL statements and replay behavior. Runtime-facing IDs, enums, command data, and Kioku-backed
+      `Rei.Modules.AgentSession.Infrastructure.ReadModel`; the migration rehearsal now seeds
+      explicit legacy Kiroku payloads plus old read-model rows directly, so the legacy
+      table/projection/transducer/event modules and their specs/diagram entries are removed from
+      `rei-core.cabal` and the tree. Runtime-facing IDs, enums, command data, and Kioku-backed
       store handlers now live under `Rei.Modules.Agent.Memory.*` and
       `Rei.Modules.Agent.Session.*`; the old command/type and application compatibility re-exports
       are deleted; the unused top-level AgentMemory/AgentSession facades are deleted; and the memory
-      handler error type moved to `Rei.Modules.Agent.Memory.Errors`. Legacy event/transducer/
-      projection/table modules remain only for historical stream replay. Disposable production
-      data-copy execution and remaining old AgentMemory/AgentSession event/projection/transducer
-      decommission work remain.
+      handler error type moved to `Rei.Modules.Agent.Memory.Errors`. The M3 fixture still proves
+      copy, verify, and idempotent re-copy without any remaining `Rei.Modules.AgentMemory` /
+      `Rei.Modules.AgentSession` modules. Disposable production data-copy execution remains.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -383,6 +383,13 @@ Track milestone-level progress across all child plans.
   projection/table modules for historical stream replay. Discovered during EP-4 M3 decommission
   work.
 
+- **EP-4 legacy replay modules were fixture scaffolding, not production migration dependencies.**
+  The `rei-kioku-migrate` executable already copies stored legacy payloads and verifies old
+  read-model rows directly. Rewriting the rehearsal to seed explicit legacy Kiroku payloads plus old
+  `agent_memories` / `agent_sessions` rows preserved the copy/verify/idempotency proof and allowed
+  the old AgentMemory/AgentSession event/transducer/projection/table modules, specs, and diagram
+  sections to be deleted. Discovered during EP-4 M3 decommission work.
+
 
 ## Decision Log
 
@@ -468,6 +475,14 @@ Track milestone-level progress across all child plans.
   modules directly.
   Rationale: historical replay still needs old event/transducer/projection/table behavior, but alias
   modules for command data, IDs/enums, errors, and store handlers only preserve dead public surface.
+  Date: 2026-06-24
+
+- Decision: In EP-4, replace legacy replay-module test dependencies with explicit legacy payload
+  and read-model fixtures, then delete the old AgentMemory/AgentSession event/transducer/projection/
+  table modules.
+  Rationale: the production migration path depends on stored Kiroku payloads and old read-model
+  rows, not the old aggregate implementation. Direct fixtures keep the rehearsal focused on the
+  historical on-disk shapes while removing the last dead legacy module surface from Rei.
   Date: 2026-06-24
 
 - Decision: Adopt the `haskell-jitsurei` conventions as binding for all kioku code (IP-7), and
@@ -601,6 +616,16 @@ Track milestone-level progress across all child plans.
   `cabal build rei-cli`; `cabal build rei-core:rei-kioku-migrate`;
   `cabal test rei-core-test --test-options='-p Kioku'`;
   `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`; `git diff --check`.
+
+- 2026-06-24: EP-4 M3 legacy replay modules deleted in Rei. The old AgentMemory/AgentSession
+  event/transducer/table/projection modules, their specs, and their transducer diagram sections are
+  no longer in the build or tree. The migration rehearsal now seeds explicit legacy Kiroku payloads
+  plus old read-model rows directly and still proves copy, verify, and idempotent re-copy.
+  Verification: Rei `nix fmt`; `cabal build rei-cli rei-core:rei-kioku-migrate`;
+  `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
+  `cabal test rei-core-test --test-options='-p Kioku'`;
+  `cabal test rei-core-test --test-option=-p --test-option='Transducer diagrams'`;
+  stale-reference `rg` sweep; `git diff --check`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable
