@@ -94,13 +94,15 @@ Milestone 2 — async embedding worker backfills vectors (idempotent on `content
       worker host pattern. Completed 2026-06-24: `kioku worker --backfill` runs a one-shot
       backfill and exits; `kioku worker` starts the continuous Shibuya/Kiroku embedding processor
       when `VectorAvailable`.
-- [ ] Backfill existing rows: run the worker, then `SELECT id, embedding IS NOT NULL,
+- [x] Backfill existing rows: run the worker, then `SELECT id, embedding IS NOT NULL,
       embedding_model, dimensions FROM kioku.kioku_memories` shows non-null vectors. Progress
       2026-06-24: local no-pgvector path verified with `cabal run kioku -- worker --backfill`,
       which reports that recall will run FTS-only and does not touch vector columns. Progress
       2026-06-24: the idempotent hash-skip predicate is now a pure helper covered by
-      `Kioku.EmbeddingWorkerSpec`; true vector backfill still needs a pgvector-enabled DB and
-      embedding endpoint.
+      `Kioku.EmbeddingWorkerSpec`. Completed 2026-06-24: a disposable `pgvector/pgvector:pg17`
+      database plus deterministic OpenAI-compatible embedding stub verified `kioku worker
+      --backfill` writes a non-null vector, `embedding_model = stub-embedding`, `dimensions =
+      1536`, and `content_hash`; a second backfill printed `Backfilled 0 memory embeddings.`
 
 Milestone 3 — hybrid RRF recall replaces the placeholder:
 
@@ -111,7 +113,7 @@ Milestone 3 — hybrid RRF recall replaces the placeholder:
       fail-open capability handling, pure RRF scoring, signal blending, and character budgets.
 - [x] Wire `kioku recall "<query>" --scope <scope> [--strategy …] [--limit …]` in kioku-cli.
       Completed 2026-06-24 with `--scope`, `--strategy`, `--limit`, and `--show-scores`.
-- [ ] Demonstrate: a paraphrased query recalls a keyword-disjoint memory via hybrid; the same
+- [x] Demonstrate: a paraphrased query recalls a keyword-disjoint memory via hybrid; the same
       query under `--strategy keyword` does NOT; fail-open to FTS-only when embeddings are
       disabled. Progress 2026-06-24: local no-pgvector fail-open path verified with
       `cabal run kioku -- recall "concise" --scope rei:intention:intention_demo --strategy hybrid
@@ -121,7 +123,11 @@ Milestone 3 — hybrid RRF recall replaces the placeholder:
       `cabal test kioku-core` (6 tests). Progress 2026-06-24: `Kioku.Recall` now exposes a pure
       `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that missing
       pgvector extension/columns downgrade every strategy to keyword-only without needing a query
-      embedding; `cabal test kioku-core` now passes 8 tests.
+      embedding; `cabal test kioku-core` now passes 8 tests. Completed 2026-06-24: against the
+      disposable pgvector DB, `kioku recall 'brief responses' --strategy hybrid --show-scores`
+      returned the memory `"prefers concise answers"` with `fts=- vec=1`, the same query under
+      `--strategy keyword` returned `(no matches)`, and an embedding-outage run fell back to
+      `fts=1 vec=-`.
 
 
 ## Surprises & Discoveries
@@ -161,6 +167,15 @@ as they are found.
   `WorkerHost` includes routers, process managers, and timers; EP-2 only needs one Kiroku
   subscription processor over the `kioku_memory` category. kioku therefore exposes
   `embeddingWorkerProcessor`/`runEmbeddingWorkerHost` instead of porting the whole host.
+
+- **Disposable Docker pgvector acceptance works; host port choice matters.** The Nix dev Postgres
+  still lacks pgvector, but `pgvector/pgvector:pg17` on a free high host port (`56543`) applied
+  kioku's full migration bundle with `vector 0.8.3`, the `embedding vector` column, and the HNSW
+  index. Port `55432` was already occupied by a local Postgres listener, so the first container
+  mapping reached the wrong server from the host. The acceptance transcript used a deterministic
+  OpenAI-compatible embedding stub on `127.0.0.1:18080`; it proves the pgvector/vector plumbing and
+  fail-open paths, while production semantic quality still depends on the configured real embedding
+  model.
 
 
 ## Decision Log
@@ -238,17 +253,37 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
 result against the original purpose (hybrid recall that surfaces a keyword-disjoint memory a
 paraphrased query would otherwise miss).
 
-As of 2026-06-24, EP-2's structural implementation is in place: optional pgvector migration,
+As of 2026-06-24, EP-2's implementation and acceptance are complete: optional pgvector migration,
 capability detection, embedding config/retry, one-shot and continuous embedding workers, hybrid
-recall, CLI wiring, and focused unit coverage for the pure ranking/budget math plus the worker's
-idempotent skip predicate. The remaining gap is environmental rather than structural: this local
-Postgres lacks pgvector and no embedding endpoint/API key is configured, so the true vector
-backfill transcript and keyword-disjoint semantic recall transcript are still blocked.
+recall, CLI wiring, focused unit coverage for pure ranking/budget math and worker idempotency, plus
+a live pgvector/vector-path CLI transcript against a disposable database. The local Nix Postgres
+still lacks pgvector, so the true-vector acceptance was run against a Docker `pgvector/pgvector:pg17`
+database and a deterministic OpenAI-compatible embedding stub. That proves the system plumbing;
+production semantic quality depends on the configured embedding model.
 
 - 2026-06-24: Added an explicit `RecallExecutionPlan` seam to make fail-open behavior executable
   without a pgvector database or embedding endpoint. The test suite now proves that unavailable
   vector capability uses FTS-only recall and does not require a query embedding. Verification:
   `cabal test kioku-core` (8 tests) and `cabal build all`.
+
+- 2026-06-24: Completed the live vector-path acceptance using a disposable pgvector database and
+  deterministic OpenAI-compatible embedding stub. Key transcript:
+
+  ```text
+  vector extension: 0.8.3
+  embedding columns: embedding vector, embedding_model text, dimensions integer, content_hash text
+  kioku demo: Recorded memory ... "prefers concise answers"
+  kioku worker --backfill: Backfilled 1 memory embeddings.
+  SELECT ...: has_vec=t, embedding_model=stub-embedding, dimensions=1536, has_hash=t
+  second backfill: Backfilled 0 memory embeddings.
+  hybrid recall "brief responses": fts=- vec=1 preference "prefers concise answers"
+  keyword recall "brief responses": (no matches)
+  embedding outage hybrid recall "concise answers": fts=1 vec=- preference "prefers concise answers"
+  ```
+
+  Verification: `cabal test kioku-core`, `cabal build all`, `docker run pgvector/pgvector:pg17`,
+  `cabal run kioku-migrate`, `cabal run kioku -- demo`, `cabal run kioku -- worker --backfill`,
+  and `cabal run kioku -- recall ... --show-scores`.
 
 
 ## Context and Orientation
@@ -1091,8 +1126,15 @@ the Decision Log and adjust the SQL accordingly.
 
 - 2026-06-24 — Recorded the current EP-2 implementation state after adding
   `Kioku.EmbeddingWorkerSpec`. Reason: the plan's unit-test acceptance is now covered for RRF,
-  signal blending, budgets, and embedding-worker idempotency, while the live semantic-vector
-  acceptance remains blocked by the local no-pgvector/no-embedding-endpoint environment.
+  signal blending, budgets, and embedding-worker idempotency, while the live vector-path
+  acceptance was still blocked at that point by the local no-pgvector/no-embedding-endpoint
+  environment.
+
+- 2026-06-24 — Recorded completion of the live pgvector/vector-path acceptance. Reason: a
+  disposable `pgvector/pgvector:pg17` container plus deterministic OpenAI-compatible embedding stub
+  provided the missing vector-capable database and endpoint, proving vector backfill, idempotent
+  re-backfill, hybrid vector-only recall for a keyword-disjoint query, keyword non-match, and
+  embedding-outage fail-open behavior.
 
 
 ## Coding Conventions (haskell-jitsurei)

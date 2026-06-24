@@ -89,7 +89,7 @@ five milestones / ten files.
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
 | 1 | kioku Scaffold and Core Extraction | docs/plans/1-kioku-scaffold-and-core-extraction.md | None | None | Complete |
-| 2 | kioku Hybrid Retrieval (pgvector + FTS + RRF) | docs/plans/2-kioku-hybrid-retrieval-pgvector-fts-rrf.md | EP-1 | None | In Progress |
+| 2 | kioku Hybrid Retrieval (pgvector + FTS + RRF) | docs/plans/2-kioku-hybrid-retrieval-pgvector-fts-rrf.md | EP-1 | None | Complete |
 | 3 | kioku Distillation Pyramid (L0 to L3) | docs/plans/3-kioku-distillation-pyramid-l0-to-l3.md | EP-1 | EP-2 | In Progress |
 | 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | In Progress |
 | 5 | mori agent exec with kioku Memory | docs/plans/5-mori-agent-exec-with-kioku-memory.md | EP-1 | EP-2 | Not Started |
@@ -221,14 +221,14 @@ Track milestone-level progress across all child plans.
 - [x] EP-1: inline projections (structured row + `tsvector` FTS) and `kioku-migrations` apply to a fresh DB
 - [x] EP-1: `Kioku.Memory`/`Kioku.Session` write API + placeholder scoped `Kioku.Recall` demonstrated via `kioku-cli`
 - [x] EP-1: Rei legacy memory/session JSON decode is covered by a golden compatibility test
-- [ ] EP-2: optional `pgvector` migration + capability probe exist; Baikai embedding config/retry,
-      `kioku worker --backfill`, and the continuous Shibuya/Kiroku embedding worker exist; true
-      vector backfill acceptance still needs a pgvector-enabled DB; worker idempotency is covered
-      by `Kioku.EmbeddingWorkerSpec`
-- [ ] EP-2: hybrid RRF recall API and `kioku recall` CLI exist; local no-pgvector fail-open path
-      returns FTS-ranked results, but true cosine/vector acceptance still needs a pgvector-enabled DB
-      and embedding endpoint; pure RRF/signal/budget unit coverage passes, and fail-open execution
-      planning is now unit-tested so missing pgvector never needs a query embedding
+- [x] EP-2: optional `pgvector` migration + capability probe exist; Baikai embedding config/retry,
+      `kioku worker --backfill`, and the continuous Shibuya/Kiroku embedding worker exist; vector
+      backfill acceptance passed against a disposable `pgvector/pgvector:pg17` DB and deterministic
+      OpenAI-compatible embedding stub; worker idempotency is covered by `Kioku.EmbeddingWorkerSpec`
+- [x] EP-2: hybrid RRF recall API and `kioku recall` CLI exist; local no-pgvector fail-open path
+      returns FTS-ranked results; pgvector/vector-path acceptance returned a keyword-disjoint memory
+      via `vec=1` while keyword recall returned no matches; pure RRF/signal/budget and fail-open
+      execution planning unit coverage passes
 - [ ] EP-3: shikumi/baikai Claude runtime wiring compiles; distillation tables and
       `MemoryMerged`/`Kioku.Memory.merge` exist; L1 atom extraction + LLM consolidation shikumi
       programs compile; L1 orchestration composes extraction, consolidation, memory writes, and audit
@@ -408,3 +408,11 @@ Track milestone-level progress across all child plans.
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable
   pgvector extension/columns downgrade recall to keyword-only without needing a query embedding.
   Verification: `cabal test kioku-core` and `cabal build all`.
+
+- 2026-06-24: EP-2 completed. A disposable `pgvector/pgvector:pg17` database plus deterministic
+  OpenAI-compatible embedding stub proved vector-column migration, `kioku worker --backfill`,
+  idempotent re-backfill, hybrid recall of a keyword-disjoint memory (`fts=- vec=1`), keyword
+  non-match for the same query, and embedding-outage fail-open (`fts=1 vec=-`). Verification:
+  `cabal test kioku-core`, `cabal build all`, `cabal run kioku-migrate`,
+  `cabal run kioku -- demo`, `cabal run kioku -- worker --backfill`, and
+  `cabal run kioku -- recall ... --show-scores`.
