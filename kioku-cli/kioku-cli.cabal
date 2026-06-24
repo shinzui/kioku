@@ -38,6 +38,7 @@ library
     Kioku.Cli
     Kioku.Cli.Commands.Demo
     Kioku.Cli.Commands.DemoSession
+    Kioku.Cli.Commands.Worker
 
   build-depends:
     , base                  >=4.21 && <5

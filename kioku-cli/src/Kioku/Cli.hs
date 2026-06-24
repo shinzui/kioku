@@ -5,9 +5,10 @@ where
 
 import Kioku.Cli.Commands.Demo (runDemo)
 import Kioku.Cli.Commands.DemoSession (runDemoSession)
+import Kioku.Cli.Commands.Worker (WorkerOptions, runWorker, workerOptionsParser)
 import Options.Applicative
 
-data Command = Demo | DemoSession
+data Command = Demo | DemoSession | Worker WorkerOptions
 
 main :: IO ()
 main = run =<< execParser opts
@@ -29,7 +30,11 @@ commandParser =
       <> command
         "demo-session"
         (info (pure DemoSession) (progDesc "Run the session aggregate demonstration"))
+      <> command
+        "worker"
+        (info (Worker <$> (helper <*> workerOptionsParser)) (progDesc "Run kioku background workers"))
 
 run :: Command -> IO ()
 run Demo = runDemo
 run DemoSession = runDemoSession
+run (Worker opts) = runWorker opts

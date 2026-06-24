@@ -39,6 +39,8 @@ library
     Kioku.App
     Kioku.Memory
     Kioku.Memory.Domain
+    Kioku.Memory.Embedding
+    Kioku.Memory.Embedding.Worker
     Kioku.Memory.EventStream
     Kioku.Memory.ReadModel
     Kioku.Recall
@@ -50,11 +52,13 @@ library
 
   build-depends:
     , aeson                   >=2.2
+    , baikai
     , base                    >=4.21 && <5
     , bytestring              >=0.11
     , containers              >=0.6
     , contravariant           >=1.5
     , contravariant-extras    >=0.3
+    , crypton
     , effectful               >=2.5
     , effectful-core          >=2.5
     , generic-lens            >=2.2
@@ -74,6 +78,7 @@ library
     , text                    >=2.1
     , time                    >=1.12
     , uuid                    >=1.3
+    , vector
 
 test-suite kioku-test
   import:         warnings, shared
