@@ -73,18 +73,25 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] M0 (prerequisite gate): confirm EP-1 is Complete (kioku exists at
-      `/Users/shinzui/Keikaku/bokuno/kioku`, builds, and its M4 golden test reads Rei's legacy
-      `agent_memory`/`agent_session` JSON). If not, stop and finish EP-1 first.
-- [ ] M1: kioku pinned in Rei's `cabal.project` (reconciled with Rei's keiro/kiroku/keiki pins);
-      `kioku-api`/`kioku-core` added to `rei-core.cabal` build-deps; `cabal build rei-core` succeeds.
-- [ ] M1: kioku migrations composed into Rei's migration runner; `just run-migrations` creates the
-      `kiroku.kioku_memories` / `kioku.kioku_sessions` / `kioku.kioku_turns` tables.
-- [ ] M1: new adapter module `Rei.Modules.Agent.Memory.KiokuAdapter` maps `MemoryAnchor ↔ MemoryScope`,
-      `CoachingFocusType → focus :: Text`, and `Kioku` read rows → Rei `MemorySummary`/`AgentMemoryRow`.
-      `cabal build rei-core` succeeds; round-trip unit tests for the scope/focus mapping pass.
-- [ ] M1: AgentMemory/AgentSession write paths re-homed onto `Kioku.Memory`/`Kioku.Session` behind the
-      adapter; full suite `cabal test rei-core` stays green (old read-model path still serves reads).
+- [x] M0 (prerequisite gate): confirmed on 2026-06-24 that EP-1 is Complete enough for EP-4.
+      kioku exists at `/Users/shinzui/Keikaku/bokuno/kioku`; `git rev-parse HEAD` returned
+      `d969b2b438f801aabb26c2cb6cb39eea18347b95`; `cabal build all` reported `Up to date`;
+      `cabal test kioku-core` passed all 7 tests, including the Rei compatibility group.
+- [x] M1: Rei now consumes kioku from local source paths in `cabal.project`, reconciled with
+      Rei's keiro/kiroku/keiki pins; `kioku-api`/`kioku-core` are in the `rei-core.cabal`
+      library build-deps; `kioku-migrations` is in the `rei-migrations` executable build-deps.
+      `cabal build rei-core` succeeds.
+- [x] M1: kioku migrations are composed into Rei's migration runner by appending
+      `Kioku.Migrations.kiokuOwnMigrations` after Rei's existing Kiroku/Keiro framework
+      migrations and before Rei's application migrations.
+- [ ] M1 remaining: run `just run-migrations` against a disposable Rei DB and verify it creates
+      `kiroku.kioku_memories` / `kiroku.kioku_sessions` / `kiroku.kioku_turns`.
+- [x] M1: new adapter module `Rei.Modules.Agent.Memory.KiokuAdapter` maps `MemoryAnchor ↔ MemoryScope`,
+      `CoachingFocusType → focus :: Text`, session intention scope, and `Kioku` read rows →
+      Rei `AgentMemoryRow`. `cabal test rei-core-test --test-options '-p Kioku'` passes the 5
+      focused adapter tests.
+- [ ] M1 remaining: AgentMemory/AgentSession write paths still need to be re-homed onto
+      `Kioku.Memory`/`Kioku.Session`; the old read-model path still serves reads.
 - [ ] M2: `ContextBuilder.hs` recall (the three call sites) rewired onto `Kioku.Recall`; `rei agent
       memory list/show/archive` rewired onto kioku reads/writes.
 - [ ] M2: `{{agent_memories}}` rendered section proven byte-identical on a captured sample (golden
@@ -114,6 +121,28 @@ implementation. Provide concise evidence.
   executable, not an extension of live tooling. Evidence: `grep -rn "REI_KIROKU\|CutoverConfig\|
   routeContext" rei-cli rei-core` returns nothing; `git show 51a08f27 --stat` shows the History
   modules deleted.
+
+- The child plan's original cabal step says to add a git `source-repository-package` pin for kioku,
+  but the MasterPlan's later cross-plan discovery says consumers should use local source paths to
+  avoid kiroku pin skew. The implementation followed the MasterPlan: Rei's `packages:` now includes
+  `../../kioku/kioku-api`, `../../kioku/kioku-core`, and `../../kioku/kioku-migrations`, plus the
+  local shikumi packages kioku-core imports. This also avoids depending on whether the current
+  kioku commit has been pushed to GitHub.
+
+- `Kioku.Migrations.kiokuMigrations` includes Kiroku and Keiro framework migrations, while Rei
+  already applies `Keiro.Migrations.allKeiroMigrations`. Composing `kiokuMigrations` in Rei would
+  risk duplicating framework DDL in the same codd ledger. The migration runner now appends
+  `kiokuOwnMigrations` instead.
+
+- Rei's stored `CoachingFocusType` text does **not** include a `focus_` prefix. The authoritative
+  mapping is the private `focusTypeToText` table in
+  `Rei.Modules.AgentSession.Projection.InlineReadModel`, e.g. `FocusGeneralCoaching` maps to
+  `general_coaching`, not `focus_general_coaching`. The adapter uses that table's exact strings and
+  `KiokuAdapterSpec` guards all 15 round-trips.
+
+- On Apple Silicon, Cabal's existing `package blake3` flag stanza did not prevent `blake3-0.3.1`
+  from compiling x86 SIMD C files. Adding the flag assignment to the solver `constraints:` block
+  (`blake3 -avx512 -avx2 -sse41 -sse2`) let Rei compile kioku-core and the test suite.
 
 (Add further discoveries as work proceeds.)
 
@@ -170,6 +199,26 @@ Record every decision made while working on the plan.
   Rationale: writing markdown memory files into the Rei workspace is a Rei concern (it uses
   `Rei.Workspace.*`), not part of the reusable engine. It only needs to decode kioku events (its
   codec becomes kioku's) and subscribe to the renamed category.
+  Date: 2026-06-24
+
+- Decision: Consume kioku in Rei via local `packages:` entries during EP-4 implementation rather
+  than a git `source-repository-package` pin.
+  Rationale: the MasterPlan's IP-5 discovery supersedes the child plan's original git-pin wording:
+  local source paths let Rei resolve kioku against Rei's single coherent keiro/kiroku/keiki pin-set
+  and also work while the current kioku HEAD (`d969b2b438f801aabb26c2cb6cb39eea18347b95`) is only
+  present locally. The M0 hash remains recorded as the baseline being consumed.
+  Date: 2026-06-24
+
+- Decision: Compose `kiokuOwnMigrations` into Rei's codd pass, not `kiokuMigrations`.
+  Rationale: Rei already composes Kiroku and Keiro through `allKeiroMigrations`; `kiokuMigrations`
+  includes those framework migrations again. `kiokuOwnMigrations` is the additive kioku read-model
+  DDL that belongs between framework migrations and Rei's app migrations.
+  Date: 2026-06-24
+
+- Decision: Use Rei's existing focus storage strings without a `focus_` prefix.
+  Rationale: `Rei.Modules.AgentSession.Projection.InlineReadModel.focusTypeToText` is the live
+  storage contract for `agent_sessions.focus_type`; keeping those strings (`general_coaching`,
+  `today`, etc.) preserves historical session rendering and avoids a needless data transform.
   Date: 2026-06-24
 
 

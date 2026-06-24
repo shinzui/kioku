@@ -91,7 +91,7 @@ five milestones / ten files.
 | 1 | kioku Scaffold and Core Extraction | docs/plans/1-kioku-scaffold-and-core-extraction.md | None | None | Complete |
 | 2 | kioku Hybrid Retrieval (pgvector + FTS + RRF) | docs/plans/2-kioku-hybrid-retrieval-pgvector-fts-rrf.md | EP-1 | None | In Progress |
 | 3 | kioku Distillation Pyramid (L0 to L3) | docs/plans/3-kioku-distillation-pyramid-l0-to-l3.md | EP-1 | EP-2 | In Progress |
-| 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | Not Started |
+| 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | In Progress |
 | 5 | mori agent exec with kioku Memory | docs/plans/5-mori-agent-exec-with-kioku-memory.md | EP-1 | EP-2 | Not Started |
 | 6 | shikigami Memory Integration with kioku | docs/plans/6-shikigami-memory-integration-with-kioku.md | EP-1 | EP-2, EP-3 | Not Started |
 
@@ -239,6 +239,9 @@ Track milestone-level progress across all child plans.
       deterministic replay coverage now proves L1 merge, L2 scene, and L3 persona rows without network
       access
 - [ ] EP-4: Rei AgentMemory/AgentSession re-homed onto kioku with `IntentionId`/`HabitId` scope mapping
+      has started: Rei now consumes local kioku packages, composes kioku's own migrations into the
+      migration runner, and has a tested `Rei.Modules.Agent.Memory.KiokuAdapter` for scope/focus/row
+      mapping; AgentMemory/AgentSession write-path rehoming remains.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -277,6 +280,17 @@ Track milestone-level progress across all child plans.
   so kioku (`kiroku` schema) and the consumer's own read models (`public`) share one pool without
   name collisions. Consumers apply `kiokuMigrations` the same way they already apply
   kiroku/keiro framework migrations. No conflict — confirmed while drafting EP-4/EP-5/EP-6.
+
+- **EP-4 migration composition uses kioku-owned migrations only.** Rei already applies Kiroku and
+  Keiro framework migrations via `Keiro.Migrations.allKeiroMigrations`; kioku's exported
+  `kiokuMigrations` includes those framework migrations again. Rei therefore composes
+  `Kioku.Migrations.kiokuOwnMigrations` into its codd pass, between framework migrations and
+  Rei-owned app migrations. Discovered during EP-4 implementation.
+
+- **Rei focus storage text has no `focus_` prefix.** The live mapping is the private
+  `focusTypeToText` table in `Rei.Modules.AgentSession.Projection.InlineReadModel`, where
+  `FocusGeneralCoaching` stores as `general_coaching`, not `focus_general_coaching`. EP-4's adapter
+  follows that live contract and tests all 15 constructors. Discovered during EP-4 implementation.
 
 
 ## Decision Log
