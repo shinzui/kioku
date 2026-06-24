@@ -148,11 +148,18 @@ Milestone M3 — L3 persona generation:
 - [x] Add the persona shikumi program `Kioku.Distill.Persona` (`Program PersonaInput PersonaOutput`).
       Completed 2026-06-24: the module is exposed by `kioku-core`, defines strict-schema
       `PersonaInput`/`PersonaOutput`, and compiles as a pure shikumi `personaProgram`.
-- [ ] Add the L3 reactor `Kioku.Distill.L3.personaReactor`: a threshold/mutex-gated regeneration that,
+- [x] Add the L3 reactor `Kioku.Distill.L3.personaReactor`: a threshold/mutex-gated regeneration that,
       after L2 scenes for a scope update, regenerates the single per-scope persona, upserts
-      `kioku_personas`, and mirrors `persona.md`.
+      `kioku_personas`, and mirrors `persona.md`. Completed 2026-06-24: `Kioku.Distill.L3`
+      loads scene rows for a scope, skips unchanged inputs via `source_hash`, runs `personaProgram`,
+      upserts `kioku_personas`, mirrors `.kioku/persona/<scope-slug>.md`, and exposes
+      `kioku-l3-persona` timer firing; L2 scene upserts now arm an L3 persona timer, and the shared
+      worker routes it.
 - [ ] M3 acceptance: `kioku persona --scope …` prints the persona and `<workspace>/.kioku/persona/<scope>.md`
-      exists.
+      exists. Local CLI verification completed 2026-06-24 with
+      `kioku persona --scope rei:intention:intention_demo`, which currently prints `(no persona yet)`;
+      live generation remains blocked by the missing `ANTHROPIC_API_KEY` credential and the absence of
+      a generated L2 scene row.
 
 Milestone M4 — deterministic end-to-end test:
 

@@ -18,6 +18,7 @@ import Keiro.Telemetry (KeiroMetrics)
 import Keiro.Timer (TimerId (..), TimerRow (..), runTimerWorker)
 import Kioku.Distill.L1 (FindMergeCandidates, L1Error (..), distillSessionL1)
 import Kioku.Distill.L2 (fireL2SceneTimer)
+import Kioku.Distill.L3 (fireL3PersonaTimer)
 import Kioku.Distill.Runtime (DistillRuntime)
 import Kioku.Distill.Timer (l1ExtractProcessManagerName)
 import Kioku.Id (parseIdAnyPrefix)
@@ -57,7 +58,11 @@ fireKiokuTimer rt finder row = do
   l1Result <- fireL1Timer rt finder row
   case l1Result of
     Just eventId -> pure (Just eventId)
-    Nothing -> fireL2SceneTimer rt row
+    Nothing -> do
+      l2Result <- fireL2SceneTimer rt row
+      case l2Result of
+        Just eventId -> pure (Just eventId)
+        Nothing -> fireL3PersonaTimer rt row
 
 runKiokuTimerWorkerOnce ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>

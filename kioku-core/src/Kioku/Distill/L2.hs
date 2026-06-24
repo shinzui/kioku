@@ -42,6 +42,7 @@ import Keiro.ReadModel (ReadModelError)
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
+import Kioku.Distill.L3 (scheduleL3PersonaTimerTx)
 import Kioku.Distill.Runtime (DistillRuntime, runDistillProgram)
 import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..), sceneProgram)
 import Kioku.Id (MemoryId, idText)
@@ -180,7 +181,9 @@ regenerateScene rt scope = do
                         createdAt = now,
                         updatedAt = now
                       }
-              runTransaction (Tx.statement row upsertSceneStmt)
+              runTransaction do
+                Tx.statement row upsertSceneStmt
+                scheduleL3PersonaTimerTx scope now
               liftIO (bestEffortMirrorScene row)
               pure (Right (Just row))
 
