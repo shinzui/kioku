@@ -69,14 +69,18 @@ This section must always reflect the actual current state of the work.
 
 Milestone M0 — wiring shikumi/baikai into kioku (prerequisite for everything):
 
-- [ ] Add `shikumi`, `shikumi-trace`, `baikai`, `baikai-claude`, `baikai-effectful` to
+- [x] Add `shikumi`, `shikumi-trace`, `baikai`, `baikai-claude`, `baikai-effectful` to
       `/Users/shinzui/Keikaku/bokuno/kioku/cabal.project` (local-path `packages:` entries for shikumi,
       Hackage for baikai; add the `blake3` / `postgresql-libpq` workaround stanzas needed by
-      `shikumi-trace`).
-- [ ] Add `shikumi`, `shikumi-trace`, `baikai`, `baikai-claude`, `baikai-effectful` to
-      `kioku-core/kioku-core.cabal` `build-depends`.
-- [ ] Add `Kioku.Distill.Runtime` (the `ClaudeApi.register` + `runProgramWith` interpreter chain) and
-      prove it compiles with a trivial program; `cabal build kioku-core` is green.
+      `shikumi-trace`). Completed 2026-06-24 with local `../shikumi/shikumi` and
+      `../shikumi/shikumi-trace`, plus the existing Baikai source pin expanded to include
+      `baikai-claude` and `baikai-effectful`.
+- [x] Add `shikumi`, `shikumi-trace`, `baikai`, `baikai-claude`, `baikai-effectful` to
+      `kioku-core/kioku-core.cabal` `build-depends`. Completed 2026-06-24.
+- [x] Add `Kioku.Distill.Runtime` (the `ClaudeApi.register` + `runProgramWith` interpreter chain) and
+      prove it compiles with a trivial program; `cabal build kioku-core` is green. Completed
+      2026-06-24: `Kioku.Distill.Runtime` mirrors Handan's live routing/resilience chain and exposes
+      `runtimeSmokeProgram`; `cabal build kioku-core` passed.
 
 Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
 
@@ -125,7 +129,7 @@ Milestone M4 — deterministic end-to-end test:
       a duplicate), a scene row, and a persona row — all from the events. `cabal test kioku-core`
       passes.
 
-(No work has started; this plan was authored but not yet implemented.)
+(M0 is complete; M1 has not started.)
 
 
 ## Surprises & Discoveries
@@ -133,7 +137,14 @@ Milestone M4 — deterministic end-to-end test:
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet — implementation not started.)
+- **The plan sketch was stale relative to Handan's current runtime.** Handan's live
+  `Handan.Runtime` uses `runConcurrent . runRouting model . runLLMResilient cfg . routeLLM` for
+  normal execution, and trace execution adds `runPrim . runTime . runTrace . tracedLLM`. EP-3 M0
+  copied the normal live chain, not the older sketch.
+
+- **Baikai is pinned as a source package, not resolved from Hackage here.** EP-2 had already pinned
+  `baikai`; M0 expanded that source-repository-package to include `baikai-claude` and
+  `baikai-effectful` at the same tag.
 
 
 ## Decision Log
