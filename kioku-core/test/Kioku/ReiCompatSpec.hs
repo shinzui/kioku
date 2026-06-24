@@ -51,7 +51,7 @@ assertSessionStarted :: SessionStartedData -> Assertion
 assertSessionStarted d = do
   idText d.sessionId @?= "kioku_session_01kvxa7d2cezhs874g3n8dfgme"
   d.agentId @?= "demo-agent"
-  d.focus @?= "FocusToday"
+  d.focus @?= "today"
   d.scope @?= ScopeEntity (Namespace "rei") (ScopeKind "intention") "intention_demo"
   d.subjectRef @?= Just "daily planning"
   (idText <$> d.previousSessionId) @?= Just "kioku_session_01kvxa2gw6er7r2yzpvtq9axch"

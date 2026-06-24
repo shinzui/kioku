@@ -92,7 +92,7 @@ parseLegacySessionStarted =
     previousSessionId <- traverse parseLegacySessionId =<< o .:? "previousSessionId"
     SessionStartedData sessionId
       <$> o .: "agentId"
-      <*> o .: "focusType"
+      <*> (normalizeLegacyFocus <$> o .: "focusType")
       <*> pure (sessionScope intentionId)
       <*> o .:? "focusTarget"
       <*> pure previousSessionId
@@ -122,7 +122,7 @@ parseLegacyInteractiveSessionRecorded =
     intentionId <- o .:? "intentionId"
     InteractiveSessionRecordedData sessionId
       <$> o .: "agentId"
-      <*> o .: "focusType"
+      <*> (normalizeLegacyFocus <$> o .: "focusType")
       <*> pure (sessionScope intentionId)
       <*> pure Nothing
       <*> o .: "startedAt"
@@ -137,3 +137,22 @@ sessionScope = \case
 
 reiNamespace :: Namespace
 reiNamespace = Namespace "rei"
+
+normalizeLegacyFocus :: Text -> Text
+normalizeLegacyFocus = \case
+  "FocusGeneralCoaching" -> "general_coaching"
+  "FocusToday" -> "today"
+  "FocusIntentionReview" -> "intention_review"
+  "FocusNudge" -> "nudge"
+  "FocusDailyReflection" -> "daily_reflection"
+  "FocusWeeklyReflection" -> "weekly_reflection"
+  "FocusNoteHelp" -> "note_help"
+  "FocusAssist" -> "assist"
+  "FocusIntentionAssist" -> "intention_assist"
+  "FocusCollectionExplore" -> "collection_explore"
+  "FocusCreateNote" -> "create_note"
+  "FocusCreateSkill" -> "create_skill"
+  "FocusScheduledWork" -> "scheduled_work"
+  "FocusUpdateNote" -> "update_note"
+  "FocusAskNote" -> "ask_note"
+  alreadyNormalized -> alreadyNormalized
