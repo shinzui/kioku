@@ -1,0 +1,56 @@
+cabal-version: 3.0
+name:          kioku-cli
+version:       0.1.0.0
+synopsis:      kioku command-line interface
+description:
+  Command-line entry point for kioku demos and operational commands.
+
+license:       BSD-3-Clause
+author:        Nadeem Bitar
+maintainer:    nadeem@gmail.com
+copyright:     2026 Nadeem Bitar
+category:      Data
+build-type:    Simple
+tested-with:   GHC >=9.12 && <9.13
+
+common warnings
+  ghc-options:
+    -Wall -Wcompat -Widentities -Wincomplete-record-updates
+    -Wincomplete-uni-patterns -Wpartial-fields -Wredundant-constraints
+
+common shared
+  default-language:   GHC2024
+  default-extensions:
+    BlockArguments
+    DeriveAnyClass
+    DuplicateRecordFields
+    MultilineStrings
+    OverloadedLabels
+    OverloadedRecordDot
+    OverloadedStrings
+    QualifiedDo
+    TemplateHaskell
+
+library
+  import:          warnings, shared
+  hs-source-dirs:  src
+  exposed-modules:
+    Kioku.Cli
+    Kioku.Cli.Commands.Demo
+
+  build-depends:
+    , base                  >=4.21 && <5
+    , kioku-api
+    , kioku-core
+    , kiroku-store
+    , optparse-applicative  >=0.18
+    , text                  >=2.1
+
+executable kioku
+  import:         warnings, shared
+  main-is:        Main.hs
+  hs-source-dirs: app
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , base       >=4.21 && <5
+    , kioku-cli

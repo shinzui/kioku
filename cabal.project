@@ -1,0 +1,113 @@
+packages:
+  kioku-api
+  kioku-core
+  kioku-cli
+  kioku-migrations
+
+with-compiler: ghc-9.12.4
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/keiki.git
+  tag: bc987f46393b604c335f034385b4c3c1ad118074
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/keiki.git
+  tag: bc987f46393b604c335f034385b4c3c1ad118074
+  subdir: keiki-codec-json
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/keiro.git
+  tag: f1d67a01b7457387a4861e7268d1c521ef82287d
+  subdir: keiro
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/keiro.git
+  tag: f1d67a01b7457387a4861e7268d1c521ef82287d
+  subdir: keiro-core
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/keiro.git
+  tag: f1d67a01b7457387a4861e7268d1c521ef82287d
+  subdir: keiro-migrations
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/keiro.git
+  tag: f1d67a01b7457387a4861e7268d1c521ef82287d
+  subdir: keiro-pgmq
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/kiroku.git
+  tag: 4312aa8cc3e4f6ab0d19fc8bb12d0dd9f8cc164a
+  subdir: kiroku-store
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/kiroku.git
+  tag: 4312aa8cc3e4f6ab0d19fc8bb12d0dd9f8cc164a
+  subdir: kiroku-store-migrations
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/kiroku.git
+  tag: 4312aa8cc3e4f6ab0d19fc8bb12d0dd9f8cc164a
+  subdir: kiroku-test-support
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/kiroku.git
+  tag: 4312aa8cc3e4f6ab0d19fc8bb12d0dd9f8cc164a
+  subdir: shibuya-kiroku-adapter
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/shibuya.git
+  tag: 3f276ee190e563fddb0bc81e01d62a96a1b31715
+  subdir: shibuya-core
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/pgmq-hs.git
+  tag: 973c1076f469448818de5d2044a483296be2c02e
+  subdir: pgmq-core pgmq-hasql pgmq-effectful pgmq-migration
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/shibuya-pgmq-adapter.git
+  tag: 71a7b82223449d84c395b64e480c9cfe4ff274f1
+  subdir: shibuya-pgmq-adapter
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/hasql-migration
+  tag: 4aaff6c0919d1fe8e1c248c3ce4ce05775c59c8c
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/ephemeral-pg.git
+  tag: 304c160f25570ea5e225baf5024778c93f434b56
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/codd-project.git
+  tag: d176b3088f23ef2218c7a1f31835e8ee0c0601aa
+  subdir: codd
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/hasql-project.git
+  tag: 2bc7ace5db942d87962990bba0b2323ec4c67770
+  subdir: hasql-notifications
+
+package codd
+  tests: False
+  benchmarks: False
+
+allow-newer:
+  haxl:time
