@@ -107,13 +107,14 @@ Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
       flush), modeled on Rei's `FireTimer.hs` / `DormancyTimer.hs`. Completed 2026-06-24:
       `Kioku.Distill.Timer` arms ramp/idle/final keiro timers; `Kioku.Distill.Timer.Worker` exposes
       `fireL1Timer`/`runL1TimerWorkerOnce`; `kioku worker --timers-once` claims at most one due L1 timer.
-- [ ] Integrate a continuous L1 timer loop into the default `kioku worker` host; current timer
-      dispatcher is exposed as a one-pass `--timers-once` operation.
+- [x] Integrate a continuous L1 timer loop into the default `kioku worker` host. Completed
+      2026-06-24: plain `kioku worker` starts the L1 timer loop alongside the embedding worker when
+      pgvector is available, or runs the L1 timer loop as the foreground worker when pgvector is
+      unavailable; `--timers-once` remains available for one-pass operation.
 - [x] Add `kioku distill session <session-id>` CLI to force an L1 pass. Completed 2026-06-24:
       `kioku distill session SESSION_ID [--candidates scan|recall] [--limit N]` builds a
       `DistillRuntime`, selects the scoped-scan or recall candidate finder, runs `distillSessionL1`,
-      and prints the `L1Summary`. M1 acceptance still needs the sample transcript plus the continuous
-      timer host loop.
+      and prints the `L1Summary`. M1 acceptance still needs the sample transcript.
 
 Milestone M2 — L2 scene generation:
 

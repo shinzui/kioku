@@ -2,10 +2,13 @@
 
 module Kioku.Distill.Timer.Worker
   ( fireL1Timer,
+    runL1TimerWorkerLoop,
     runL1TimerWorkerOnce,
   )
 where
 
+import Control.Concurrent (threadDelay)
+import Control.Monad (forever)
 import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Telemetry (KeiroMetrics)
@@ -49,6 +52,19 @@ runL1TimerWorkerOnce ::
   Eff es (Maybe TimerRow)
 runL1TimerWorkerOnce metrics rt finder now =
   runTimerWorker metrics now (fireL1Timer rt finder)
+
+runL1TimerWorkerLoop ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  Maybe KeiroMetrics ->
+  DistillRuntime ->
+  FindMergeCandidates es ->
+  Int ->
+  Eff es ()
+runL1TimerWorkerLoop metrics rt finder pollMicros =
+  forever do
+    now <- liftIO getCurrentTime
+    void (runL1TimerWorkerOnce metrics rt finder now)
+    liftIO (threadDelay (max 100000 pollMicros))
 
 timerMarkerEventId :: TimerId -> EventId
 timerMarkerEventId (TimerId uuid) = EventId uuid
