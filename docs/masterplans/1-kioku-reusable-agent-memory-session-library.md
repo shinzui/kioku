@@ -264,8 +264,11 @@ Track milestone-level progress across all child plans.
       helper modules `Rei.Modules.AgentMemory.Infrastructure.ReadModel` and
       `Rei.Modules.AgentSession.Infrastructure.ReadModel`. Legacy table/projection/transducer
       modules remain because migration fixtures and old inline projections still depend on their
-      SQL statements and replay behavior. Disposable production data-copy execution and remaining
-      old AgentMemory/AgentSession domain/store-handler decommission work remain.
+      SQL statements and replay behavior. Runtime-facing IDs, enums, command data, and Kioku-backed
+      store handlers now live under `Rei.Modules.Agent.Memory.*` and
+      `Rei.Modules.Agent.Session.*`, with old AgentMemory/AgentSession domain and store-handler
+      modules reduced to compatibility re-exports. Disposable production data-copy execution and
+      remaining old AgentMemory/AgentSession event/projection/transducer decommission work remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -358,6 +361,12 @@ Track milestone-level progress across all child plans.
   transducer modules remain because migration fixtures still seed and verify legacy Rei streams
   through them. Discovered during EP-4 M3 decommission work.
 
+- **EP-4 runtime namespace extraction precedes deleting legacy replay modules.** Live memory/session
+  command data and store handlers now live under `Rei.Modules.Agent.*`, while the old
+  AgentMemory/AgentSession domain and store-handler modules are compatibility re-exports. This keeps
+  old replay fixtures working while moving runtime code away from the legacy aggregate namespace.
+  Discovered during EP-4 M3 decommission work.
+
 
 ## Decision Log
 
@@ -422,6 +431,14 @@ Track milestone-level progress across all child plans.
   Rationale: the helper modules were only public query wrappers after the adapter migration, while
   the remaining legacy modules still provide the old replay and SQL statement behavior needed to
   prove historical stream migration.
+  Date: 2026-06-24
+
+- Decision: In EP-4, move runtime-facing memory/session types, command data, and store handlers
+  under `Rei.Modules.Agent.Memory.*` and `Rei.Modules.Agent.Session.*` before deleting legacy replay
+  modules.
+  Rationale: this decouples live CLI/adapter/AgentSchedule code from legacy aggregate namespaces
+  while preserving compatibility re-exports for migration fixtures until historical stream replay
+  no longer depends on the old modules.
   Date: 2026-06-24
 
 - Decision: Adopt the `haskell-jitsurei` conventions as binding for all kioku code (IP-7), and
@@ -531,6 +548,13 @@ Track milestone-level progress across all child plans.
   `Rei.Modules.AgentSession.Infrastructure.ReadModel` modules are deleted from the tree and cabal
   exposure, and the aggregate facades no longer re-export their queries. Verification: Rei
   `cabal build rei-cli`; `cabal test rei-core-test --test-options='-p Kioku'`.
+
+- 2026-06-24: EP-4 M3 runtime namespace extraction completed in Rei. Runtime-facing memory/session
+  IDs, enums, command data, and Kioku-backed store handlers now live under
+  `Rei.Modules.Agent.Memory.*` and `Rei.Modules.Agent.Session.*`; old AgentMemory/AgentSession
+  domain and store-handler modules are compatibility re-exports for migration replay. Verification:
+  Rei `cabal build rei-cli`; `cabal build rei-core:rei-kioku-migrate`;
+  `cabal test rei-core-test --test-options='-p Kioku'`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable

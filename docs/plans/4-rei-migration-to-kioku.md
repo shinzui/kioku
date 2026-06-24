@@ -162,7 +162,14 @@ This section must always reflect the actual current state of the work.
       `Rei.Modules.AgentSession.Infrastructure.ReadModel` are removed from `rei-core.cabal` and
       the tree, and the AgentMemory/AgentSession facades no longer re-export their query functions.
       Legacy table/projection/transducer modules remain intentionally because migration fixtures
-      and old inline projections still depend on their SQL statements and replay behavior.
+      and old inline projections still depend on their SQL statements and replay behavior. The
+      runtime-facing memory/session IDs, enums, command data, and Kioku-backed store handlers now
+      live under `Rei.Modules.Agent.Memory.*` and `Rei.Modules.Agent.Session.*`; the old
+      `Rei.Modules.AgentMemory.Domain.{Types,Command}`,
+      `Rei.Modules.AgentSession.Domain.{Types,Command}`, and old store-handler modules are
+      compatibility re-exports. Live CLI, AgentSchedule, Kioku adapter, filesystem projection, and
+      Kioku-focused tests import the new modules; migration fixtures and old replay specs still use
+      the compatibility namespace.
       `cabal test rei-core` green; AgentSchedule untouched.
 
 
@@ -278,6 +285,15 @@ implementation. Provide concise evidence.
   only reported the helper modules, their facade imports, and cabal exposure before deletion; after
   deletion, `cabal build rei-cli` and
   `cabal test rei-core-test --test-options='-p Kioku'` both pass.
+
+- The old AgentMemory/AgentSession domain type and command modules could be reduced to
+  compatibility re-exports before deleting old transducers/projections. Moving the definitions to
+  `Rei.Modules.Agent.Memory.{Types,Command}` and
+  `Rei.Modules.Agent.Session.{Types,Command}` let live CLI, AgentSchedule, the Kioku adapter, and
+  Kioku-backed store-handler tests stop importing the legacy aggregate namespaces while old replay
+  code keeps compiling. Evidence: Rei `cabal build rei-cli`;
+  `cabal build rei-core:rei-kioku-migrate`;
+  `cabal test rei-core-test --test-options='-p Kioku'`.
 
 (Add further discoveries as work proceeds.)
 
@@ -453,6 +469,15 @@ Record every decision made while working on the plan.
   projection SQL.
   Date: 2026-06-24
 
+- Decision: Move runtime-facing Rei memory/session IDs, enums, command data, and Kioku-backed store
+  handlers under the `Rei.Modules.Agent.Memory.*` and `Rei.Modules.Agent.Session.*` namespaces, and
+  leave the old AgentMemory/AgentSession domain and store-handler modules as compatibility
+  re-exports for migration replay.
+  Rationale: EP-4's final state removes the old aggregate modules, but old transducers/projections
+  still prove historical stream migration. Re-export shims decouple live code from the legacy module
+  names without breaking migration fixtures before the old replay path is retired.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -556,6 +581,14 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   `Rei.Modules.AgentSession.Infrastructure.ReadModel`; the AgentMemory and AgentSession facades now
   re-export only command/domain types and row shapes. Legacy SQL table/projection modules remain for
   migration fixtures and inline replay. Verification: Rei `cabal build rei-cli`;
+  `cabal test rei-core-test --test-options='-p Kioku'`.
+
+- 2026-06-24: M3 runtime namespace extraction landed. Rei now defines memory/session IDs, enums,
+  command data, and Kioku-backed store handlers in `Rei.Modules.Agent.Memory.{Types,Command,
+  StoreHandler}` and `Rei.Modules.Agent.Session.{Types,Command,StoreHandler}`. Old
+  AgentMemory/AgentSession domain and store-handler modules are compatibility re-exports, and live
+  CLI/adapter/AgentSchedule imports moved to the new namespace. Verification: Rei
+  `cabal build rei-cli`; `cabal build rei-core:rei-kioku-migrate`;
   `cabal test rei-core-test --test-options='-p Kioku'`.
 
 
