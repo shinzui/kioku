@@ -115,6 +115,11 @@ Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
       `kioku distill session SESSION_ID [--candidates scan|recall] [--limit N]` builds a
       `DistillRuntime`, selects the scoped-scan or recall candidate finder, runs `distillSessionL1`,
       and prints the `L1Summary`. M1 acceptance still needs the sample transcript.
+- [ ] M1 sample transcript acceptance: local migrated DB and `kioku demo-session` work, but the
+      live L1 extraction proof is blocked in this environment until `ANTHROPIC_API_KEY` is set.
+      Attempted 2026-06-24 with `kioku_session_01kvxf8y37eeptytbt18jc8b35`; after surfacing
+      extraction errors, `kioku distill session ... --candidates scan --limit 5` reports
+      `L1ExtractionFailed "ProviderFailure \"env var ANTHROPIC_API_KEY is not set\""`.
 
 Milestone M2 — L2 scene generation:
 
@@ -170,6 +175,12 @@ implementation. Provide concise evidence.
   marks a claimed row `fired` when the fire action returns `Just eventId`; `Nothing` means "not handled"
   and leaves the row `firing` until stale recovery requeues it. The L1 timer fire action therefore
   returns a deterministic marker derived from the `TimerId` after successful/no-op handling.
+
+- **Extraction failures must not look like successful empty extraction.** A local sample run without
+  `ANTHROPIC_API_KEY` originally returned `extracted=0 stored=0 merged=0 skipped=0`, which would hide
+  live-provider failures from operators and from M1 acceptance. `distillSessionL1` now returns
+  `L1ExtractionFailed ...` when the extraction program fails, while consolidation failures still fall
+  back to storing the already-extracted atom conservatively.
 
 
 ## Decision Log

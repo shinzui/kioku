@@ -60,6 +60,7 @@ data L1Error
   | L1SessionNotFound !SessionId
   | L1TurnReadFailed !ReadModelError
   | L1MemoryReadFailed !ReadModelError
+  | L1ExtractionFailed !Text
   | L1MemoryWriteFailed !Memory.MemoryWriteError
   deriving stock (Generic, Show)
 
@@ -109,7 +110,7 @@ distillSessionL1 rt finder sid = do
         Right input -> do
           extractedResult <- liftIO (runDistillProgram rt extractProgram input)
           case extractedResult of
-            Left _err -> pure (Right emptySummary)
+            Left err -> pure (Left (L1ExtractionFailed (Text.pack (show err))))
             Right output ->
               foldM
                 (stepAtom rt finder sid session)
