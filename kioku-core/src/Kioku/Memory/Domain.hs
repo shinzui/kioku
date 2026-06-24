@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Kioku.Memory.Domain
   ( MemoryVertex (..),
@@ -8,6 +9,7 @@ module Kioku.Memory.Domain
     ArchiveMemoryData (..),
     UpdateMemoryTagsData (..),
     UpdateMemoryConfidenceData (..),
+    MergeMemoryData (..),
     MemoryCommand (..),
     commandMemoryId,
     MemoryRecordedData (..),
@@ -79,12 +81,20 @@ data UpdateMemoryConfidenceData = UpdateMemoryConfidenceData
   }
   deriving stock (Generic, Eq, Show)
 
+data MergeMemoryData = MergeMemoryData
+  { memoryId :: !MemoryId,
+    mergedInto :: !MemoryId,
+    mergedAt :: !UTCTime
+  }
+  deriving stock (Generic, Eq, Show)
+
 data MemoryCommand
   = RecordMemory !RecordMemoryData
   | SupersedeMemory !SupersedeMemoryData
   | ArchiveMemory !ArchiveMemoryData
   | UpdateMemoryTags !UpdateMemoryTagsData
   | UpdateMemoryConfidence !UpdateMemoryConfidenceData
+  | MergeMemory !MergeMemoryData
   deriving stock (Generic, Eq, Show)
 
 commandMemoryId :: MemoryCommand -> MemoryId
@@ -94,6 +104,7 @@ commandMemoryId = \case
   ArchiveMemory d -> d.memoryId
   UpdateMemoryTags d -> d.memoryId
   UpdateMemoryConfidence d -> d.memoryId
+  MergeMemory d -> d.memoryId
 
 data MemoryRecordedData = MemoryRecordedData
   { memoryId :: !MemoryId,
@@ -243,6 +254,16 @@ memoryTransducer =
               updatedAt = d.updatedAt
             }
         B.goto Active
+
+      B.onCmd inCtorMergeMemory $ \d -> B.do
+        B.emit
+          wireMemoryMerged
+          MemoryMergedTermFields
+            { memoryId = d.memoryId,
+              mergedInto = d.mergedInto,
+              mergedAt = d.mergedAt
+            }
+        B.goto Merged
   where
     isTerminal = \case
       Superseded -> True

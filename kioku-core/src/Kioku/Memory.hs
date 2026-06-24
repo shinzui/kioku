@@ -5,6 +5,7 @@ module Kioku.Memory
     archive,
     updateTags,
     updateConfidence,
+    merge,
   )
 where
 
@@ -94,6 +95,22 @@ updateConfidence cmdData = do
       | row.status /= "active" -> pure (Left MemoryNotActive)
       | row.confidence == confidenceToText cmdData.confidence -> pure (Right cmdData.memoryId)
       | otherwise -> runMemoryCommand cmdData.memoryId (UpdateMemoryConfidence cmdData)
+
+merge ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  MemoryId ->
+  MemoryId ->
+  Eff es (Either MemoryWriteError MemoryId)
+merge loser winner = do
+  existing <- lookupMemory loser
+  case existing of
+    Left err -> pure (Left (MemoryReadFailed err))
+    Right Nothing -> pure (Left MemoryNotFound)
+    Right (Just row)
+      | row.status /= "active" -> pure (Right loser)
+      | otherwise -> do
+          now <- liftIO getCurrentTime
+          runMemoryCommand loser (MergeMemory (MergeMemoryData loser winner now))
 
 lookupMemory ::
   (IOE :> es, Store :> es) =>

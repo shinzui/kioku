@@ -86,9 +86,11 @@ Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
 
 - [ ] Add migration `<ts>-kioku-distillation.sql`: `kioku_scenes`, `kioku_personas`, and
       `kioku_consolidation_decisions` (audit) tables in the `kiroku` schema.
-- [ ] Reserve/confirm the EP-1 `MemoryMerged` event; add the `MergeMemory` command + transducer edge
+- [x] Reserve/confirm the EP-1 `MemoryMerged` event; add the `MergeMemory` command + transducer edge
       (`Active → Merged`) and the `Kioku.Memory.merge` write API (records `MemoryMerged` on the
-      losers + `MemorySuperseded`), since EP-1 reserved the event but added no edge.
+      losers), since EP-1 reserved the event but added no edge. Completed 2026-06-24: the public
+      `Kioku.Memory.merge loser winner` API appends `MemoryMerged` on the loser stream and the
+      existing read model marks the loser `status='merged'` / `superseded_by=winner`.
 - [ ] Add the extraction shikumi program `Kioku.Distill.Extract` (`Program ExtractInput ExtractOutput`)
       and the consolidation shikumi program `Kioku.Distill.Consolidate`
       (`Program ConsolidateInput ConsolidateDecision`).
@@ -146,6 +148,12 @@ implementation. Provide concise evidence.
   `baikai`; M0 expanded that source-repository-package to include `baikai-claude` and
   `baikai-effectful` at the same tag.
 
+- **`MemoryMerged` is the merge event; no extra `MemorySuperseded` event is appended.** EP-1's
+  read-model projection already handles `MemoryMerged` by setting `status='merged'` and
+  `superseded_by=mergedInto`. Since `Merged` is terminal, appending a later `MemorySuperseded` on the
+  same loser stream would fight the aggregate state machine. The public `merge` writer therefore
+  emits the reserved `MemoryMerged` event only.
+
 
 ## Decision Log
 
@@ -165,9 +173,9 @@ and consolidation-as-events); they are restated here so this document is self-co
 
 - Decision: Consolidation decisions are recorded as **events** on the memory streams, not as silent
   table mutations. `store` → a normal `MemoryRecorded` (via `Kioku.Memory.record`); `update`/`merge`
-  → `MemoryMerged` on the loser memory streams + a `MemorySuperseded` pointing the loser at the
-  winner; `skip` → no memory event, only an audit row in `kioku_consolidation_decisions`. Every
-  decision (including `skip`) also writes an audit row for inspectability.
+  → `MemoryMerged` on the loser memory streams, pointing the loser at the winner; `skip` → no memory
+  event, only an audit row in `kioku_consolidation_decisions`. Every decision (including `skip`) also
+  writes an audit row for inspectability.
   Rationale: MasterPlan Vision + Decision Log ("LLM-driven consolidation recorded as events"). Event
   sourcing means the merge history is replayable and the read model rebuildable; the audit table
   makes the LLM's reasoning visible for debugging.
