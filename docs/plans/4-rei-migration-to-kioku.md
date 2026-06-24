@@ -122,8 +122,14 @@ This section must always reflect the actual current state of the work.
       disposable-Postgres rehearsal now seeds legacy Rei memory/session streams through the old
       transducers, runs the copy, proves `verify` passes for intention and workspace-global active
       recall scopes, and proves a second copy appends zero events. Remaining: run against a
-      disposable production data copy, add any production-derived stream-replay probes needed, and
-      prove live coaching recall returns the same memories.
+      disposable production data copy and add any production-derived stream-replay probes needed.
+- [x] M3: live coaching-context recall path is covered by an integration test. Rei's
+      `ContextBuilderSpec` now writes intention-scoped, workspace-global, and unrelated memories
+      through the production Kioku-backed `AgentMemoryStore.recordMemory`, runs
+      `buildIntentionContext` through `runReiEffWithStore`, and asserts the resulting
+      `AgentContext.agentMemories` contains the target intention memory plus workspace memory and
+      excludes the unrelated intention memory. Verification: Rei
+      `cabal test rei-core-test --test-options='-p Kioku'`.
 - [ ] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
       decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters;
       `cabal test rei-core` green; AgentSchedule untouched.
@@ -398,6 +404,13 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
   `cabal build rei-core:rei-kioku-migrate`;
   `cabal run rei-core:rei-kioku-migrate -- --help`.
+
+- 2026-06-24: M3 live coaching-context recall proof added. `ContextBuilderSpec` now records memories
+  through Rei's Kioku-backed memory store handler, then runs `buildIntentionContext` through the same
+  Rei effect stack used by coaching context construction. The assertion proves the context includes
+  both the target intention-scoped memory and the workspace-global memory from Kioku recall, while an
+  unrelated intention memory is excluded. Verification: Rei
+  `cabal test rei-core-test --test-options='-p Kioku'`.
 
 
 ## Context and Orientation
