@@ -98,16 +98,19 @@ Milestone 2 — async embedding worker backfills vectors (idempotent on `content
 
 Milestone 3 — hybrid RRF recall replaces the placeholder:
 
-- [ ] Implement `Kioku.Recall.recall` with `RecallStrategy = Keyword | Embedding | Hybrid`
+- [x] Implement `Kioku.Recall.recall` with `RecallStrategy = Keyword | Embedding | Hybrid`
       (default `Hybrid`), running an FTS candidate query and a vector candidate query, fusing
       with RRF (`k=60`), then blending recency/priority/confidence with documented weights and
-      budgets.
-- [ ] Wire `kioku recall "<query>" --scope <scope> [--strategy …] [--limit …]` in kioku-cli.
+      budgets. Completed 2026-06-24: `Kioku.Recall` now exposes request/hit/strategy types,
+      fail-open capability handling, pure RRF scoring, signal blending, and character budgets.
+- [x] Wire `kioku recall "<query>" --scope <scope> [--strategy …] [--limit …]` in kioku-cli.
+      Completed 2026-06-24 with `--scope`, `--strategy`, `--limit`, and `--show-scores`.
 - [ ] Demonstrate: a paraphrased query recalls a keyword-disjoint memory via hybrid; the same
       query under `--strategy keyword` does NOT; fail-open to FTS-only when embeddings are
-      disabled.
-
-(No Milestone 3 work has started.)
+      disabled. Progress 2026-06-24: local no-pgvector fail-open path verified with
+      `cabal run kioku -- recall "concise" --scope rei:intention:intention_demo --strategy hybrid
+      --show-scores`, returning FTS hits with `vec=-`. The true semantic-vector transcript still
+      needs a pgvector-enabled DB and embedding endpoint.
 
 
 ## Surprises & Discoveries
@@ -137,6 +140,11 @@ as they are found.
   source pin pulled in `streamly-0.12`, which conflicts with `shibuya-core`'s `streamly ^>=0.11`
   bound. `baikai` builds against the existing 0.11 line, so the project pins `baikai` only and
   lets the solver keep the coherent streamly version.
+
+- **SQL fragments need explicit spacing when using `MultilineStrings`.** The first recall CLI
+  smoke test failed because the shared column fragment and the `FROM` clause were concatenated
+  without a guaranteed space. The recall SQL now keeps a trailing space in the column fragment and
+  qualifies `kiroku.kioku_memories` directly.
 
 
 ## Decision Log

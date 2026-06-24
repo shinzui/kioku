@@ -5,10 +5,11 @@ where
 
 import Kioku.Cli.Commands.Demo (runDemo)
 import Kioku.Cli.Commands.DemoSession (runDemoSession)
+import Kioku.Cli.Commands.Recall (RecallOptions, recallOptionsParser, runRecall)
 import Kioku.Cli.Commands.Worker (WorkerOptions, runWorker, workerOptionsParser)
 import Options.Applicative
 
-data Command = Demo | DemoSession | Worker WorkerOptions
+data Command = Demo | DemoSession | Recall RecallOptions | Worker WorkerOptions
 
 main :: IO ()
 main = run =<< execParser opts
@@ -31,10 +32,14 @@ commandParser =
         "demo-session"
         (info (pure DemoSession) (progDesc "Run the session aggregate demonstration"))
       <> command
+        "recall"
+        (info (Recall <$> (helper <*> recallOptionsParser)) (progDesc "Recall memories by query"))
+      <> command
         "worker"
         (info (Worker <$> (helper <*> workerOptionsParser)) (progDesc "Run kioku background workers"))
 
 run :: Command -> IO ()
 run Demo = runDemo
 run DemoSession = runDemoSession
+run (Recall opts) = runRecall opts
 run (Worker opts) = runWorker opts
