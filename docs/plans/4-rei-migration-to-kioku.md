@@ -150,8 +150,10 @@ This section must always reflect the actual current state of the work.
       projections/read-model helpers, store-handler facades, migration fixture dependence on old
       transducers/projections, and the old AgentSession modules. The `rei today` memory summary now
       requests a `StoreRunner` and derives active counts plus the most recent active memory from the
-      Kioku adapter instead of the old Hasql `AgentMemoryReadModelEff`. `cabal test rei-core` green;
-      AgentSchedule untouched.
+      Kioku adapter instead of the old Hasql `AgentMemoryReadModelEff`. `AgentSessionRow` has also
+      moved to `Rei.Modules.Agent.Session.Types`, so live agent-session CLI output and Today session
+      activity formatting no longer import the legacy `AgentSession.Infrastructure.Table` module for
+      the row shape. `cabal test rei-core` green; AgentSchedule untouched.
 
 
 ## Surprises & Discoveries
@@ -403,6 +405,14 @@ Record every decision made while working on the plan.
   `AgentMemoryReadModelEff`.
   Date: 2026-06-24
 
+- Decision: Move Rei's stable `AgentSessionRow` type to `Rei.Modules.Agent.Session.Types` and keep a
+  compatibility re-export from `Rei.Modules.AgentSession.Infrastructure.Table` during the staged
+  session read-model decommission.
+  Rationale: `rei agent session` output and Today session activity need the row shape, but should
+  not depend on the old `agent_sessions` SQL table module once the remaining session reads move to
+  Kioku. The re-export keeps legacy projections and migration fixtures compiling.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -484,6 +494,13 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   now proves active count derivation and most-recent active memory selection from Kioku rows.
   Verification: Rei `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`;
   `git diff --check`.
+
+- 2026-06-24: M3 session row extraction landed. `AgentSessionRow` now lives in
+  `Rei.Modules.Agent.Session.Types`; the AgentSession facade re-exports that type, and live
+  `rei agent session` / `rei today` formatting imports it from the adapter-side module. The legacy
+  `AgentSession.Infrastructure.Table` module re-exports the row for old SQL statements and
+  projections while they remain. Verification: Rei
+  `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
 
 
 ## Context and Orientation

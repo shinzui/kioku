@@ -256,8 +256,10 @@ Track milestone-level progress across all child plans.
       `AgentMemoryRow` shape now lives in `Rei.Modules.Agent.Memory.Types` so live prompt/agent CLI
       paths no longer import the old SQL table module directly; `rei today` now derives its memory
       summary through the Kioku adapter via `StoreRunner` instead of the old Hasql AgentMemory read
-      model. Disposable production data-copy execution and remaining old AgentMemory/AgentSession
-      decommission work remain.
+      model; `AgentSessionRow` now lives in `Rei.Modules.Agent.Session.Types` so live session CLI
+      and Today session activity formatting no longer import the old AgentSession table module for
+      the row shape. Disposable production data-copy execution and remaining old
+      AgentMemory/AgentSession decommission work remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -488,6 +490,13 @@ Track milestone-level progress across all child plans.
   via `StoreRunner`, while the rest of the dashboard stays on Hasql read models. Verification:
   Rei `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`;
   `git diff --check`.
+
+- 2026-06-24: EP-4 M3 session row extraction completed. Rei's stable `AgentSessionRow` type now
+  lives in `Rei.Modules.Agent.Session.Types`; the AgentSession facade re-exports it from there, and
+  live agent-session CLI output plus Today session activity formatting import it directly from the
+  adapter-side module. The legacy SQL table module only re-exports the row while old projections and
+  migration fixtures remain. Verification: Rei
+  `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable
