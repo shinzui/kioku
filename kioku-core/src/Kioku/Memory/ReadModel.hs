@@ -2,10 +2,12 @@ module Kioku.Memory.ReadModel
   ( memoryInlineProjection,
     MemoryRow (..),
     MemoryByIdQuery (..),
+    MemoriesByNamespaceQuery (..),
     MemoriesByScopeQuery (..),
     MemoriesBySessionQuery (..),
     MemoriesByTypeQuery (..),
     memoryByIdReadModel,
+    memoriesByNamespaceReadModel,
     memoriesByScopeReadModel,
     memoriesBySessionReadModel,
     memoriesByTypeReadModel,
@@ -55,6 +57,8 @@ data MemoryRow = MemoryRow
   deriving stock (Generic, Eq, Show)
 
 newtype MemoryByIdQuery = MemoryByIdQuery Text
+
+newtype MemoriesByNamespaceQuery = MemoriesByNamespaceQuery Text
 
 data MemoriesByScopeQuery = MemoriesByScopeQuery Text (Maybe Text) (Maybe Text)
 
@@ -117,6 +121,18 @@ memoryByIdReadModel =
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
       query = \(MemoryByIdQuery mid) -> Tx.statement mid selectMemoryByIdStmt
+    }
+
+memoriesByNamespaceReadModel :: ReadModel MemoriesByNamespaceQuery [MemoryRecord]
+memoriesByNamespaceReadModel =
+  ReadModel
+    { name = "kioku-memories-by-namespace",
+      tableName = "kioku_memories",
+      subscriptionName = "kioku-memory-inline",
+      version = 1,
+      shapeHash = "kioku-memory-v1",
+      defaultConsistency = Eventual,
+      query = \(MemoriesByNamespaceQuery ns) -> Tx.statement ns selectActiveByNamespaceStmt
     }
 
 memoriesByScopeReadModel :: ReadModel MemoriesByScopeQuery [MemoryRecord]
@@ -215,6 +231,16 @@ selectMemoryByIdStmt =
     )
     (E.param (E.nonNullable E.text))
     (D.rowMaybe memoryRowDecoder)
+
+selectActiveByNamespaceStmt :: Statement Text [MemoryRecord]
+selectActiveByNamespaceStmt =
+  preparable
+    ( "SELECT "
+        <> memoryRowColumns
+        <> " FROM kioku_memories WHERE status = 'active' AND namespace = $1 ORDER BY created_at DESC"
+    )
+    (E.param (E.nonNullable E.text))
+    (D.rowList memoryRecordDecoder)
 
 selectActiveByScopeStmt :: Statement (Text, Maybe Text, Maybe Text) [MemoryRecord]
 selectActiveByScopeStmt =

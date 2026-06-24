@@ -241,8 +241,9 @@ Track milestone-level progress across all child plans.
 - [ ] EP-4: Rei AgentMemory/AgentSession re-homed onto kioku with `IntentionId`/`HabitId` scope mapping
       has started: Rei now consumes local kioku packages, composes kioku's own migrations into the
       migration runner, has a tested `Rei.Modules.Agent.Memory.KiokuAdapter` for scope/focus/row
-      mapping, and delegates AgentMemory/AgentSession writes to `Kioku.Memory`/`Kioku.Session`.
-      Rei recall/read CLI paths and historical stream migration remain.
+      mapping, delegates AgentMemory/AgentSession writes to `Kioku.Memory`/`Kioku.Session`, and
+      rewires `ContextBuilder` memory recall onto scoped `Kioku.Recall` adapter functions. Rei CLI
+      read paths and historical stream migration remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs

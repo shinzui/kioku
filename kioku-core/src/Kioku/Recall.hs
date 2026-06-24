@@ -10,6 +10,7 @@ module Kioku.Recall
     priorityWeight,
     confidenceWeight,
     applyCharacterBudgets,
+    getActiveInNamespace,
     getActiveByScope,
     getGlobal,
     getBySession,
@@ -43,9 +44,11 @@ import Kioku.Api.Types (MemoryRecord (..), MemoryType, memoryTypeToText)
 import Kioku.Id (SessionId, idText)
 import Kioku.Memory.Embedding (embedWithRetry)
 import Kioku.Memory.ReadModel
-  ( MemoriesByScopeQuery (..),
+  ( MemoriesByNamespaceQuery (..),
+    MemoriesByScopeQuery (..),
     MemoriesBySessionQuery (..),
     MemoriesByTypeQuery (..),
+    memoriesByNamespaceReadModel,
     memoriesByScopeReadModel,
     memoriesBySessionReadModel,
     memoriesByTypeReadModel,
@@ -488,6 +491,13 @@ getActiveByScope scope =
     Eventual
     memoriesByScopeReadModel
     (MemoriesByScopeQuery (scopeNamespaceText scope) (scopeKindText scope) (scopeRefText scope))
+
+getActiveInNamespace ::
+  (IOE :> es, Store :> es) =>
+  Namespace ->
+  Eff es (Either ReadModelError [MemoryRecord])
+getActiveInNamespace (Namespace ns) =
+  runQueryWith Nothing Eventual memoriesByNamespaceReadModel (MemoriesByNamespaceQuery ns)
 
 getGlobal ::
   (IOE :> es, Store :> es) =>

@@ -85,7 +85,10 @@ This section must always reflect the actual current state of the work.
       `Kioku.Migrations.kiokuOwnMigrations` after Rei's existing Kiroku/Keiro framework
       migrations and before Rei's application migrations.
 - [ ] M1 remaining: run `just run-migrations` against a disposable Rei DB and verify it creates
-      `kiroku.kioku_memories` / `kiroku.kioku_sessions` / `kiroku.kioku_turns`.
+      `kiroku.kioku_memories` / `kiroku.kioku_sessions` / `kiroku.kioku_turns`. A direct
+      `rei-migrations` run against `rei_kioku_mig_check_20260624` did not reach the codd/kioku
+      migration pass because frozen legacy hasql migrations fail first on missing historical
+      `message_store`/`messages` schema objects.
 - [x] M1: new adapter module `Rei.Modules.Agent.Memory.KiokuAdapter` maps `MemoryAnchor ↔ MemoryScope`,
       `CoachingFocusType → focus :: Text`, session intention scope, and `Kioku` read rows →
       Rei `AgentMemoryRow`; it also owns Rei→Kioku ID re-prefixing and command-data conversion.
@@ -94,8 +97,13 @@ This section must always reflect the actual current state of the work.
       --test-options '-p Kioku'` passes 10 focused tests, including integration checks that call
       Rei's public write handlers and read the resulting rows from `kioku_memories` /
       `kioku_sessions`. The old read-model path still serves reads until M2.
-- [ ] M2: `ContextBuilder.hs` recall (the three call sites) rewired onto `Kioku.Recall`; `rei agent
-      memory list/show/archive` rewired onto kioku reads/writes.
+- [x] M2: `ContextBuilder.hs` recall (the three memory call sites) is rewired onto
+      Kioku-backed adapter functions. Kioku now exposes `Kioku.Recall.getActiveInNamespace`, and
+      Rei's adapter exposes the old `getActiveMemories`, `getActiveMemoriesForIntention`, and
+      `getWorkspaceMemories` names while converting `Kioku.MemoryRecord` back to
+      `AgentMemoryRow`.
+- [ ] M2 remaining: `rei agent memory list/show/archive` and the session-show memory list still
+      need to be rewired onto kioku reads/writes.
 - [ ] M2: `{{agent_memories}}` rendered section proven byte-identical on a captured sample (golden
       comparison before/after).
 - [ ] M3: historical `agent_memory`/`agent_session` kiroku streams copied into kioku streams by a
@@ -151,6 +159,14 @@ implementation. Provide concise evidence.
   `withKiokuTestStore`, that applies Kioku's full migration bundle on a fresh test database without
   changing the existing Keiro-only tests.
 
+- A disposable Rei DB migration run exposed a pre-existing fresh-database break in frozen legacy
+  hasql migrations before Rei reaches the codd migration list that now contains Kioku. With
+  `HASKELL_ENV=development`, `rei-core:rei-migrations` first failed in
+  `20260119180244_search_path.sql` because schema `message_store` did not exist; after creating
+  that schema in the disposable DB, it failed later because relation `messages` did not exist. This
+  means the current M1 verification cannot prove or disprove Kioku's composed migrations until the
+  legacy bootstrap assumptions are satisfied or bypassed.
+
 (Add further discoveries as work proceeds.)
 
 
@@ -197,6 +213,13 @@ Record every decision made while working on the plan.
   Rationale: EP-2 is a soft dependency. Scoped recall reproduces Rei's current
   `WHERE status='active'` behaviour exactly (which is what the byte-stability test needs); hybrid
   recall is a strict improvement layered later without touching ContextBuilder.
+  Date: 2026-06-24
+
+- Decision: Add `Kioku.Recall.getActiveInNamespace` and its `kioku-memories-by-namespace` read model
+  for Rei's all-active memory recall path instead of emulating it with multiple scope queries.
+  Rationale: Rei's `getActiveMemories` historically returned every active memory in creation order
+  without scope filtering. A namespace-level active query preserves that behavior for
+  `ContextBuilder` and keeps the API host-agnostic for other consumers.
   Date: 2026-06-24
 
 - Decision: The AgentMemory **filesystem mirror** reactor
@@ -248,7 +271,11 @@ Record every decision made while working on the plan.
 
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 
-(To be filled during and after implementation.)
+- 2026-06-24: M2 ContextBuilder recall slice compiles and passes focused tests. Verification:
+  `cabal build kioku-core`; `cabal test kioku-test`; Rei `cabal build rei-core`;
+  `cabal test rei-core-test --test-options '-p Kioku'`. A `ContextBuilder` test filter compiled but
+  matched zero named tests, so the current executable proof is the Kioku-backed adapter integration
+  test plus build coverage of `ContextBuilder`.
 
 
 ## Context and Orientation
