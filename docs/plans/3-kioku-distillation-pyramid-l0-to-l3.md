@@ -133,8 +133,9 @@ Milestone M2 — L2 scene generation:
 - [ ] Add the L2 async reactor `Kioku.Distill.L2.sceneReactor`: a downward-only timer (or
       `AsyncWorkerSpec`) that, when atoms in a scope change, groups them and regenerates the scene,
       upserting `kioku_scenes`; plus a side-effect leg mirroring the scene to
-      `<workspace>/.kioku/scenes/<scope>.md`. Remaining: route `kioku-l2-scene` timers from the
-      worker host, add the filesystem mirror, and expose the `kioku scenes --scope ...` read path.
+      `<workspace>/.kioku/scenes/<scope>.md`. Partial 2026-06-24: `kioku worker` now routes both L1
+      extract timers and L2 scene timers through the shared distillation timer worker. Remaining: add
+      the filesystem mirror and expose the `kioku scenes --scope ...` read path.
 - [ ] M2 acceptance: after the M1 pass, `kioku scenes --scope …` prints a scene block and the markdown
       file exists.
 

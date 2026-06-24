@@ -11,7 +11,7 @@ import Data.Time (getCurrentTime)
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Distill.L1 (scopedScanCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
-import Kioku.Distill.Timer.Worker (runL1TimerWorkerLoop, runL1TimerWorkerOnce)
+import Kioku.Distill.Timer.Worker (runKiokuTimerWorkerLoop, runKiokuTimerWorkerOnce)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Memory.Embedding.Worker (backfillMissingEmbeddings, runEmbeddingWorkerHost)
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
@@ -34,7 +34,7 @@ workerOptionsParser =
       )
     <*> switch
       ( long "timers-once"
-          <> help "Claim and fire at most one due kioku L1 timer, then exit"
+          <> help "Claim and fire at most one due kioku distillation timer, then exit"
       )
 
 runWorker :: WorkerOptions -> IO ()
@@ -74,27 +74,27 @@ runContinuousWorker env store capability config = do
         Left storeErr -> ioError (userError ("kioku worker store error: " <> show storeErr))
         Right () -> pure ()
     VectorExtensionUnavailable -> do
-      putStrLn "pgvector is not available; recall will run FTS-only; running L1 timer worker only."
+      putStrLn "pgvector is not available; recall will run FTS-only; running kioku timer worker only."
       runTimerLoop env
     VectorColumnsUnavailable missing -> do
-      putStrLn ("pgvector columns are missing (" <> Text.unpack (Text.intercalate ", " missing) <> "); running L1 timer worker only.")
+      putStrLn ("pgvector columns are missing (" <> Text.unpack (Text.intercalate ", " missing) <> "); running kioku timer worker only.")
       runTimerLoop env
 
 runTimerOnce :: AppEnv -> IO ()
 runTimerOnce env = do
   rt <- newDistillRuntime
   now <- getCurrentTime
-  result <- runAppIO env (runL1TimerWorkerOnce Nothing rt (scopedScanCandidates 5) now)
+  result <- runAppIO env (runKiokuTimerWorkerOnce Nothing rt (scopedScanCandidates 5) now)
   case result of
     Left storeErr -> ioError (userError ("kioku timer worker store error: " <> show storeErr))
-    Right Nothing -> putStrLn "No due kioku L1 timers."
-    Right (Just _) -> putStrLn "Processed one due kioku L1 timer."
+    Right Nothing -> putStrLn "No due kioku distillation timers."
+    Right (Just _) -> putStrLn "Processed one due kioku distillation timer."
 
 runTimerLoop :: AppEnv -> IO ()
 runTimerLoop env = do
   rt <- newDistillRuntime
-  putStrLn "kioku L1 timer worker started."
-  result <- runAppIO env (runL1TimerWorkerLoop Nothing rt (scopedScanCandidates 5) defaultTimerPollMicros)
+  putStrLn "kioku timer worker started."
+  result <- runAppIO env (runKiokuTimerWorkerLoop Nothing rt (scopedScanCandidates 5) defaultTimerPollMicros)
   case result of
     Left storeErr -> ioError (userError ("kioku timer worker store error: " <> show storeErr))
     Right () -> pure ()
