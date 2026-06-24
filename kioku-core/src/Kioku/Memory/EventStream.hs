@@ -8,7 +8,7 @@ module Kioku.Memory.EventStream
 where
 
 import Data.Aeson (Value)
-import Data.Aeson.Types (parseEither)
+import Data.Aeson.Types (Parser, parseEither, withObject, (.:), (.:?))
 import Data.Text qualified as Text
 import Keiki.Core (HsPred)
 import Keiki.Generics (emptyRegFile)
@@ -16,7 +16,8 @@ import Keiro.Codec (Codec (..), EventType (..))
 import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
-import Kioku.Id (MemoryId, idText)
+import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
+import Kioku.Id (MemoryId, SessionId, idText, parseIdAnyPrefix)
 import Kioku.Memory.Domain
 import Kioku.Prelude
 
@@ -68,4 +69,89 @@ parseMemoryEvent :: Value -> Either Text MemoryEvent
 parseMemoryEvent value =
   case parseEither parseJSON value of
     Right event -> Right event
-    Left err -> Left (Text.pack err)
+    Left nativeErr ->
+      case parseEither parseLegacyMemoryEvent value of
+        Right event -> Right event
+        Left legacyErr -> Left (Text.pack nativeErr <> "; legacy decode failed: " <> Text.pack legacyErr)
+
+parseLegacyMemoryEvent :: Value -> Parser MemoryEvent
+parseLegacyMemoryEvent =
+  withObject "Rei AgentMemoryEvent" $ \o -> do
+    tag <- o .: "type"
+    payload <- o .: "data"
+    case tag of
+      "agent_memory_recorded" -> MemoryRecorded <$> parseLegacyMemoryRecorded payload
+      "agent_memory_superseded" -> MemorySuperseded <$> parseLegacyMemorySuperseded payload
+      "agent_memory_archived" -> MemoryArchived <$> parseLegacyMemoryArchived payload
+      "agent_memory_tags_updated" -> MemoryTagsUpdated <$> parseLegacyMemoryTagsUpdated payload
+      "agent_memory_confidence_updated" -> MemoryConfidenceUpdated <$> parseLegacyMemoryConfidenceUpdated payload
+      other -> fail ("Unknown Rei AgentMemoryEvent tag: " <> Text.unpack other)
+
+parseLegacyMemoryRecorded :: Value -> Parser MemoryRecordedData
+parseLegacyMemoryRecorded =
+  withObject "Rei AgentMemoryRecordedData" $ \o -> do
+    memoryId <- parseLegacyMemoryId =<< o .: "memoryId"
+    sessionId <- traverse parseLegacySessionId =<< o .:? "sessionId"
+    scope <- parseLegacyAnchor =<< o .: "anchor"
+    supersedes <- traverse parseLegacyMemoryId =<< o .:? "supersedes"
+    MemoryRecordedData memoryId
+      <$> o .: "agentId"
+      <*> pure sessionId
+      <*> pure scope
+      <*> o .: "memoryType"
+      <*> o .: "content"
+      <*> pure 100
+      <*> o .: "confidence"
+      <*> o .: "tags"
+      <*> pure supersedes
+      <*> o .: "recordedAt"
+
+parseLegacyMemorySuperseded :: Value -> Parser MemorySupersededData
+parseLegacyMemorySuperseded =
+  withObject "Rei AgentMemorySupersededData" $ \o ->
+    MemorySupersededData
+      <$> (parseLegacyMemoryId =<< o .: "memoryId")
+      <*> (parseLegacyMemoryId =<< o .: "supersededBy")
+      <*> o .: "supersededAt"
+
+parseLegacyMemoryArchived :: Value -> Parser MemoryArchivedData
+parseLegacyMemoryArchived =
+  withObject "Rei AgentMemoryArchivedData" $ \o ->
+    MemoryArchivedData
+      <$> (parseLegacyMemoryId =<< o .: "memoryId")
+      <*> o .: "archivedAt"
+
+parseLegacyMemoryTagsUpdated :: Value -> Parser MemoryTagsUpdatedData
+parseLegacyMemoryTagsUpdated =
+  withObject "Rei AgentMemoryTagsUpdatedData" $ \o ->
+    MemoryTagsUpdatedData
+      <$> (parseLegacyMemoryId =<< o .: "memoryId")
+      <*> o .: "tags"
+      <*> o .: "updatedAt"
+
+parseLegacyMemoryConfidenceUpdated :: Value -> Parser MemoryConfidenceUpdatedData
+parseLegacyMemoryConfidenceUpdated =
+  withObject "Rei AgentMemoryConfidenceUpdatedData" $ \o ->
+    MemoryConfidenceUpdatedData
+      <$> (parseLegacyMemoryId =<< o .: "memoryId")
+      <*> o .: "confidence"
+      <*> o .: "updatedAt"
+
+parseLegacyAnchor :: Value -> Parser MemoryScope
+parseLegacyAnchor =
+  withObject "Rei MemoryAnchor" $ \o -> do
+    anchorType <- o .: "type"
+    case anchorType of
+      "intention" -> ScopeEntity reiNamespace (ScopeKind "intention") <$> o .: "id"
+      "habit" -> ScopeEntity reiNamespace (ScopeKind "habit") <$> o .: "id"
+      "workspace" -> pure (ScopeGlobal reiNamespace)
+      other -> fail ("Unknown Rei MemoryAnchor type: " <> Text.unpack other)
+
+parseLegacyMemoryId :: Text -> Parser MemoryId
+parseLegacyMemoryId = either (fail . Text.unpack) pure . parseIdAnyPrefix
+
+parseLegacySessionId :: Text -> Parser SessionId
+parseLegacySessionId = either (fail . Text.unpack) pure . parseIdAnyPrefix
+
+reiNamespace :: Namespace
+reiNamespace = Namespace "rei"

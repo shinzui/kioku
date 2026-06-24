@@ -7,6 +7,7 @@ module Kioku.Id
     genSessionId,
     idText,
     parseId,
+    parseIdAnyPrefix,
   )
 where
 
@@ -14,6 +15,7 @@ import Data.KindID.Class (ToPrefix (..), ValidPrefix)
 import Data.KindID.V7 (KindID)
 import Data.KindID.V7 qualified as KindID
 import Data.Text qualified as Text
+import Data.TypeID.V7 qualified as TypeID
 import Kioku.Prelude
 
 type MemoryId = KindID "kioku_memory"
@@ -38,3 +40,13 @@ parseId t =
   case KindID.parseString @prefix (Text.unpack t) of
     Left err -> Left (Text.pack (show err))
     Right kid -> Right kid
+
+parseIdAnyPrefix ::
+  forall prefix.
+  (ToPrefix prefix, ValidPrefix (PrefixSymbol prefix)) =>
+  Text ->
+  Either Text (KindID prefix)
+parseIdAnyPrefix t =
+  case TypeID.parseText t of
+    Left err -> Left (Text.pack (show err))
+    Right tid -> Right (KindID.decorateKindID (TypeID.getUUID tid))

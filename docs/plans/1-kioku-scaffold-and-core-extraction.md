@@ -105,9 +105,12 @@ This section must always reflect the actual current state of the work.
       and CLI, `cabal run kioku -- demo-session` printed a completed session plus one user turn,
       and direct `psql` queries showed the row in `kiroku.kioku_sessions` with `status =
       'completed'` and the corresponding `kiroku.kioku_turns` row.
-- [ ] M4: A golden test in `kioku-core/test` decodes a sample Rei `agent_memory` JSON payload
+- [x] M4: A golden test in `kioku-core/test` decodes a sample Rei `agent_memory` JSON payload
       (`{"type":"agent_memory_recorded","data":{…}}`) and a sample Rei `agent_session` payload
       through kioku's codec into the kioku event types, proving IP-6 backward compatibility.
+      Completed 2026-06-24: `kioku-core/test/Kioku/ReiCompatSpec.hs` exercises
+      `parseMemoryEvent` and `parseSessionEvent`; `cabal test kioku-core` ran 2 compatibility tests
+      and passed.
 
 
 ## Surprises & Discoveries
@@ -122,6 +125,10 @@ implementation. Provide concise evidence.
   allowed `just create-database` to apply the full migration suite over the Unix socket.
   Evidence: the log showed `FATAL: could not create any TCP/IP sockets`, then `just
   create-database` applied 21 migrations and `\dt kiroku.kioku_*` listed the three kioku tables.
+- **Legacy Rei ids carry different TypeID prefixes.** Rei event JSON contains `agent_memory_*` and
+  `agent_session_*` ids, while kioku's typed ids require `kioku_memory_*` and `kioku_session_*`.
+  Evidence: strict `parseId` rejects the legacy prefixes; M4 added `parseIdAnyPrefix`, which parses
+  the TypeID suffix and decorates the same UUID with the target kioku prefix.
 
 
 ## Decision Log
@@ -167,6 +174,13 @@ Record every decision made while working on the plan.
   turns simply never issues `recordTurn`.
   Rationale: MasterPlan Decision Log ("Raw conversation turns are an optional, per-session
   capability"). Rei's current sessions record no turns; shikigami/mori may.
+  Date: 2026-06-24
+
+- Decision: Rei legacy event decoding re-tags `agent_memory_*` and `agent_session_*` TypeID suffixes
+  into kioku typed ids instead of storing wrongly-prefixed `KindID` values.
+  Rationale: kioku's public event types are typed as `KindID "kioku_memory"` /
+  `KindID "kioku_session"`. Parsing the source TypeID as an untyped v7 TypeID and redecorating its
+  UUID keeps the stable identity suffix while preserving type safety and stream naming consistency.
   Date: 2026-06-24
 
 - Decision: The public failure helper is named `Kioku.Session.failSession` rather than
@@ -1361,8 +1375,8 @@ pin. When a consumer is mid-keiro-migration (mori), reconcile tags in that consu
 
 ### IP-6 — Rei codec backward-compatibility (the EP-1↔EP-4 seam)
 
-kioku's codec `encode` always writes the native flat shape; `decode` accepts native AND Rei's legacy
-`eventAesonOptions` shape. The exact field map kioku's legacy decoder must implement:
+kioku's codec `encode` always writes the native `eventAesonOptions` envelope; `decode` accepts native
+AND Rei's legacy `eventAesonOptions` shape. The exact field map kioku's legacy decoder implements:
 
 **Rei `agent_memory` events.** Envelope: `{"type": "<snake_case_tag>", "data": <inner>}` where the tag
 is `agent_memory_recorded | agent_memory_superseded | agent_memory_archived |
@@ -1370,10 +1384,8 @@ agent_memory_tags_updated | agent_memory_confidence_updated`. Inner keys are **c
 (`defaultOptions` on the `*Data` records). Field map for `agent_memory_recorded` →
 kioku `MemoryRecorded`:
 
-- `memoryId` (text typeid `agent_memory_…`) → `memoryId` (parse as `KindID "kioku_memory"` is NOT
-  prefix-compatible; for the golden test, parse the text and re-tag via `decorateKindID`, OR store the
-  raw text — EP-4 decides the final id remap. For EP-1's golden test, assert on the text via `idText`
-  round-trip, decoding the Rei prefix leniently).
+- `memoryId` (text typeid `agent_memory_…`) → `memoryId` (parse the TypeID suffix and re-tag the
+  UUID as `KindID "kioku_memory"` with `decorateKindID`).
 - `agentId` → `agentId`.
 - `sessionId` (`agent_session_…`) → `sessionId :: Maybe SessionId` (Just).
 - `memoryType` (`"fact"|"pattern"|"preference"|"constraint"`) → `memoryType` via `memoryTypeFromText`.

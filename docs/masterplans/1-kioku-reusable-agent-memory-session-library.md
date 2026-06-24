@@ -88,7 +88,7 @@ five milestones / ten files.
 
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
-| 1 | kioku Scaffold and Core Extraction | docs/plans/1-kioku-scaffold-and-core-extraction.md | None | None | In Progress |
+| 1 | kioku Scaffold and Core Extraction | docs/plans/1-kioku-scaffold-and-core-extraction.md | None | None | Complete |
 | 2 | kioku Hybrid Retrieval (pgvector + FTS + RRF) | docs/plans/2-kioku-hybrid-retrieval-pgvector-fts-rrf.md | EP-1 | None | Not Started |
 | 3 | kioku Distillation Pyramid (L0 to L3) | docs/plans/3-kioku-distillation-pyramid-l0-to-l3.md | EP-1 | EP-2 | Not Started |
 | 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | Not Started |
@@ -220,7 +220,7 @@ Track milestone-level progress across all child plans.
 - [x] EP-1: memory + session keiki aggregates, native codecs, and generic `MemoryScope` model exist
 - [x] EP-1: inline projections (structured row + `tsvector` FTS) and `kioku-migrations` apply to a fresh DB
 - [x] EP-1: `Kioku.Memory`/`Kioku.Session` write API + placeholder scoped `Kioku.Recall` demonstrated via `kioku-cli`
-- [ ] EP-1: Rei legacy memory/session JSON decode is covered by a golden compatibility test
+- [x] EP-1: Rei legacy memory/session JSON decode is covered by a golden compatibility test
 - [ ] EP-2: `pgvector` column + ANN index + embedding async projection (baikai) backfills vectors
 - [ ] EP-2: hybrid RRF recall (FTS + cosine + recency/priority) returns ranked results via CLI
 - [ ] EP-3: L1 atom extraction + LLM consolidation (`store|update|merge|skip`) recorded as events
