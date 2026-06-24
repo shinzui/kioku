@@ -35,12 +35,20 @@ common shared
 library
   import:          warnings, shared
   hs-source-dirs:  src
-  exposed-modules: Kioku.App
+  exposed-modules:
+    Kioku.App
+    Kioku.Memory
+    Kioku.Memory.Domain
+    Kioku.Memory.EventStream
+    Kioku.Memory.ReadModel
+    Kioku.Recall
+
   build-depends:
     , aeson                   >=2.2
     , base                    >=4.21 && <5
     , bytestring              >=0.11
     , containers              >=0.6
+    , contravariant           >=1.5
     , contravariant-extras    >=0.3
     , effectful               >=2.5
     , effectful-core          >=2.5

@@ -40,11 +40,13 @@ library
 
   build-depends:
     , base                  >=4.21 && <5
+    , containers            >=0.6
     , kioku-api
     , kioku-core
     , kiroku-store
     , optparse-applicative  >=0.18
     , text                  >=2.1
+    , time                  >=1.12
 
 executable kioku
   import:         warnings, shared

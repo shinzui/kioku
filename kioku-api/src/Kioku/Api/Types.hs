@@ -12,6 +12,7 @@ module Kioku.Api.Types
   )
 where
 
+import Data.Aeson (withText)
 import Data.Set (Set)
 import Kioku.Api.Scope (MemoryScope)
 import Kioku.Prelude
@@ -23,6 +24,13 @@ data MemoryType
   | MemoryConstraint
   | MemoryInstruction
   deriving stock (Generic, Eq, Show, Enum, Bounded)
+
+instance ToJSON MemoryType where
+  toJSON = toJSON . memoryTypeToText
+
+instance FromJSON MemoryType where
+  parseJSON = withText "MemoryType" $ \t ->
+    maybe (fail ("Unknown MemoryType: " <> show t)) pure (memoryTypeFromText t)
 
 memoryTypeToText :: MemoryType -> Text
 memoryTypeToText = \case
@@ -46,6 +54,13 @@ data Confidence
   | MediumConfidence
   | LowConfidence
   deriving stock (Generic, Eq, Show, Enum, Bounded)
+
+instance ToJSON Confidence where
+  toJSON = toJSON . confidenceToText
+
+instance FromJSON Confidence where
+  parseJSON = withText "Confidence" $ \t ->
+    maybe (fail ("Unknown Confidence: " <> show t)) pure (confidenceFromText t)
 
 confidenceToText :: Confidence -> Text
 confidenceToText = \case

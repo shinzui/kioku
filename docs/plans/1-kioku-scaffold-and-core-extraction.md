@@ -84,11 +84,20 @@ This section must always reflect the actual current state of the work.
       `Kioku.Api.Types` (`MemoryType`, `Confidence`, `MemoryRecord`), `Kioku.Id`, `Kioku.Prelude`.
       Completed 2026-06-24: the package exposes all four modules and they compile in
       `cabal build all`.
-- [ ] M2: Memory aggregate (`Kioku.Memory.Domain`, `.EventStream`, `.ReadModel`) builds; the
+- [x] M2: Memory aggregate (`Kioku.Memory.Domain`, `.EventStream`, `.ReadModel`) builds; the
       `kioku_memories` inline row + `content_tsv` FTS projection upserts on every event constructor.
-- [ ] M2: `Kioku.Memory` write API (`record`/`supersede`/`archive`/`updateTags`/`updateConfidence`)
-      and placeholder `Kioku.Recall` scoped queries build and run.
-- [ ] M2: `cabal run kioku -- demo` records a memory in a scope and recalls it back (observable).
+      Completed 2026-06-24: `cabal build all` compiled the Memory domain, event stream, read model,
+      write API, recall API, and CLI demo. The inline projection handles `MemoryRecorded`,
+      `MemorySuperseded`, `MemoryArchived`, `MemoryTagsUpdated`, `MemoryConfidenceUpdated`, and the
+      reserved `MemoryMerged`.
+- [x] M2: `Kioku.Memory` write API (`record`/`supersede`/`archive`/`updateTags`/`updateConfidence`)
+      and placeholder `Kioku.Recall` scoped queries build and run. Completed 2026-06-24: the demo
+      called `Kioku.Memory.record` and `Kioku.Recall.getActiveByScope` through `runAppIO`, and the
+      scoped recall returned the inserted row.
+- [x] M2: `cabal run kioku -- demo` records a memory in a scope and recalls it back (observable).
+      Completed 2026-06-24: the command printed `Recorded memory
+      kioku_memory_01kvx9my35e5y825cpy4nycjgz in scope rei/intention/intention_demo` followed by the
+      recalled row `prefers concise answers`; a direct Postgres query showed `has_tsv = t`.
 - [ ] M3: Session aggregate (`Kioku.Session.Domain`, `.EventStream`, `.ReadModel`) builds; events
       `SessionStarted`/`SessionCompleted`/`SessionFailed`/`InteractiveSessionRecorded`/`TurnRecorded`;
       `Kioku.Session` write API builds and a session start→turn→complete demo runs.
@@ -115,13 +124,14 @@ implementation. Provide concise evidence.
 
 Record every decision made while working on the plan.
 
-- Decision: kioku's hand-written codec performs **lenient decode**: it accepts BOTH kioku's native
-  flat `{"kind": "...", ...}` shape AND Rei's legacy `{"type": "agent_memory_recorded", "data":
-  {...}}` shape. Encode always writes the native flat shape.
-  Rationale: IP-6 makes EP-1 responsible for letting EP-4 replay Rei's historical streams. A
-  lenient decoder lets EP-4 copy event payloads verbatim into kioku streams (no transform), and a
-  rebuild of the projection re-reads them. The two shapes are unambiguous: the legacy shape has a
-  top-level `"type"` + `"data"` envelope; the native shape has a top-level `"kind"` and flat fields.
+- Decision: kioku's native event codec uses the shared `eventAesonOptions` envelope
+  (`{"type":"memory_recorded","data":{...}}`) rather than the earlier kizashi-style flat
+  `{"kind": ...}` object. M4 will extend the `parseJSON` path with lenient Rei legacy parsing for
+  historical `agent_memory_*` and `agent_session_*` events.
+  Rationale: IP-7's coding-convention section makes `eventAesonOptions` the preferred shape, and it
+  is closer to Rei's existing envelope than a new flat format. Keeping the native shape envelope-based
+  reduces the EP-4 migration surface while still allowing M4 to absorb Rei-specific constructor tags,
+  id prefixes, and anchor fields.
   Date: 2026-06-24
 
 - Decision: kioku stores the scope as three flat columns/fields — `namespace TEXT`,
@@ -1433,3 +1443,6 @@ Point IP-7. The rules that bear on this plan:
   `cabal build all`, `just create-database`, and `\dt kiroku.kioku_*` evidence; recorded the newer
   consumer-compatible `kiroku` pin, the valid fallback `mori/repo-id`, and the local Postgres TCP
   port workaround.
+- 2026-06-24: Implemented and verified M2 memory write/recall work. Updated Progress with
+  `cabal run kioku -- demo` and Postgres `content_tsv` evidence; revised the codec decision to match
+  the implemented `eventAesonOptions` native shape while preserving the M4 legacy-decode requirement.
