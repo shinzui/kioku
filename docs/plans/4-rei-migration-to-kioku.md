@@ -48,10 +48,11 @@ but are not required to compile or demonstrate this plan.
   after each coaching response all flow through kioku's `Kioku.Memory` write API and
   `Kioku.Recall` read API instead of Rei's own store handlers.
 - Every historical memory and session that Rei recorded before the migration still appears: the
-  old `agent_memory-<id>` and `agent_session-<id>` event streams have been copied into kioku's
-  `kioku_memory-<id>` / `kioku_session-<id>` streams (payloads unchanged — kioku's codec reads
-  Rei's legacy JSON directly), and kioku's projection rebuild has populated kioku's read-model
-  tables from them.
+  old `agent_memory-<id>` and `agent_session-<id>` event streams have been decoded through kioku's
+  legacy payload parsers, re-encoded as native kioku events, and appended into kioku's
+  `kioku_memory-<id>` / `kioku_session-<id>` streams. The TypeID UUID body, metadata, causation, and
+  correlation are preserved where the store API permits it, and kioku's projection rebuild has
+  populated kioku's read-model tables from the copied streams.
 - Rei's full test suite (`cabal test rei-core`, roughly 1060+ tests) stays green throughout.
 
 The single user-visible proof is this: after the migration, `rei agent coach` (or any coaching
@@ -112,8 +113,12 @@ This section must always reflect the actual current state of the work.
       `AgentMemoryRow` fixtures against equivalent `Kioku.MemoryRecord` fixtures converted through
       the adapter, and also covers the empty placeholder plus unknown-type dropping.
 - [ ] M3: historical `agent_memory`/`agent_session` kiroku streams copied into kioku streams by a
-      one-shot transform; kioku projection rebuilt; counts match; coaching recall returns the same
-      memories.
+      one-shot transform; additive `rei-kioku-migrate` executable now builds and exposes
+      `copy-memories`, `copy-sessions`, `copy-all`, and `verify`. It decodes legacy Rei payloads
+      through Kioku's compatibility parsers, re-encodes native Kioku events, appends only missing
+      destination-stream tails, and reapplies Kioku inline projections. Remaining: run against a
+      disposable data copy, extend `verify` beyond counts to replay/recall equivalence, and prove
+      coaching recall returns the same memories.
 - [ ] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
       decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters;
       `cabal test rei-core` green; AgentSchedule untouched.
@@ -178,6 +183,15 @@ implementation. Provide concise evidence.
   interpreted those builders with only `runHasqlWithPool`. Those runners now execute through the
   existing `StoreRunner`, while unrelated read-model-only CLI queries remain on Hasql.
 
+- The M3 migration cannot be a byte-for-byte event row copy. `Keiro.Codec.decodeRecorded` rejects
+  legacy `AgentMemoryRecorded` / `AgentSessionStarted` event-type tags before Kioku's compatibility
+  payload parser can run, and Kiroku event IDs are globally unique so the same event UUID cannot be
+  inserted again with a different native payload. The migration therefore decodes the old
+  `events.data` payload with `Kioku.Memory.EventStream.parseMemoryEvent` /
+  `Kioku.Session.EventStream.parseSessionEvent`, re-encodes it with Kioku's native codec, preserves
+  the TypeID UUID body plus metadata/causation/correlation, and lets Kiroku assign fresh event IDs.
+  Evidence: `cabal build rei-core:rei-kioku-migrate` succeeds with this design.
+
 (Add further discoveries as work proceeds.)
 
 
@@ -185,17 +199,19 @@ implementation. Provide concise evidence.
 
 Record every decision made while working on the plan.
 
-- Decision: Migrate Rei's historical data by **copying the kiroku event streams**
-  (`agent_memory-<id>` → `kioku_memory-<id>`, `agent_session-<id>` → `kioku_session-<id>`) with the
-  event payloads **verbatim**, then rebuilding kioku's read-model projection — NOT by transforming
-  the read-model rows of `agent_memories`/`agent_sessions`.
+- Decision: Migrate Rei's historical data by **copying logical events from the kiroku streams**
+  (`agent_memory-<id>` → `kioku_memory-<id>`, `agent_session-<id>` → `kioku_session-<id>`) through
+  Kioku's legacy payload parsers and native encoders, then rebuilding kioku's read-model projection
+  — NOT by transforming the read-model rows of `agent_memories`/`agent_sessions`.
   Rationale: kioku is event-sourced; the streams are the source of truth and the read-model tables
-  are derived. EP-1's codec (per its Decision Log) performs a *lenient decode* that already reads
-  Rei's legacy `{"type":"agent_memory_recorded","data":{…}}` envelope, so the payloads need no
-  transform — only the stream **name** changes (`agent_memory` → `kioku_memory`). Copying streams +
-  rebuilding the projection is faithful, idempotent, and avoids reconstructing tag/confidence/
-  supersession history from a flattened row. The read-model rows are then recomputed by the same
-  inline projection EP-1 ships, guaranteeing they match a fresh kioku write.
+  are derived. EP-1's compatibility parsers read Rei's legacy
+  `{"type":"agent_memory_recorded","data":{…}}` envelope and re-prefix legacy TypeIDs into Kioku
+  typed IDs with the same UUID body. Re-encoding as native Kioku events is necessary because Keiro
+  rejects legacy event-type tags before payload decoding, and Kiroku event IDs are globally unique.
+  Copying logical stream contents + rebuilding the projection is faithful, idempotent, and avoids
+  reconstructing tag/confidence/supersession history from a flattened row. The read-model rows are
+  then recomputed by the same inline projection EP-1 ships, guaranteeing they match a fresh kioku
+  write.
   Date: 2026-06-24
 
 - Decision: Reconcile the kioku pin against Rei's pins by **bumping kioku's kiroku pin to match
@@ -314,6 +330,13 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   variable from legacy rows and Kioku-converted rows and asserts identical bytes for the four known
   memory type groups, the empty placeholder, and unknown-type dropping. Verification:
   Rei `cabal test rei-core-test --test-options='-p Kioku'`.
+
+- 2026-06-24: M3 additive migration-tool slice landed in Rei. `rei-kioku-migrate` builds and exposes
+  `copy-memories`, `copy-sessions`, `copy-all`, and `verify`; copy commands decode legacy Rei
+  payloads through Kioku compatibility parsers, re-encode native Kioku events, append missing
+  destination-stream tails, and rebuild Kioku inline read models. Verification:
+  Rei `cabal build rei-core:rei-kioku-migrate`;
+  `cabal run rei-core:rei-kioku-migrate -- --help`.
 
 
 ## Context and Orientation
@@ -679,53 +702,51 @@ check in Validation, then a live `rei agent coach` run with `--debug`/prompt-dum
 kioku, and the old AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
 are deleted (only the thin adapters remain). You write a one-shot executable that copies the
 historical `agent_memory-<id>` and `agent_session-<id>` kiroku streams into kioku's
-`kioku_memory-<id>` / `kioku_session-<id>` streams (payloads verbatim — kioku's lenient codec reads
-Rei's legacy JSON), then rebuild kioku's read-model projection from those streams. Counts match and
-coaching recall returns the same memories.
+`kioku_memory-<id>` / `kioku_session-<id>` streams by decoding Rei's legacy JSON payloads through
+Kioku's compatibility parsers and re-encoding native Kioku events, then rebuild kioku's read-model
+projection from those streams. Counts match and coaching recall returns the same memories.
 
 **Why copy streams, not rows (restated from the Decision Log).** kioku is event-sourced. The
 streams are the source of truth; the `kioku_memories`/`kioku_sessions` rows are derived. EP-1's
-codec already decodes Rei's `{"type":"agent_memory_recorded","data":{…}}` envelope, so no payload
-transform is needed — only the stream **category** name changes (`agent_memory` → `kioku_memory`,
-`agent_session` → `kioku_session`) and the typeid prefix in the stream id changes to match. The
-read-model rows are then recomputed by kioku's own inline projection, guaranteeing they are
-identical to a fresh kioku write.
+compatibility parsers already decode Rei's `{"type":"agent_memory_recorded","data":{…}}` envelope
+and re-prefix legacy TypeIDs into Kioku TypeIDs with the same UUID body. The migration re-encodes
+those decoded values with Kioku's native codec because Keiro's recorded-event decoder checks the
+stored event-type tag before it reaches the payload parser. The read-model rows are then recomputed
+by kioku's own inline projection, guaranteeing they are identical to a fresh kioku write.
 
 **The transform, concretely.** The historical keiro-migration `transform-context` tool no longer
 exists (see Surprises) but its shape is the template. AgentMemory and AgentSession are
 **boundary-stable leaf aggregates** (empty registers, no cross-stream events, 1:1 stream routing),
-so the transform is the simplest possible case: a pure stream-rename with no event re-routing.
+so the transform is still a one-to-one stream copy: decode one legacy event, encode one native
+Kioku event, and append it to the corresponding Kioku stream.
 
 Write a new executable `rei-kioku-migrate` (a stanza in `rei-core.cabal`, `hs-source-dirs:
 kioku-migrate`, `main-is: Main.hs`, deps: `rei-core`, `kioku-core`, `kiroku-store`,
-`hasql`, `optparse-applicative`, `text`, `uuid`, `containers`). It connects to the same DB (DSN from
+`hasql`, `optparse-applicative`, `text`, `containers`). It connects to the same DB (DSN from
 `REI_PG_CONNECTION_STRING`, fallback `PG_CONNECTION_STRING`) with
 `SET search_path TO "kiroku", public, pg_catalog`. It offers subcommands `copy-memories`,
-`copy-sessions`, `copy-all`, `verify`. The copy, per aggregate, in a single
-`Serializable Write` transaction:
+`copy-sessions`, `copy-all`, `verify`. The copy, per aggregate:
 
-1. Read the source streams: every kiroku `stream_events` row whose stream category is `agent_memory`
-   (resp. `agent_session`), in `$all` (global position) order, capturing each event's UUID,
-   stream id (the typeid after the first `-`), version, message type, JSON payload, and metadata.
-2. For each source event compute the destination stream name: replace the category and the id prefix
-   — `agent_memory-agent_memory_<UUID>` → `kioku_memory-kioku_memory_<UUID>` (keep the UUID body so
-   ids correspond; an `agent_session` id maps the same way to `kioku_session`). The payload's inner
-   `memoryId`/`sessionId`/`supersedes`/`supersededBy` fields **stay as the original `agent_memory_…`
-   typeids** — kioku's lenient decoder reads them, and the read-model row's `memory_id` is whatever
-   the payload carries. (If you prefer the read-model `memory_id` to be the kioku-prefixed id,
-   rewrite those payload fields too; choose one and document it — default: keep payload ids verbatim,
-   only the stream name changes, mirroring EP-1's "copy verbatim" intent. Verify which the kioku
-   projection keys on by reading EP-1's `Kioku.Memory.ReadModel`.)
-3. Bulk-insert the events into kioku's streams exactly as kiroku's append does: preserve event UUIDs,
-   byte-identical JSON, fresh per-new-stream 1-based versions, and a dense gap-free `$all` appended
-   after the current high-water mark, `ON CONFLICT DO NOTHING` (idempotent re-runs).
-4. After the copy, rebuild kioku's read-model projection so `kioku_memories`/`kioku_sessions` are
-   populated. The mechanism is whatever EP-1 ships for a projection rebuild (a `kioku-cli` rebuild
-   command, or folding each stream through kioku's inline projection in a Tx). If EP-1 has no rebuild
-   command, the `rei-kioku-migrate` tool itself folds each copied stream through kioku's inline
-   projection (import `Kioku.Memory.ReadModel`/`Kioku.Session.ReadModel`) in the same transaction —
-   this is the read-your-own-writes guarantee applied in bulk. Record the chosen mechanism in the
-   Decision Log.
+1. Read every recorded event whose source stream category is `agent_memory` (resp.
+   `agent_session`) in `$all` order via Kiroku's category read API.
+2. Decode each legacy payload with `Kioku.Memory.EventStream.parseMemoryEvent` or
+   `Kioku.Session.EventStream.parseSessionEvent`. These parsers read Rei's legacy tagged-union JSON
+   and re-prefix `agent_memory_*` / `agent_session_*` TypeIDs to `kioku_memory_*` /
+   `kioku_session_*`, preserving the TypeID UUID body.
+3. Compute the destination stream from the decoded Kioku event's ID:
+   `kioku_memory-kioku_memory_<UUID>` or `kioku_session-kioku_session_<UUID>`. Re-encode the event
+   with Kioku's native codec, preserving source metadata plus causation/correlation IDs. Let Kiroku
+   assign fresh event IDs; the old event UUID cannot be reused because Kiroku's `events.event_id` is
+   globally unique.
+4. Append only the missing tail of each destination stream. If a destination stream already has the
+   same number of events, the copy is skipped for that stream. If it has fewer events, append the
+   remaining source events at `ExactVersion`; if it has more, fail loudly because manual inspection is
+   required.
+5. After each destination stream copy, rebuild kioku's read-model projection by reading the
+   destination stream, decoding native events with Kioku's codec, and applying
+   `Kioku.Memory.ReadModel.memoryInlineProjection` or `Kioku.Session.ReadModel.sessionInlineProjection`.
+   This makes `kioku_memories`/`kioku_sessions` reflect the copied streams without needing a separate
+   projection-rebuild command.
 
 **Verify.** The `verify` subcommand asserts:
 - Row counts: `SELECT count(*) FROM agent_memories WHERE status='active'` equals
@@ -980,11 +1001,13 @@ records applied migrations); re-running it does not re-apply kioku's base migrat
 pin and build-deps is a pure source edit; reverting is `git checkout` of `cabal.project` and the
 `.cabal` files.
 
-The M3 stream copy is idempotent: every bulk insert uses `ON CONFLICT DO NOTHING` keyed on the event
-UUID and destination stream/version, so re-running `copy-all` after a partial run inserts only the
-missing events and `verify` still passes. The projection rebuild is idempotent (it upserts rows). If
-a copy is interrupted mid-transaction, the `Serializable Write` transaction rolls back wholesale —
-nothing is partially written — so simply re-run.
+The M3 stream copy is idempotent at the destination-stream level: for each Kioku stream, the tool
+checks the existing destination stream version and appends only the missing source-event tail. A
+complete re-run appends nothing and reapplies the inline projection, which is idempotent because it
+upserts memory/session rows or repeats terminal status updates. If a copy is interrupted, re-run
+`copy-all`; streams that completed are skipped and streams with missing tails continue from their
+recorded destination version. If a destination stream has more events than the source stream, the
+tool fails loudly rather than guessing how to reconcile divergent history.
 
 Always rehearse M3 against a disposable local copy of prod data (the `MEMORY.md` rehearsal recipe:
 `pg_dump` prod read-only → restore into the local disposable DB → set the DB-level `search_path` →
@@ -1118,7 +1141,7 @@ must be added to `Rei.Config.StreamCategories` for the retargeted filesystem rea
 **Cabal/pin dependencies.** `cabal.project` gains the kioku source-repository-package pin (tag = M0
 hash, no extra kiroku/keiro pin — Rei's govern). `rei-core.cabal`: library gains `kioku-api`,
 `kioku-core`; `rei-migrations` exe gains `kioku-migrations`; the new `rei-kioku-migrate` exe gains
-`kioku-core`, `kiroku-store`, `hasql`, `optparse-applicative`, `uuid`, `containers`. Migration
+`kioku-core`, `kiroku-store`, `hasql`, `optparse-applicative`, `containers`. Migration
 composition appends kioku's exported migration value after the framework + Rei app migrations in the
 `kiroku` schema.
 
@@ -1135,6 +1158,13 @@ completed — so M3's data migration is a *new* one-shot executable modeled on t
 `transform-context` shape, not an extension of live tooling. The pin reconciliation (kioku's kiroku
 `322096c8` vs Rei's `4312aa8c`) is resolved by keeping Rei's pin (Decision Log). The byte-stable
 contract is `PromptRenderer.formatMemories`, reproduced verbatim above.*
+
+*Revision note (2026-06-24, M3 migration-tool slice):* Implementation corrected the M3 transform
+from "raw stream rename with byte-identical event JSON" to "decode Rei legacy payload, re-encode
+native Kioku event, append to Kioku stream, rebuild Kioku inline projection." The change is required
+because Keiro checks the stored event-type tag before Kioku's compatibility payload parser and
+because Kiroku event IDs are globally unique. Progress, Surprises, Decision Log, Plan of Work,
+Idempotence, and dependency text were updated accordingly.
 
 
 ## Coding Conventions (haskell-jitsurei)
@@ -1161,7 +1191,8 @@ Point IP-7. The rules that bear on this plan:
   strategies, and lens operators (`^.`, `.~`, `?~`, `%~`, `at`, `ix`) over record-update syntax.
 - **Multiline strings** (`core/multiline-strings.md`): embedded SQL uses `MultilineStrings`
   (`"""…"""`), not `unlines` or string concatenation.
-- **Plan-specific:** because EP-1 adopts the `eventAesonOptions` codec (the jitsurei/Rei shape),
-  reading Rei's historical event JSON needs no bespoke decoder — the migration is the stream rename
-  described in this plan, not a payload transform. Rei already follows these same conventions, so
-  the thin Rei-side adapters inherit them unchanged.
+- **Plan-specific:** EP-1's compatibility parsers understand Rei's historical `eventAesonOptions`
+  payloads, but the M3 tool must call those payload parsers directly and then re-encode native
+  Kioku events because Keiro checks the stored event-type tag before payload decoding. Rei already
+  follows the same record and codec conventions, so the thin Rei-side adapters inherit them
+  unchanged.

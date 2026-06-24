@@ -244,7 +244,8 @@ Track milestone-level progress across all child plans.
       mapping, delegates AgentMemory/AgentSession writes to `Kioku.Memory`/`Kioku.Session`, and
       rewires `ContextBuilder` and `rei agent memory list/show/archive` memory reads onto scoped
       `Kioku.Recall` adapter functions. The `{{agent_memories}}` byte-stability proof is covered;
-      historical stream migration remains.
+      the additive `rei-kioku-migrate` executable for historical stream copy now builds; disposable
+      data-copy execution, full verify, and decommission remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -300,6 +301,15 @@ Track milestone-level progress across all child plans.
   IDs while Kioku writes `kioku_memory_*` / `kioku_session_*` streams with the same TypeID UUID
   body. This is now covered by Rei's Kioku adapter tests and matches the planned historical stream
   copy rule. Discovered during EP-4 implementation.
+
+- **EP-4 historical migration is logical-event copy, not raw event-row copy.**
+  `Keiro.Codec.decodeRecorded` checks the stored event-type tag before payload decoding, so legacy
+  Rei tags such as `AgentMemoryRecorded` cannot reach Kioku's compatibility parser through the
+  normal recorded-event decoder. Kiroku event IDs are also globally unique, so a copied native Kioku
+  event cannot reuse the old event UUID while changing payload/type. The `rei-kioku-migrate` tool
+  therefore decodes legacy `events.data` with Kioku's compatibility parsers, re-encodes native Kioku
+  events, preserves the TypeID UUID body plus metadata/causation/correlation, and lets Kiroku assign
+  fresh event IDs. Discovered during EP-4 M3 implementation.
 
 
 ## Decision Log
@@ -385,3 +395,10 @@ Track milestone-level progress across all child plans.
   `Kioku.MemoryRecord` fixtures converted through the adapter, covering fact/pattern/preference/
   constraint grouping, the empty placeholder, and unknown-type dropping. Verification:
   `cabal test rei-core-test --test-options='-p Kioku'` in Rei.
+
+- 2026-06-24: EP-4 M3 additive migration-tool slice builds in Rei. `rei-kioku-migrate` exposes
+  `copy-memories`, `copy-sessions`, `copy-all`, and `verify`; copy commands decode legacy Rei
+  payloads through Kioku parsers, re-encode native Kioku events, append missing destination-stream
+  tails, and rebuild Kioku inline read models. Verification:
+  `cabal build rei-core:rei-kioku-migrate` and
+  `cabal run rei-core:rei-kioku-migrate -- --help` in Rei.
