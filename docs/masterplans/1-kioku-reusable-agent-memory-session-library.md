@@ -277,7 +277,11 @@ Track milestone-level progress across all child plans.
       `kioku-core`'s `shikumi`/Baikai transitive package needs under mori's pin-set, and applies
       kioku read-model migrations in its ephemeral test DB. Verification: mori
       `cabal build mori-core`; `cabal test mori-core-test --test-options='-p TestSupport.Database'`.
-- [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
+- [x] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially.
+      Verification: mori `cabal build mori-cli`; focused `mori-cli-test` patterns
+      `validateAgentExecIntent` and `buildAgentExecPrompt`; full `cabal test mori-cli-test`; real
+      registry dry-run/debug smokes against `frontend`/`intentui/intentui`; and a non-debug
+      fake-`claude` smoke proving repo `cwd`.
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
 - [ ] EP-6: shikigami adopts kioku for agent_runs (sessions) + per-agent memory
 
@@ -521,6 +525,13 @@ Track milestone-level progress across all child plans.
   preferable to introducing a second ecosystem pin-set.
   Date: 2026-06-24
 
+- Decision: In EP-5 M1, keep `mori agent exec --group` sequential by default and warn rather than
+  run parallel when `--jobs > 1` is supplied until memory/session semantics land.
+  Rationale: the master-plan value proposition is accumulation across repos; M1 proves selection,
+  prompt assembly, and `cwd` propagation without introducing a parallel behavior that M2/M3 must
+  immediately reinterpret.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -528,6 +539,14 @@ Track milestone-level progress across all child plans.
   current `kioku-core` transitive package set under mori's pin-set, and applies kioku read-model
   migrations in its ephemeral test DB after kiroku and keiro. Verification: mori
   `cabal build mori-core`; `cabal test mori-core-test --test-options='-p TestSupport.Database'`.
+
+- 2026-06-24: EP-5 M1 completed in mori. `mori agent exec --group` now has prompt/skill parsing,
+  dry-run, debug prompt rendering, path skips, fail-fast, and sequential non-debug `claude` launch
+  with the child process rooted in each repo path. Verification: mori `cabal build mori-cli`;
+  focused `mori-cli-test` patterns `validateAgentExecIntent` and `buildAgentExecPrompt`; full
+  `cabal test mori-cli-test` (317 tests); real registry dry-run/debug smokes against
+  `frontend`/`intentui/intentui`; and a non-debug fake-`claude` smoke that printed
+  `/Users/shinzui/Keikaku/hub/ui-libraries/intentui-project` from the child.
 
 - 2026-06-24: EP-4 M2 now has a focused byte-stability regression for the `{{agent_memories}}`
   prompt variable. Rei compares legacy `AgentMemoryRow` fixtures against equivalent

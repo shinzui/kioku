@@ -71,12 +71,19 @@ This section must always reflect the actual current state of the work.
       Verification: `cabal build mori-core`; `cabal test mori-core-test
       --test-options='-p TestSupport.Database'`, proving `kiroku.kioku_memories`,
       `kiroku.kioku_sessions`, and `kiroku.kioku_turns` exist in a freshly migrated mori test DB.
-- [ ] M1: add `AgentExec ExecOpts'` to `Mori.Command.Agent.AgentCommand`, a `command "exec"`
+- [x] M1: add `AgentExec ExecOpts'` to `Mori.Command.Agent.AgentCommand`, a `command "exec"`
       stanza in `agentCommandParser`, and a handler in `runAgent` that resolves
       `--group GROUP` → repo paths (reusing `Mori.Command.Registry.Exec.selectProjects`) and runs
       `claude` once per repo **in sequence** with `cwd` set to each repo path. Observable:
       `mori agent exec --group <g> --dry-run` lists the repos; without `--dry-run` it visits each
-      (verify with a trivial prompt and `--debug`). No memory yet.
+      (verify with a trivial prompt and `--debug`). No memory yet. Completed 2026-06-24:
+      `mori agent exec --group frontend --filter intentui/intentui --dry-run` listed the selected
+      repo, `--debug` printed the per-repo prompt with path header, and a non-debug run with a
+      temporary fake `claude` printed `/Users/shinzui/Keikaku/hub/ui-libraries/intentui-project`
+      from the child process, proving `cwd` propagation. Verification: mori `cabal build mori-cli`;
+      `cabal test mori-cli-test --test-options=-p --test-options=validateAgentExecIntent`;
+      `cabal test mori-cli-test --test-options=-p --test-options=buildAgentExecPrompt`;
+      `cabal test mori-cli-test` (317 tests).
 - [ ] M2: add `mori agent memory record` and `mori agent memory list` subcommands over kioku's
       `Kioku.Memory.record` / `Kioku.Recall.getActiveByScope`. Record a memory in scope
       `mori/group/<gid>` from the CLI and list it back. Grant `claude` access to
@@ -114,6 +121,12 @@ implementation. Provide concise evidence.
 - **`claude-1.4.0` has a narrow `http-client-tls` bound conflict in mori.** mori already resolves
   `http-client-tls-0.4.0`, while `claude-1.4.0` declares `<0.4`; M0 added
   `allow-newer: claude:http-client-tls` to keep the consumer build on mori's existing plan.
+
+- **`--dry-run` must bypass prompt/skill validation.** The first M1 smoke surfaced that
+  `mori agent exec --group frontend --filter intentui/intentui --dry-run` failed because the
+  handler validated `--prompt`/`--skill` before rendering the repo list. The handler now resolves
+  projects and renders dry-run output before requiring an execution intent; non-dry-run still
+  enforces the XOR rule.
 
 
 ## Decision Log
@@ -191,6 +204,13 @@ Record every decision made while working on the plan.
   build plan is less risky than introducing a second ecosystem pin-set.
   Date: 2026-06-24
 
+- Decision: M1 keeps actual execution sequential even though the parser accepts `--jobs`; passing
+  `--jobs > 1` emits a warning until the memory-aware M3 slice can make the parallel semantics
+  explicit.
+  Rationale: the plan's user-visible value depends on sequential accumulation, and the M1 command
+  exists to prove repo selection, prompt assembly, and `cwd` propagation before adding memory.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -201,6 +221,15 @@ Compare the result against the original purpose.
   read-model SQL migrations in its ephemeral test DB after kiroku and keiro, and has an integration
   test proving the three kioku read-model tables are present. Verification:
   `cabal build mori-core`; `cabal test mori-core-test --test-options='-p TestSupport.Database'`.
+
+- 2026-06-24: M1 completed in mori. `mori agent exec --group` now resolves a registry group via
+  `Mori.Command.Registry.Exec.selectProjects`, supports prompt/skill XOR, dry-run, debug prompt
+  printing, path-missing skips, fail-fast, and sequential non-debug `claude` launches with `cwd` set
+  to each repo path. Verification: mori `cabal build mori-cli`; focused `mori-cli-test` patterns
+  `validateAgentExecIntent` and `buildAgentExecPrompt`; full `cabal test mori-cli-test` (317
+  tests); `mori agent exec --group frontend --filter intentui/intentui --dry-run`; `mori agent exec
+  --group frontend --filter intentui/intentui -p "print your working directory" --debug`; and a
+  non-debug smoke with a temporary fake `claude`.
 
 
 ## Context and Orientation
