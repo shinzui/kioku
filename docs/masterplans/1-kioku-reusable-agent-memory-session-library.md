@@ -260,8 +260,12 @@ Track milestone-level progress across all child plans.
       and Today session activity formatting no longer import the old AgentSession table module for
       the row shape; Kioku's public session read API now covers recent/scope/focus/range/chain
       reads and live `rei agent sessions`, `rei agent session show`, and Today session activity use
-      those reads through `StoreRunner`. Disposable production data-copy execution and remaining
-      old AgentMemory/AgentSession decommission work remain.
+      those reads through `StoreRunner`; Rei no longer exposes or builds the unused legacy Hasql
+      helper modules `Rei.Modules.AgentMemory.Infrastructure.ReadModel` and
+      `Rei.Modules.AgentSession.Infrastructure.ReadModel`. Legacy table/projection/transducer
+      modules remain because migration fixtures and old inline projections still depend on their
+      SQL statements and replay behavior. Disposable production data-copy execution and remaining
+      old AgentMemory/AgentSession domain/store-handler decommission work remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -348,6 +352,12 @@ Track milestone-level progress across all child plans.
   queries on Hasql while deriving memory summary data from Kioku active rows. Discovered and fixed
   during EP-4 M3 decommission work.
 
+- **EP-4 legacy read helper cleanup stops at the helper modules.** After live memory and session
+  reads moved to the Kioku adapter, the old Hasql helper modules were only referenced from the
+  aggregate facades and cabal exposure, so they could be deleted. The older table/projection and
+  transducer modules remain because migration fixtures still seed and verify legacy Rei streams
+  through them. Discovered during EP-4 M3 decommission work.
+
 
 ## Decision Log
 
@@ -404,6 +414,14 @@ Track milestone-level progress across all child plans.
 - Decision: Defer Rei's `AgentSchedule` module from extraction (stays in Rei).
   Rationale: deeply Rei-coupled (DelegationScope, AutonomyLevel, Rei-specific event triggers);
   not part of the reusable memory/session core.
+  Date: 2026-06-24
+
+- Decision: In EP-4, delete unused legacy Hasql read-model helper modules once live reads are on
+  Kioku, but keep legacy table/projection/transducer modules until migration fixtures no longer need
+  them.
+  Rationale: the helper modules were only public query wrappers after the adapter migration, while
+  the remaining legacy modules still provide the old replay and SQL statement behavior needed to
+  prove historical stream migration.
   Date: 2026-06-24
 
 - Decision: Adopt the `haskell-jitsurei` conventions as binding for all kioku code (IP-7), and
@@ -507,6 +525,12 @@ Track milestone-level progress across all child plans.
   activity now run through `StoreRunner` instead of the old Hasql AgentSession read model.
   Verification: Kioku `cabal test kioku-core`; Rei
   `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
+
+- 2026-06-24: EP-4 M3 legacy read helper cleanup completed in Rei. The old
+  `Rei.Modules.AgentMemory.Infrastructure.ReadModel` and
+  `Rei.Modules.AgentSession.Infrastructure.ReadModel` modules are deleted from the tree and cabal
+  exposure, and the aggregate facades no longer re-export their queries. Verification: Rei
+  `cabal build rei-cli`; `cabal test rei-core-test --test-options='-p Kioku'`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable

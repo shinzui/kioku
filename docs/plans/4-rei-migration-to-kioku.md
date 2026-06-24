@@ -157,6 +157,12 @@ This section must always reflect the actual current state of the work.
       started-at range, and previous-session chains; `rei agent sessions`, `rei agent session
       <id>`, `rei agent session <id> --chain`, and the `rei today` session-activity summary use
       those adapter functions via `StoreRunner` instead of the old Hasql AgentSession read model.
+      The unused legacy Hasql helper modules
+      `Rei.Modules.AgentMemory.Infrastructure.ReadModel` and
+      `Rei.Modules.AgentSession.Infrastructure.ReadModel` are removed from `rei-core.cabal` and
+      the tree, and the AgentMemory/AgentSession facades no longer re-export their query functions.
+      Legacy table/projection/transducer modules remain intentionally because migration fixtures
+      and old inline projections still depend on their SQL statements and replay behavior.
       `cabal test rei-core` green; AgentSchedule untouched.
 
 
@@ -262,6 +268,16 @@ implementation. Provide concise evidence.
   now removed from the Today query by opening the existing `StoreRunner` and deriving the summary
   from Kioku active rows. Evidence: Rei
   `rg "Rei\\.Modules\\.AgentMemory|AgentMemoryReadModelEff|getActiveMemoryCounts|getLastRecordedMemory" rei-cli/src/Rei/Cli/Commands/Today/Query.hs`.
+
+- After live memory and session reads moved to `Rei.Modules.Agent.Memory.KiokuAdapter`, the old
+  Hasql read-model helper modules had no remaining imports except the aggregate facade modules and
+  `rei-core.cabal`. Removing those helpers is safe now, but the SQL table modules are not yet
+  removable because old inline projections and migration fixtures still import their statements.
+  Evidence: Rei
+  `rg "Rei\\.Modules\\.AgentMemory\\.Infrastructure\\.ReadModel|Rei\\.Modules\\.AgentSession\\.Infrastructure\\.ReadModel" rei-core rei-cli`
+  only reported the helper modules, their facade imports, and cabal exposure before deletion; after
+  deletion, `cabal build rei-cli` and
+  `cabal test rei-core-test --test-options='-p Kioku'` both pass.
 
 (Add further discoveries as work proceeds.)
 
@@ -427,6 +443,16 @@ Record every decision made while working on the plan.
   reads.
   Date: 2026-06-24
 
+- Decision: Delete the unused legacy Hasql read-model helper modules after moving live memory and
+  session reads to Kioku, while keeping the old table/projection/transducer modules until the
+  migration fixture dependency is retired.
+  Rationale: `Rei.Modules.AgentMemory.Infrastructure.ReadModel` and
+  `Rei.Modules.AgentSession.Infrastructure.ReadModel` were only facade-level query wrappers around
+  old SQL statements after the live CLI/dashboard/context paths switched to Kioku. Deleting them
+  shrinks the public surface without breaking the still-needed old stream replay fixtures and inline
+  projection SQL.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -524,6 +550,13 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   now read through `StoreRunner`; the old Hasql AgentSession read model remains only for legacy
   projections/facades and migration fixtures. Verification: Kioku `cabal test kioku-core`; Rei
   `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
+
+- 2026-06-24: M3 legacy Hasql read-model helper cleanup landed. Rei no longer exposes or builds
+  `Rei.Modules.AgentMemory.Infrastructure.ReadModel` or
+  `Rei.Modules.AgentSession.Infrastructure.ReadModel`; the AgentMemory and AgentSession facades now
+  re-export only command/domain types and row shapes. Legacy SQL table/projection modules remain for
+  migration fixtures and inline replay. Verification: Rei `cabal build rei-cli`;
+  `cabal test rei-core-test --test-options='-p Kioku'`.
 
 
 ## Context and Orientation
