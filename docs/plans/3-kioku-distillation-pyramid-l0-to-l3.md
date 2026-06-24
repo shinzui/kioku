@@ -145,7 +145,9 @@ Milestone M2 — L2 scene generation:
 
 Milestone M3 — L3 persona generation:
 
-- [ ] Add the persona shikumi program `Kioku.Distill.Persona` (`Program PersonaInput PersonaOutput`).
+- [x] Add the persona shikumi program `Kioku.Distill.Persona` (`Program PersonaInput PersonaOutput`).
+      Completed 2026-06-24: the module is exposed by `kioku-core`, defines strict-schema
+      `PersonaInput`/`PersonaOutput`, and compiles as a pure shikumi `personaProgram`.
 - [ ] Add the L3 reactor `Kioku.Distill.L3.personaReactor`: a threshold/mutex-gated regeneration that,
       after L2 scenes for a scope update, regenerates the single per-scope persona, upserts
       `kioku_personas`, and mirrors `persona.md`.
