@@ -130,9 +130,19 @@ This section must always reflect the actual current state of the work.
       `AgentContext.agentMemories` contains the target intention memory plus workspace memory and
       excludes the unrelated intention memory. Verification: Rei
       `cabal test rei-core-test --test-options='-p Kioku'`.
+- [x] M3: Rei's workspace filesystem mirror no longer depends on the old
+      `Rei.Modules.AgentMemory.Reactor.FilesystemProjection` module or the old `agent_memory`
+      stream category. A new `Rei.Modules.Agent.Memory.FilesystemProjection` decodes native Kioku
+      memory events from the `kioku_memory` category, filters to the `rei` namespace, preserves
+      historical `agent_memory_*` / `agent_session_*` artifact IDs, and keeps the markdown mirror
+      replay-safe for record/update/supersede/archive/merge. Verification: Rei
+      `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`.
 - [ ] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
-      decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters;
-      `cabal test rei-core` green; AgentSchedule untouched.
+      decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters.
+      The old AgentMemory filesystem reactor is already removed; remaining work covers the old
+      command/domain types, inline projections/read-model helpers, store-handler facades, migration
+      fixture dependence on old transducers/projections, and the old AgentSession modules. `cabal
+      test rei-core` green; AgentSchedule untouched.
 
 
 ## Surprises & Discoveries
@@ -304,13 +314,14 @@ Record every decision made while working on the plan.
   reconstruction belongs with M3's history copy and/or a Kioku chain query.
   Date: 2026-06-24
 
-- Decision: The AgentMemory **filesystem mirror** reactor
-  (`Rei.Modules.AgentMemory.Reactor.FilesystemProjection`, wired in
-  `rei-cli/.../Worker/KirokuRunner.hs`) **stays in Rei** as a Rei-specific side-effect leg, retargeted
-  to read the `kioku_memory` category instead of `agent_memory`.
+- Decision: The AgentMemory **filesystem mirror** reactor **stays in Rei** as a Rei-specific
+  side-effect leg, but its implementation moved from the legacy
+  `Rei.Modules.AgentMemory.Reactor.FilesystemProjection` module to
+  `Rei.Modules.Agent.Memory.FilesystemProjection` and now reads the `kioku_memory` category instead
+  of `agent_memory`.
   Rationale: writing markdown memory files into the Rei workspace is a Rei concern (it uses
-  `Rei.Workspace.*`), not part of the reusable engine. It only needs to decode kioku events (its
-  codec becomes kioku's) and subscribe to the renamed category.
+  `Rei.Workspace.*`), not part of the reusable engine. It only needs to decode kioku events, filter
+  to the `rei` namespace, and preserve Rei-shaped artifact IDs at the adapter boundary.
   Date: 2026-06-24
 
 - Decision: Consume kioku in Rei via local `packages:` entries during EP-4 implementation rather
@@ -411,6 +422,14 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   both the target intention-scoped memory and the workspace-global memory from Kioku recall, while an
   unrelated intention memory is excluded. Verification: Rei
   `cabal test rei-core-test --test-options='-p Kioku'`.
+
+- 2026-06-24: M3 filesystem-mirror decommission slice landed. The worker no longer subscribes a
+  legacy AgentMemory reactor to `agent_memory`; `KirokuRunner` now registers
+  `Rei.Modules.Agent.Memory.FilesystemProjection` on the Kioku-owned `kioku_memory` category. The
+  new spec proves native Kioku record/update/supersede/archive events maintain Rei workspace
+  markdown files replay-safely, ignore non-Rei namespaces, and preserve the historical
+  `agent_memory_*` / `agent_session_*` IDs in artifacts. Verification: Rei
+  `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
 
 
 ## Context and Orientation
