@@ -39,8 +39,8 @@ import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
-import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..), personaProgram)
-import Kioku.Distill.Runtime (DistillRuntime, runDistillProgram)
+import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..))
+import Kioku.Distill.Runtime (DistillRuntime, runPersonaDistillation)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
@@ -135,9 +135,8 @@ regeneratePersona rt scope = do
         _ -> do
           outputResult <-
             liftIO $
-              runDistillProgram
+              runPersonaDistillation
                 rt
-                personaProgram
                 PersonaInput
                   { scopeLabel = field (renderScope scope),
                     scenes = field (renderScenes scenes)

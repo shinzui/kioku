@@ -34,10 +34,9 @@ import Kioku.Distill.Consolidate
     ConsolidationAction (..),
     ConsolidationDecision (..),
     ExistingMemory (..),
-    consolidateProgram,
   )
-import Kioku.Distill.Extract (ExtractInput (..), ExtractOutput (..), ExtractedAtom (..), extractProgram)
-import Kioku.Distill.Runtime (DistillRuntime, runDistillProgram)
+import Kioku.Distill.Extract (ExtractInput (..), ExtractOutput (..), ExtractedAtom (..))
+import Kioku.Distill.Runtime (DistillRuntime, runConsolidation, runExtraction)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, idText, parseIdAnyPrefix)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
@@ -108,7 +107,7 @@ distillSessionL1 rt finder sid = do
       case inputResult of
         Left err -> pure (Left err)
         Right input -> do
-          extractedResult <- liftIO (runDistillProgram rt extractProgram input)
+          extractedResult <- liftIO (runExtraction rt input)
           case extractedResult of
             Left err -> pure (Left (L1ExtractionFailed (Text.pack (show err))))
             Right output ->
@@ -207,9 +206,8 @@ applyAtom rt finder sid session summary atom = do
   candidates <- finder.runFindMergeCandidates (sessionScope session) (unField atom.content)
   decisionResult <-
     liftIO $
-      runDistillProgram
+      runConsolidation
         rt
-        consolidateProgram
         ConsolidateInput
           { scopeLabel = field (renderScope (sessionScope session)),
             candidate = atom,

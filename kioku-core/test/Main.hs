@@ -1,5 +1,6 @@
 module Main where
 
+import Kioku.DistillSpec qualified as DistillSpec
 import Kioku.EmbeddingWorkerSpec qualified as EmbeddingWorkerSpec
 import Kioku.RecallSpec qualified as RecallSpec
 import Kioku.ReiCompatSpec qualified as ReiCompatSpec
@@ -12,5 +13,6 @@ main =
       "kioku"
       [ ReiCompatSpec.tests,
         RecallSpec.tests,
-        EmbeddingWorkerSpec.tests
+        EmbeddingWorkerSpec.tests,
+        DistillSpec.tests
       ]

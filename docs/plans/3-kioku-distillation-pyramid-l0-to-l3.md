@@ -163,12 +163,16 @@ Milestone M3 — L3 persona generation:
 
 Milestone M4 — deterministic end-to-end test:
 
-- [ ] Add `kioku-core/test/Kioku/DistillSpec.hs`: feed a fixed multi-turn session, replay recorded
+- [x] Add `kioku-core/test/Kioku/DistillSpec.hs`: feed a fixed multi-turn session, replay recorded
       LLM answers via `Shikumi.Trace.Replay.runLLMReplay`, and assert atoms extracted, one merge (not
       a duplicate), a scene row, and a persona row — all from the events. `cabal test kioku-core`
-      passes.
+      passes. Completed 2026-06-24: `Kioku.DistillSpec` creates a fresh migrated ephemeral DB, records
+      duplicate preference turns, runs replay-backed extraction/consolidation/scene/persona runners,
+      asserts one stored atom plus one merge, checks a `merge` audit row, reads the loser memory stream
+      for `MemoryMerged`, and verifies scene/persona rows. `cabal test kioku-core` passes 7 tests.
 
-(M0 is complete; M1 is in progress.)
+(M0-M4 structural work is complete. Live L1/L2/L3 acceptance remains blocked by missing
+`ANTHROPIC_API_KEY` in this environment.)
 
 
 ## Surprises & Discoveries
@@ -211,6 +215,13 @@ implementation. Provide concise evidence.
   the JSON-encoded atom source directly with a `v1:` prefix. The plan explicitly calls for `sha256` of
   the ordered atom ids+contents, so the source hash now uses the existing `crypton` SHA-256 helper
   pattern from `Kioku.Memory.Embedding`.
+
+- **Deterministic pyramid tests need injectable program runners.** The original `DistillRuntime`
+  hardwired the live `runLLMResilient` interpreter behind a generic `runDistillProgram`, which made
+  M4 either call the network or avoid the production orchestration. The runtime now carries
+  specialized runners for extraction, consolidation, scene, and persona programs. `newDistillRuntime`
+  wires them to the same live shikumi interpreter as before; tests replace them with replay-backed
+  runners.
 
 
 ## Decision Log
@@ -292,13 +303,26 @@ and consolidation-as-events); they are restated here so this document is self-co
   `kiroku`; consistency with EP-1's `kioku_memories`/`kioku_sessions`.
   Date: 2026-06-24
 
+- Decision: `DistillRuntime` owns specialized program runners for the four distillation steps instead
+  of forcing every call through a non-injectable live runner.
+  Rationale: production still uses the live shikumi/baikai interpreter through `newDistillRuntime`, but
+  M4 can now substitute deterministic `runLLMReplay` runners while exercising the same L1/L2/L3
+  orchestration, event writes, and table upserts. This keeps replay at the program boundary rather
+  than introducing test-only orchestration code.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original purpose.
 
-(To be filled during and after implementation.)
+As of 2026-06-24, the structural EP-3 pyramid is implemented end to end: shikumi/baikai runtime
+wiring, L1 extraction/consolidation with merge events and audit rows, L1 timers, L2 scenes with
+filesystem mirror, L3 personas with filesystem mirror, and CLI commands for manual distill/scenes/
+persona. The deterministic M4 test now proves the no-network path: a replayed duplicate preference
+session produces one active atom, one merged loser stream event, a merge audit row, one scene row, and
+one persona row. Live CLI acceptance for M1/M2/M3 remains blocked until `ANTHROPIC_API_KEY` is set.
 
 
 ## Context and Orientation

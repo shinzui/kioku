@@ -5,7 +5,11 @@ module Kioku.Distill.Runtime
     RuntimeSmokeInput (..),
     RuntimeSmokeOutput (..),
     newDistillRuntime,
+    runConsolidation,
     runDistillProgram,
+    runExtraction,
+    runPersonaDistillation,
+    runSceneDistillation,
     runtimeSmokeProgram,
   )
 where
@@ -17,6 +21,10 @@ import Baikai.Provider.Registry (globalProviderRegistry)
 import Effectful (runEff)
 import Effectful.Concurrent (runConcurrent)
 import Effectful.Error.Static (runErrorNoCallStack)
+import Kioku.Distill.Consolidate (ConsolidateInput, ConsolidationDecision, consolidateProgram)
+import Kioku.Distill.Extract (ExtractInput, ExtractOutput, extractProgram)
+import Kioku.Distill.Persona (PersonaInput, PersonaOutput, personaProgram)
+import Kioku.Distill.Scene (SceneInput, SceneOutput, sceneProgram)
 import Kioku.Prelude
 import Shikumi.Adapter (ToPrompt)
 import Shikumi.Error (ShikumiError)
@@ -30,7 +38,11 @@ import Shikumi.Signature (mkSignature)
 
 data DistillRuntime = DistillRuntime
   { config :: !LLMConfig,
-    defaultModel :: !Model
+    defaultModel :: !Model,
+    runExtract :: !(ExtractInput -> IO (Either ShikumiError ExtractOutput)),
+    runConsolidate :: !(ConsolidateInput -> IO (Either ShikumiError ConsolidationDecision)),
+    runScene :: !(SceneInput -> IO (Either ShikumiError SceneOutput)),
+    runPersona :: !(PersonaInput -> IO (Either ShikumiError PersonaOutput))
   }
 
 newtype RuntimeSmokeInput = RuntimeSmokeInput
@@ -48,19 +60,46 @@ newtype RuntimeSmokeOutput = RuntimeSmokeOutput
 newDistillRuntime :: IO DistillRuntime
 newDistillRuntime = do
   ClaudeApi.register
+  let config = defaultLLMConfig globalProviderRegistry
+      defaultModel = Models.anthropic_claude_haiku_4_5
+      liveRun = runLiveDistillProgram config defaultModel
   pure
     DistillRuntime
-      { config = defaultLLMConfig globalProviderRegistry,
-        defaultModel = Models.anthropic_claude_haiku_4_5
+      { config,
+        defaultModel,
+        runExtract = liveRun extractProgram,
+        runConsolidate = liveRun consolidateProgram,
+        runScene = liveRun sceneProgram,
+        runPersona = liveRun personaProgram
       }
 
 runDistillProgram :: DistillRuntime -> Program i o -> i -> IO (Either ShikumiError o)
 runDistillProgram rt prog input =
+  runLiveDistillProgram rt.config rt.defaultModel prog input
+
+runExtraction :: DistillRuntime -> ExtractInput -> IO (Either ShikumiError ExtractOutput)
+runExtraction rt =
+  rt.runExtract
+
+runConsolidation :: DistillRuntime -> ConsolidateInput -> IO (Either ShikumiError ConsolidationDecision)
+runConsolidation rt =
+  rt.runConsolidate
+
+runSceneDistillation :: DistillRuntime -> SceneInput -> IO (Either ShikumiError SceneOutput)
+runSceneDistillation rt =
+  rt.runScene
+
+runPersonaDistillation :: DistillRuntime -> PersonaInput -> IO (Either ShikumiError PersonaOutput)
+runPersonaDistillation rt =
+  rt.runPersona
+
+runLiveDistillProgram :: LLMConfig -> Model -> Program i o -> i -> IO (Either ShikumiError o)
+runLiveDistillProgram config model prog input =
   runEff
     . runErrorNoCallStack @ShikumiError
     . runConcurrent
-    . runRouting rt.defaultModel
-    . runLLMResilient rt.config
+    . runRouting model
+    . runLLMResilient config
     . routeLLM
     $ runProgram prog input
 

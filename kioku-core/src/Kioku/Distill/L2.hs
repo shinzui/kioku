@@ -43,8 +43,8 @@ import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTime
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Distill.L3 (scheduleL3PersonaTimerTx)
-import Kioku.Distill.Runtime (DistillRuntime, runDistillProgram)
-import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..), sceneProgram)
+import Kioku.Distill.Runtime (DistillRuntime, runSceneDistillation)
+import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..))
 import Kioku.Id (MemoryId, idText)
 import Kioku.Memory.Domain (MemoryEvent (..), MemoryRecordedData (..))
 import Kioku.Prelude
@@ -156,9 +156,8 @@ regenerateScene rt scope = do
         _ -> do
           outputResult <-
             liftIO $
-              runDistillProgram
+              runSceneDistillation
                 rt
-                sceneProgram
                 SceneInput
                   { scopeLabel = field (renderScope scope),
                     atoms = field (renderAtoms atoms)
