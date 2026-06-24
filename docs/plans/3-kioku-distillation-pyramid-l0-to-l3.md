@@ -84,8 +84,9 @@ Milestone M0 — wiring shikumi/baikai into kioku (prerequisite for everything):
 
 Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
 
-- [ ] Add migration `<ts>-kioku-distillation.sql`: `kioku_scenes`, `kioku_personas`, and
-      `kioku_consolidation_decisions` (audit) tables in the `kiroku` schema.
+- [x] Add migration `<ts>-kioku-distillation.sql`: `kioku_scenes`, `kioku_personas`, and
+      `kioku_consolidation_decisions` (audit) tables in the `kiroku` schema. Completed
+      2026-06-24 as `2026-06-24-02-00-00-kioku-distillation.sql`.
 - [x] Reserve/confirm the EP-1 `MemoryMerged` event; add the `MergeMemory` command + transducer edge
       (`Active → Merged`) and the `Kioku.Memory.merge` write API (records `MemoryMerged` on the
       losers), since EP-1 reserved the event but added no edge. Completed 2026-06-24: the public
