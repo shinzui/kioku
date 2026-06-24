@@ -13,6 +13,7 @@ module Kioku.Recall
     getActiveInNamespace,
     getActiveByScope,
     getGlobal,
+    getById,
     getBySession,
     getByType,
   )
@@ -41,17 +42,20 @@ import Hasql.Transaction qualified as Tx
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), MemoryType, memoryTypeToText)
-import Kioku.Id (SessionId, idText)
+import Kioku.Id (MemoryId, SessionId, idText)
 import Kioku.Memory.Embedding (embedWithRetry)
 import Kioku.Memory.ReadModel
   ( MemoriesByNamespaceQuery (..),
     MemoriesByScopeQuery (..),
     MemoriesBySessionQuery (..),
     MemoriesByTypeQuery (..),
+    MemoryByIdQuery (..),
+    MemoryRow (..),
     memoriesByNamespaceReadModel,
     memoriesByScopeReadModel,
     memoriesBySessionReadModel,
     memoriesByTypeReadModel,
+    memoryByIdReadModel,
   )
 import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..))
@@ -506,6 +510,14 @@ getGlobal ::
 getGlobal ns =
   getActiveByScope (ScopeGlobal ns)
 
+getById ::
+  (IOE :> es, Store :> es) =>
+  MemoryId ->
+  Eff es (Either ReadModelError (Maybe MemoryRecord))
+getById mid =
+  fmap (fmap (fmap memoryRowToRecord)) $
+    runQueryWith Nothing Eventual memoryByIdReadModel (MemoryByIdQuery (idText mid))
+
 getBySession ::
   (IOE :> es, Store :> es) =>
   SessionId ->
@@ -520,3 +532,19 @@ getByType ::
   Eff es (Either ReadModelError [MemoryRecord])
 getByType (Namespace ns) mt =
   runQueryWith Nothing Eventual memoriesByTypeReadModel (MemoriesByTypeQuery ns (memoryTypeToText mt))
+
+memoryRowToRecord :: MemoryRow -> MemoryRecord
+memoryRowToRecord row =
+  MemoryRecord
+    { memoryId = row.memoryId,
+      agentId = row.agentId,
+      sessionId = row.sessionId,
+      scope = scopeFromColumns row.namespace row.scopeKind row.scopeRef,
+      memoryType = row.memoryType,
+      content = row.content,
+      priority = row.priority,
+      confidence = row.confidence,
+      tags = row.tags,
+      status = row.status,
+      createdAt = row.createdAt
+    }

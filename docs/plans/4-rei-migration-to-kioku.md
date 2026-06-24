@@ -102,8 +102,11 @@ This section must always reflect the actual current state of the work.
       Rei's adapter exposes the old `getActiveMemories`, `getActiveMemoriesForIntention`, and
       `getWorkspaceMemories` names while converting `Kioku.MemoryRecord` back to
       `AgentMemoryRow`.
-- [ ] M2 remaining: `rei agent memory list/show/archive` and the session-show memory list still
-      need to be rewired onto kioku reads/writes.
+- [x] M2: `rei agent memory list/show/archive`, FZF memory selection, and the
+      `rei agent session show` memory list now read memories through the Kioku adapter and
+      `StoreRunner`. `Kioku.Recall.getById` was added for by-id show/resolve; read rows are
+      re-prefixed back to Rei `agent_memory_*` / `agent_session_*` IDs at the adapter boundary so
+      existing CLI parsing and archive command data remain compatible.
 - [ ] M2: `{{agent_memories}}` rendered section proven byte-identical on a captured sample (golden
       comparison before/after).
 - [ ] M3: historical `agent_memory`/`agent_session` kiroku streams copied into kioku streams by a
@@ -167,6 +170,12 @@ implementation. Provide concise evidence.
   means the current M1 verification cannot prove or disprove Kioku's composed migrations until the
   legacy bootstrap assumptions are satisfied or bypassed.
 
+- Moving `ContextBuilder` recall to Kioku changed its effect requirement from Hasql-only reads to
+  the kiroku `Store` effect. The Rei CLI had several prompt-building paths (`rei agent --debug`,
+  interactive assist/intention-assist, non-interactive coaching, and note get-help) that still
+  interpreted those builders with only `runHasqlWithPool`. Those runners now execute through the
+  existing `StoreRunner`, while unrelated read-model-only CLI queries remain on Hasql.
+
 (Add further discoveries as work proceeds.)
 
 
@@ -220,6 +229,22 @@ Record every decision made while working on the plan.
   Rationale: Rei's `getActiveMemories` historically returned every active memory in creation order
   without scope filtering. A namespace-level active query preserves that behavior for
   `ContextBuilder` and keeps the API host-agnostic for other consumers.
+  Date: 2026-06-24
+
+- Decision: Add `Kioku.Recall.getById` returning a `MemoryRecord` for CLI by-id display, and keep
+  the Rei adapter responsible for re-prefixing Kioku read IDs back to Rei-shaped row IDs.
+  Rationale: `rei agent memory show` and `archive` are public CLI surfaces that historically accept
+  `agent_memory_*` IDs. Kioku owns streams internally as `kioku_memory_*`, but the CLI should not
+  start rejecting IDs it just displayed. Re-prefixing at the adapter boundary preserves the existing
+  Rei row/command contract while retaining Kioku's internal stream ownership.
+  Date: 2026-06-24
+
+- Decision: Until Kioku exposes a supersession-chain read model, `rei agent memory show --chain`
+  renders the selected Kioku memory as a one-row chain rather than querying the old
+  `agent_memories` table.
+  Rationale: M2's goal is to remove CLI memory reads from Rei's old table. A partial chain from
+  Kioku is more truthful than falling back to stale old read-model data; full historical chain
+  reconstruction belongs with M3's history copy and/or a Kioku chain query.
   Date: 2026-06-24
 
 - Decision: The AgentMemory **filesystem mirror** reactor
@@ -276,6 +301,11 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   `cabal test rei-core-test --test-options '-p Kioku'`. A `ContextBuilder` test filter compiled but
   matched zero named tests, so the current executable proof is the Kioku-backed adapter integration
   test plus build coverage of `ContextBuilder`.
+
+- 2026-06-24: M2 CLI memory read slice compiles and passes focused tests. Verification:
+  `cabal test kioku-test`; Rei `cabal build rei-core rei-cli`;
+  `cabal test rei-core-test --test-options '-p Kioku'`; `cabal test rei-cli-test`. Remaining M2
+  work is the captured `{{agent_memories}}` byte-stability comparison.
 
 
 ## Context and Orientation
