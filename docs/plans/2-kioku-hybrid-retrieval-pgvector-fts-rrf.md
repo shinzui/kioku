@@ -80,17 +80,20 @@ Milestone 1 — vector column, ANN index, capability detection:
 
 Milestone 2 — async embedding worker backfills vectors (idempotent on `content_hash`):
 
-- [ ] Add `Kioku.Memory.Embedding.Worker` (an `AsyncProjection`-shaped worker) that, on
+- [x] Add `Kioku.Memory.Embedding.Worker` (an `AsyncProjection`-shaped worker) that, on
       `MemoryRecorded`/`MemoryMerged`, computes `content_hash`, skips if unchanged, calls
       baikai `embed`, and upserts `embedding`/`embedding_model`/`dimensions`/`content_hash`.
-      Progress 2026-06-24: a vector-capability-gated one-shot backfill exists in
-      `Kioku.Memory.Embedding.Worker`; the continuous async projection/event follower remains.
+      Completed 2026-06-24: a vector-capability-gated one-shot backfill and a Shibuya/Kiroku
+      subscription worker exist in `Kioku.Memory.Embedding.Worker`. The continuous worker handles
+      `MemoryRecorded`; `MemoryMerged` carries no content and marks the source inactive, so it is a
+      no-op for embeddings.
 - [x] Add `Baikai.Embedding` batching + retry wrappers (`embedBatched`, `embedWithRetry`) in
       `kioku-core` (NOT in baikai) since baikai's `embed` is one HTTP call per text with no
       retry. Completed 2026-06-24 in `Kioku.Memory.Embedding`.
-- [ ] Host the worker behind a `kioku worker` CLI command (kioku-cli), reusing the keiro async
-      worker host pattern. Progress 2026-06-24: `kioku worker --backfill` runs a one-shot
-      backfill and exits; the long-running keiro worker host is still open.
+- [x] Host the worker behind a `kioku worker` CLI command (kioku-cli), reusing the keiro async
+      worker host pattern. Completed 2026-06-24: `kioku worker --backfill` runs a one-shot
+      backfill and exits; `kioku worker` starts the continuous Shibuya/Kiroku embedding processor
+      when `VectorAvailable`.
 - [ ] Backfill existing rows: run the worker, then `SELECT id, embedding IS NOT NULL,
       embedding_model, dimensions FROM kioku.kioku_memories` shows non-null vectors. Progress
       2026-06-24: local no-pgvector path verified with `cabal run kioku -- worker --backfill`,
@@ -145,6 +148,11 @@ as they are found.
   smoke test failed because the shared column fragment and the `FROM` clause were concatenated
   without a guaranteed space. The recall SQL now keeps a trailing space in the column fragment and
   qualifies `kiroku.kioku_memories` directly.
+
+- **The continuous embedding worker only needs the Shibuya side-effect shape.** Rei's full
+  `WorkerHost` includes routers, process managers, and timers; EP-2 only needs one Kiroku
+  subscription processor over the `kioku_memory` category. kioku therefore exposes
+  `embeddingWorkerProcessor`/`runEmbeddingWorkerHost` instead of porting the whole host.
 
 
 ## Decision Log

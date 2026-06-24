@@ -8,9 +8,9 @@ where
 import Data.Text qualified as Text
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
-import Kioku.Memory.Embedding.Worker (backfillMissingEmbeddings)
+import Kioku.Memory.Embedding.Worker (backfillMissingEmbeddings, runEmbeddingWorkerHost)
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (KirokuStore, defaultConnectionSettings, withStore)
 import Options.Applicative
 import System.Environment (lookupEnv)
 
@@ -41,7 +41,7 @@ runWorker opts = do
     case capability of
       VectorAvailable
         | opts.backfill -> runBackfill env capability config
-        | otherwise -> putStrLn "Continuous embedding worker is not implemented yet; run with --backfill for a one-shot pass."
+        | otherwise -> runContinuousWorker env st capability config
       VectorExtensionUnavailable ->
         putStrLn "pgvector is not available; recall will run FTS-only; nothing to embed."
       VectorColumnsUnavailable missing ->
@@ -54,6 +54,14 @@ runBackfill env capability config = do
   case result of
     Left storeErr -> ioError (userError ("kioku worker backfill store error: " <> show storeErr))
     Right count -> putStrLn ("Backfilled " <> show count <> " memory embeddings.")
+
+runContinuousWorker :: AppEnv -> KirokuStore -> VectorCapability -> EmbeddingConfig -> IO ()
+runContinuousWorker env store capability config = do
+  let model = toEmbeddingModel config
+  result <- runAppIO env (runEmbeddingWorkerHost store capability model config.dimensions)
+  case result of
+    Left storeErr -> ioError (userError ("kioku worker store error: " <> show storeErr))
+    Right () -> pure ()
 
 requireEnv :: String -> IO String
 requireEnv name = do

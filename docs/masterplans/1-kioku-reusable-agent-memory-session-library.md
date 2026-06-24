@@ -221,9 +221,9 @@ Track milestone-level progress across all child plans.
 - [x] EP-1: inline projections (structured row + `tsvector` FTS) and `kioku-migrations` apply to a fresh DB
 - [x] EP-1: `Kioku.Memory`/`Kioku.Session` write API + placeholder scoped `Kioku.Recall` demonstrated via `kioku-cli`
 - [x] EP-1: Rei legacy memory/session JSON decode is covered by a golden compatibility test
-- [ ] EP-2: optional `pgvector` migration + capability probe exist; Baikai embedding config/retry
-      and `kioku worker --backfill` one-shot backfill exist; continuous embedding projection still
-      needs the long-running worker host
+- [ ] EP-2: optional `pgvector` migration + capability probe exist; Baikai embedding config/retry,
+      `kioku worker --backfill`, and the continuous Shibuya/Kiroku embedding worker exist; true
+      vector backfill acceptance still needs a pgvector-enabled DB
 - [ ] EP-2: hybrid RRF recall API and `kioku recall` CLI exist; local no-pgvector fail-open path
       returns FTS-ranked results, but true cosine/vector acceptance still needs a pgvector-enabled DB
       and embedding endpoint
