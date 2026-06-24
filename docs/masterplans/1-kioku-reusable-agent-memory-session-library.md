@@ -245,8 +245,9 @@ Track milestone-level progress across all child plans.
       mapping, delegates AgentMemory/AgentSession writes to `Kioku.Memory`/`Kioku.Session`, and
       rewires `ContextBuilder` and `rei agent memory list/show/archive` memory reads onto scoped
       `Kioku.Recall` adapter functions. The `{{agent_memories}}` byte-stability proof is covered;
-      the additive `rei-kioku-migrate` executable for historical stream copy now builds; disposable
-      data-copy execution, full verify, and decommission remain.
+      the additive `rei-kioku-migrate` executable for historical stream copy now builds; its
+      verifier checks Rei-scoped read-model counts plus missing/extra/mismatched memory/session
+      rows; disposable data-copy execution, recall proof, and decommission remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -311,6 +312,12 @@ Track milestone-level progress across all child plans.
   therefore decodes legacy `events.data` with Kioku's compatibility parsers, re-encodes native Kioku
   events, preserves the TypeID UUID body plus metadata/causation/correlation, and lets Kiroku assign
   fresh event IDs. Discovered during EP-4 M3 implementation.
+
+- **EP-4 migration verification must check row equivalence, not only counts.** The stronger
+  `rei-kioku-migrate verify` now compares old Rei read-model rows to `namespace = 'rei'` Kioku rows
+  after applying the documented scope/focus/subject mapping, and reports missing, extra, and
+  mismatched memory/session rows. This catches semantic projection drift before the old modules are
+  decommissioned. Discovered during EP-4 M3 implementation.
 
 
 ## Decision Log
@@ -403,6 +410,12 @@ Track milestone-level progress across all child plans.
   tails, and rebuild Kioku inline read models. Verification:
   `cabal build rei-core:rei-kioku-migrate` and
   `cabal run rei-core:rei-kioku-migrate -- --help` in Rei.
+
+- 2026-06-24: EP-4 M3 verifier strengthened in Rei. `rei-kioku-migrate verify` now scopes Kioku
+  counts to `namespace = 'rei'` and checks read-model row equivalence for memories and sessions,
+  reporting missing, extra, and mismatched rows separately. Verification: Rei `nix fmt`;
+  `cabal build rei-core:rei-kioku-migrate`;
+  `cabal run rei-core:rei-kioku-migrate -- --help`; `git diff --check`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable

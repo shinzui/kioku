@@ -116,9 +116,10 @@ This section must always reflect the actual current state of the work.
       one-shot transform; additive `rei-kioku-migrate` executable now builds and exposes
       `copy-memories`, `copy-sessions`, `copy-all`, and `verify`. It decodes legacy Rei payloads
       through Kioku's compatibility parsers, re-encodes native Kioku events, appends only missing
-      destination-stream tails, and reapplies Kioku inline projections. Remaining: run against a
-      disposable data copy, extend `verify` beyond counts to replay/recall equivalence, and prove
-      coaching recall returns the same memories.
+      destination-stream tails, and reapplies Kioku inline projections. `verify` now checks
+      migrated Rei-scoped read-model counts plus missing/extra/mismatched business rows for
+      memories and sessions. Remaining: run against a disposable data copy, add any needed
+      stream-replay/recall equivalence probes, and prove coaching recall returns the same memories.
 - [ ] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
       decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters;
       `cabal test rei-core` green; AgentSchedule untouched.
@@ -191,6 +192,16 @@ implementation. Provide concise evidence.
   `Kioku.Session.EventStream.parseSessionEvent`, re-encodes it with Kioku's native codec, preserves
   the TypeID UUID body plus metadata/causation/correlation, and lets Kiroku assign fresh event IDs.
   Evidence: `cabal build rei-core:rei-kioku-migrate` succeeds with this design.
+
+- Count-only migration verification is too weak for M3 because it can miss scope, focus, status,
+  tag, or timestamp drift after projection rebuild. The `verify` subcommand now compares the
+  migrated Rei namespace (`namespace = 'rei'`) at the read-model row level: old
+  `agent_memories.anchor_type/anchor_id` maps to Kioku `scope_kind/scope_ref` (`workspace` becomes
+  NULL scope columns), old sessions map `focus_type` to Kioku `focus`, `intention_id` to Kioku
+  intention scope, and `focus_target` to Kioku `subject_ref`. It reports missing, extra, and
+  mismatched memory/session rows separately. Evidence:
+  `cabal build rei-core:rei-kioku-migrate`;
+  `cabal run rei-core:rei-kioku-migrate -- --help`; `git diff --check`.
 
 (Add further discoveries as work proceeds.)
 
@@ -309,6 +320,16 @@ Record every decision made while working on the plan.
   retaining intention scoping in `MemoryScope`.
   Date: 2026-06-24
 
+- Decision: Make `rei-kioku-migrate verify` a read-model equivalence check, not just a count check.
+  It compares old `agent_memories`/`agent_sessions` rows against Rei-scoped
+  `kioku_memories`/`kioku_sessions` rows after applying the documented column mapping, and fails on
+  missing, extra, or mismatched rows.
+  Rationale: the migration copies streams and rebuilds Kioku projections, so the practical cutover
+  gate is whether Rei's old prompt/CLI data can be reproduced from Kioku rows. Row equivalence
+  catches semantic drift that counts cannot, while keeping the check deterministic and executable
+  against a disposable data copy before decommission.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -337,6 +358,12 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   destination-stream tails, and rebuild Kioku inline read models. Verification:
   Rei `cabal build rei-core:rei-kioku-migrate`;
   `cabal run rei-core:rei-kioku-migrate -- --help`.
+
+- 2026-06-24: M3 verifier slice strengthened `rei-kioku-migrate verify` from counts-only to
+  read-model row equivalence. It now scopes Kioku-side counts to `namespace = 'rei'` and reports
+  missing, extra, and mismatched business rows for memories and sessions. Verification:
+  Rei `nix fmt`; `cabal build rei-core:rei-kioku-migrate`;
+  `cabal run rei-core:rei-kioku-migrate -- --help`; `git diff --check`.
 
 
 ## Context and Orientation
