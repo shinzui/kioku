@@ -38,6 +38,7 @@ library
     Kioku.Cli
     Kioku.Cli.Commands.Demo
     Kioku.Cli.Commands.DemoSession
+    Kioku.Cli.Commands.Distill
     Kioku.Cli.Commands.Recall
     Kioku.Cli.Commands.Worker
 

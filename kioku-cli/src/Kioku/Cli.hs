@@ -5,11 +5,12 @@ where
 
 import Kioku.Cli.Commands.Demo (runDemo)
 import Kioku.Cli.Commands.DemoSession (runDemoSession)
+import Kioku.Cli.Commands.Distill (DistillOptions, distillOptionsParser, runDistill)
 import Kioku.Cli.Commands.Recall (RecallOptions, recallOptionsParser, runRecall)
 import Kioku.Cli.Commands.Worker (WorkerOptions, runWorker, workerOptionsParser)
 import Options.Applicative
 
-data Command = Demo | DemoSession | Recall RecallOptions | Worker WorkerOptions
+data Command = Demo | DemoSession | Distill DistillOptions | Recall RecallOptions | Worker WorkerOptions
 
 main :: IO ()
 main = run =<< execParser opts
@@ -32,6 +33,9 @@ commandParser =
         "demo-session"
         (info (pure DemoSession) (progDesc "Run the session aggregate demonstration"))
       <> command
+        "distill"
+        (info (Distill <$> (helper <*> distillOptionsParser)) (progDesc "Run distillation commands"))
+      <> command
         "recall"
         (info (Recall <$> (helper <*> recallOptionsParser)) (progDesc "Recall memories by query"))
       <> command
@@ -41,5 +45,6 @@ commandParser =
 run :: Command -> IO ()
 run Demo = runDemo
 run DemoSession = runDemoSession
+run (Distill opts) = runDistill opts
 run (Recall opts) = runRecall opts
 run (Worker opts) = runWorker opts

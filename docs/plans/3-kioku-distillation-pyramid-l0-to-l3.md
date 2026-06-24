@@ -105,8 +105,10 @@ Milestone M1 — L1 extraction + LLM consolidation, recorded as events:
 - [ ] Add the timer arming (inline projection `sceneTimerScheduleProjection` on the session write
       path) + the `kioku-l1-extract` timer dispatcher (turn-count threshold with warm-up ramp +
       idle-timeout flush, self-rescheduling), modeled on Rei's `FireTimer.hs` / `DormancyTimer.hs`.
-- [ ] Add `kioku distill session <session-id>` CLI to force an L1 pass; M1 acceptance: a sample
-      multi-turn session produces atoms and a merge, shown via the event stream + `kioku_memories`.
+- [x] Add `kioku distill session <session-id>` CLI to force an L1 pass. Completed 2026-06-24:
+      `kioku distill session SESSION_ID [--candidates scan|recall] [--limit N]` builds a
+      `DistillRuntime`, selects the scoped-scan or recall candidate finder, runs `distillSessionL1`,
+      and prints the `L1Summary`. M1 acceptance still needs the sample transcript plus timer wiring.
 
 Milestone M2 — L2 scene generation:
 
@@ -780,9 +782,9 @@ Rei's reminders). The `keiro_timers` table is owned by `keiro-migrations` (alrea
 migration set via EP-1), so no schema work.
 
 **The force-a-pass CLI.** Add `kioku distill session <session-id>` to kioku-cli: it opens the store,
-builds `newDistillRuntime`, calls `distillSessionL1`, and prints the `L1Summary`
-(`extracted=… stored=… merged=… skipped=…`) plus the new/merged memory ids. This is what the M1
-acceptance transcript uses (it does not wait for a timer).
+builds `newDistillRuntime`, selects `scopedScanCandidates` or `recallCandidates`, calls
+`distillSessionL1`, and prints the `L1Summary` (`extracted=… stored=… merged=… skipped=…`). This is
+what the M1 acceptance transcript uses (it does not wait for a timer).
 
 **Acceptance for M1.** `cabal build all` exits 0. The Concrete Steps M1 transcript: start a session,
 record two near-duplicate turns/memories, run `kioku distill session <id>`, and observe (a) the summary
