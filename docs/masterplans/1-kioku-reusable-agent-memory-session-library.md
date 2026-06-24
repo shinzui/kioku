@@ -247,7 +247,9 @@ Track milestone-level progress across all child plans.
       `Kioku.Recall` adapter functions. The `{{agent_memories}}` byte-stability proof is covered;
       the additive `rei-kioku-migrate` executable for historical stream copy now builds; its
       verifier checks Rei-scoped read-model counts plus missing/extra/mismatched memory/session
-      rows; disposable data-copy execution, recall proof, and decommission remain.
+      rows; a disposable fixture rehearsal now proves copy, verify, and idempotent re-copy over
+      legacy Rei streams; disposable production data-copy execution, recall proof, and decommission
+      remain.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -318,6 +320,13 @@ Track milestone-level progress across all child plans.
   after applying the documented scope/focus/subject mapping, and reports missing, extra, and
   mismatched memory/session rows. This catches semantic projection drift before the old modules are
   decommissioned. Discovered during EP-4 M3 implementation.
+
+- **EP-4 fixture rehearsal found compatibility gaps that static checks missed.** Row-equivalence
+  verification must re-prefix expected Rei row IDs to Kioku IDs before joining, and Kioku's legacy
+  session parser must normalize old `CoachingFocusType` constructor names (`FocusToday`,
+  `FocusIntentionAssist`, etc.) to Rei's stored focus strings (`today`, `intention_assist`, etc.).
+  Both fixes are now covered by Kioku's `ReiCompatSpec` and Rei's `KiokuMigrateSpec`. Discovered
+  during EP-4 M3 implementation.
 
 
 ## Decision Log
@@ -416,6 +425,15 @@ Track milestone-level progress across all child plans.
   reporting missing, extra, and mismatched rows separately. Verification: Rei `nix fmt`;
   `cabal build rei-core:rei-kioku-migrate`;
   `cabal run rei-core:rei-kioku-migrate -- --help`; `git diff --check`.
+
+- 2026-06-24: EP-4 M3 disposable fixture rehearsal landed. Rei's `KiokuMigrateSpec` seeds legacy
+  memory/session streams through the old Rei transducers and projections, runs the migration copy,
+  verifies read-model equivalence, checks migrated Kioku rows, and proves a second copy appends zero
+  events. Kioku's legacy session parser now normalizes Rei focus constructors to storage strings.
+  Verification: Kioku `cabal test kioku-core`; `cabal build all`; Rei
+  `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
+  `cabal build rei-core:rei-kioku-migrate`;
+  `cabal run rei-core:rei-kioku-migrate -- --help`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable

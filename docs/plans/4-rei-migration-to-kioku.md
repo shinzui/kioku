@@ -118,8 +118,11 @@ This section must always reflect the actual current state of the work.
       through Kioku's compatibility parsers, re-encodes native Kioku events, appends only missing
       destination-stream tails, and reapplies Kioku inline projections. `verify` now checks
       migrated Rei-scoped read-model counts plus missing/extra/mismatched business rows for
-      memories and sessions. Remaining: run against a disposable data copy, add any needed
-      stream-replay/recall equivalence probes, and prove coaching recall returns the same memories.
+      memories and sessions. A focused disposable-Postgres rehearsal now seeds legacy Rei
+      memory/session streams through the old transducers, runs the copy, proves `verify` passes,
+      and proves a second copy appends zero events. Remaining: run against a disposable production
+      data copy, add any needed stream-replay/recall equivalence probes, and prove coaching recall
+      returns the same memories.
 - [ ] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
       decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters;
       `cabal test rei-core` green; AgentSchedule untouched.
@@ -202,6 +205,15 @@ implementation. Provide concise evidence.
   mismatched memory/session rows separately. Evidence:
   `cabal build rei-core:rei-kioku-migrate`;
   `cabal run rei-core:rei-kioku-migrate -- --help`; `git diff --check`.
+
+- The first executable rehearsal of `verify` exposed two semantic gaps that compile-only checks did
+  not catch. First, row equivalence must compare old Rei rows after re-prefixing IDs
+  (`agent_memory_*`/`agent_session_*` to `kioku_memory_*`/`kioku_session_*`) because Kioku owns the
+  destination stream/read-model IDs. Second, Rei's legacy session JSON stores `CoachingFocusType`
+  constructor names such as `FocusIntentionAssist`, while Rei's old `agent_sessions.focus_type`
+  read model stores normalized strings such as `intention_assist`; Kioku's compatibility parser now
+  normalizes every legacy focus constructor to the read-model string. Evidence:
+  `cabal test kioku-core`; Rei `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`.
 
 (Add further discoveries as work proceeds.)
 
@@ -322,8 +334,9 @@ Record every decision made while working on the plan.
 
 - Decision: Make `rei-kioku-migrate verify` a read-model equivalence check, not just a count check.
   It compares old `agent_memories`/`agent_sessions` rows against Rei-scoped
-  `kioku_memories`/`kioku_sessions` rows after applying the documented column mapping, and fails on
-  missing, extra, or mismatched rows.
+  `kioku_memories`/`kioku_sessions` rows after applying the documented column mapping, including
+  Rei-to-Kioku ID prefix conversion for memory IDs, session IDs, and supersession references, and
+  fails on missing, extra, or mismatched rows.
   Rationale: the migration copies streams and rebuilds Kioku projections, so the practical cutover
   gate is whether Rei's old prompt/CLI data can be reproduced from Kioku rows. Row equivalence
   catches semantic drift that counts cannot, while keeping the check deterministic and executable
@@ -364,6 +377,17 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   missing, extra, and mismatched business rows for memories and sessions. Verification:
   Rei `nix fmt`; `cabal build rei-core:rei-kioku-migrate`;
   `cabal run rei-core:rei-kioku-migrate -- --help`; `git diff --check`.
+
+- 2026-06-24: M3 disposable fixture rehearsal added. The migration logic is now importable as
+  `Rei.KiokuMigrate`, and `Rei.Modules.Agent.Memory.KiokuMigrateSpec` seeds old
+  `agent_memory`/`agent_session` streams and old read-model tables through Rei's legacy
+  transducers/projections, runs `copyMemories`/`copySessions`, verifies row equivalence, and reruns
+  copy to prove idempotency (`appendedEvents = 0`). The rehearsal found and fixed the verifier's
+  missing ID re-prefix mapping and Kioku's legacy session focus normalization. Verification:
+  Kioku `cabal test kioku-core`; `cabal build all`; Rei
+  `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
+  `cabal build rei-core:rei-kioku-migrate`;
+  `cabal run rei-core:rei-kioku-migrate -- --help`.
 
 
 ## Context and Orientation
@@ -1192,6 +1216,13 @@ native Kioku event, append to Kioku stream, rebuild Kioku inline projection." Th
 because Keiro checks the stored event-type tag before Kioku's compatibility payload parser and
 because Kiroku event IDs are globally unique. Progress, Surprises, Decision Log, Plan of Work,
 Idempotence, and dependency text were updated accordingly.
+
+*Revision note (2026-06-24, M3 disposable rehearsal slice):* A focused disposable-Postgres test was
+added for `rei-kioku-migrate`. It records legacy streams with Rei's old transducers, runs the copy
+and verifier, checks key Kioku rows, and proves idempotency on a second copy run. The rehearsal
+forced two correctness fixes: row-equivalence ID re-prefixing in the verifier and Kioku legacy
+session focus normalization. Progress, Surprises, Decision Log, and Outcomes were updated with the
+evidence and remaining production-copy rehearsal gap.*
 
 
 ## Coding Conventions (haskell-jitsurei)
