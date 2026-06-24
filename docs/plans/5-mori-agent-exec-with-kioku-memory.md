@@ -64,11 +64,13 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] M0 (pin reconciliation): add a `kioku` `source-repository-package` to mori's
-      `cabal.project`, reconcile the kiroku/keiki/shibuya pin skew (see Decision Log), add
-      `kioku-api`/`kioku-core` to `mori-core`'s `build-depends`, and apply kioku's read-model
-      schema in mori's test database setup. `cabal build mori-core` succeeds; the kioku tables
-      exist in a freshly migrated mori test DB.
+- [x] M0 (pin reconciliation): mori now consumes local `kioku-api`, `kioku-core`, and
+      `kioku-migrations` packages, reconciles current `kioku-core`'s transitive `shikumi` and
+      Baikai package needs under mori's pin-set, adds `kioku-api`/`kioku-core` to `mori-core`'s
+      `build-depends`, and applies kioku's read-model schema in mori's test database setup.
+      Verification: `cabal build mori-core`; `cabal test mori-core-test
+      --test-options='-p TestSupport.Database'`, proving `kiroku.kioku_memories`,
+      `kiroku.kioku_sessions`, and `kiroku.kioku_turns` exist in a freshly migrated mori test DB.
 - [ ] M1: add `AgentExec ExecOpts'` to `Mori.Command.Agent.AgentCommand`, a `command "exec"`
       stanza in `agentCommandParser`, and a handler in `runAgent` that resolves
       `--group GROUP` → repo paths (reusing `Mori.Command.Registry.Exec.selectProjects`) and runs
@@ -97,7 +99,21 @@ This section must always reflect the actual current state of the work.
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet — implementation not started.)
+- **Current kioku-core pulls EP-3 dependencies.** Although EP-5 only needs the base memory/session
+  API, current `kioku-core` imports the distillation stack introduced by EP-3: `shikumi`,
+  `shikumi-trace`, `shikumi-cache`, `baikai-claude`, `baikai-effectful`, and `baikai-openai`.
+  mori's build therefore needs those local/source packages available even for M0. Evidence:
+  `cabal build mori-core`.
+
+- **mori's Baikai pin is newer than kioku's standalone pin.** The existing mori Baikai revision
+  `d0ac866907239189d8f30efc42ddb6cd14ba0e4d` is a descendant of kioku's standalone Baikai
+  revision `a219b92278d8e475b0e45c602e65dbf108cf8dc1`, so M0 kept mori's consumer pin and
+  expanded the Baikai `subdir` list instead of downgrading mori. Evidence: local Baikai
+  `git merge-base --is-ancestor` checks and `cabal build mori-core`.
+
+- **`claude-1.4.0` has a narrow `http-client-tls` bound conflict in mori.** mori already resolves
+  `http-client-tls-0.4.0`, while `claude-1.4.0` declares `<0.4`; M0 added
+  `allow-newer: claude:http-client-tls` to keep the consumer build on mori's existing plan.
 
 
 ## Decision Log
@@ -167,13 +183,24 @@ Record every decision made while working on the plan.
   Rationale: keeps the command shape simple and consistent with the other `mori agent` verbs.
   Date: 2026-06-24
 
+- Decision: M0 consumes kioku through local `optional-packages` in mori's `cabal.project`, keeps
+  mori's existing Baikai revision, and expands that Baikai pin's `subdir` list for the subpackages
+  current `kioku-core` needs. It also includes local `shikumi`, `shikumi-cache`, and `shikumi-trace`
+  packages and adds a narrow `allow-newer: claude:http-client-tls`.
+  Rationale: mori is the consumer and pin authority for this integration; keeping one coherent
+  build plan is less risky than introducing a second ecosystem pin-set.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original purpose.
 
-(To be filled during and after implementation.)
+- 2026-06-24: M0 completed in mori. mori now builds against local kioku packages, applies kioku's
+  read-model SQL migrations in its ephemeral test DB after kiroku and keiro, and has an integration
+  test proving the three kioku read-model tables are present. Verification:
+  `cabal build mori-core`; `cabal test mori-core-test --test-options='-p TestSupport.Database'`.
 
 
 ## Context and Orientation

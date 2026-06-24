@@ -92,7 +92,7 @@ five milestones / ten files.
 | 2 | kioku Hybrid Retrieval (pgvector + FTS + RRF) | docs/plans/2-kioku-hybrid-retrieval-pgvector-fts-rrf.md | EP-1 | None | Complete |
 | 3 | kioku Distillation Pyramid (L0 to L3) | docs/plans/3-kioku-distillation-pyramid-l0-to-l3.md | EP-1 | EP-2 | In Progress |
 | 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | In Progress |
-| 5 | mori agent exec with kioku Memory | docs/plans/5-mori-agent-exec-with-kioku-memory.md | EP-1 | EP-2 | Not Started |
+| 5 | mori agent exec with kioku Memory | docs/plans/5-mori-agent-exec-with-kioku-memory.md | EP-1 | EP-2 | In Progress |
 | 6 | shikigami Memory Integration with kioku | docs/plans/6-shikigami-memory-integration-with-kioku.md | EP-1 | EP-2, EP-3 | Not Started |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
@@ -273,6 +273,10 @@ Track milestone-level progress across all child plans.
       copy, verify, and idempotent re-copy without any remaining `Rei.Modules.AgentMemory` /
       `Rei.Modules.AgentSession` modules. Disposable production data-copy execution remains.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
+- [x] EP-5: M0 pin/schema slice completed. mori links local kioku packages, resolves current
+      `kioku-core`'s `shikumi`/Baikai transitive package needs under mori's pin-set, and applies
+      kioku read-model migrations in its ephemeral test DB. Verification: mori
+      `cabal build mori-core`; `cabal test mori-core-test --test-options='-p TestSupport.Database'`.
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
 - [ ] EP-6: shikigami adopts kioku for agent_runs (sessions) + per-agent memory
@@ -310,6 +314,13 @@ Track milestone-level progress across all child plans.
   so kioku (`kiroku` schema) and the consumer's own read models (`public`) share one pool without
   name collisions. Consumers apply `kiokuMigrations` the same way they already apply
   kiroku/keiro framework migrations. No conflict — confirmed while drafting EP-4/EP-5/EP-6.
+
+- **EP-5 M0 needs the current distillation transitive stack.** The current `kioku-core` package
+  imports EP-3-era dependencies (`shikumi`, `shikumi-trace`, `shikumi-cache`, `baikai-claude`,
+  `baikai-effectful`, `baikai-openai`) even for mori's base M0 link/schema slice. mori's existing
+  Baikai pin `d0ac866907239189d8f30efc42ddb6cd14ba0e4d` is a descendant of kioku's standalone
+  Baikai pin `a219b92278d8e475b0e45c602e65dbf108cf8dc1`, so EP-5 kept mori's consumer pin and
+  expanded its Baikai `subdir` list. Discovered during EP-5 M0 implementation.
 
 - **EP-4 migration composition uses kioku-owned migrations only.** Rei already applies Kiroku and
   Keiro framework migrations via `Keiro.Migrations.allKeiroMigrations`; kioku's exported
@@ -503,8 +514,20 @@ Track milestone-level progress across all child plans.
   Phase-3 plans parallelize.
   Date: 2026-06-24
 
+- Decision: In EP-5 M0, consume kioku through local `optional-packages` in mori, keep mori's
+  existing Baikai revision while exposing the extra Baikai subpackages current `kioku-core` needs,
+  include local `shikumi` packages, and add a narrow `allow-newer: claude:http-client-tls`.
+  Rationale: mori is the consumer pin authority for this integration; one coherent build plan is
+  preferable to introducing a second ecosystem pin-set.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
+
+- 2026-06-24: EP-5 M0 completed in mori. mori now builds against local kioku packages, resolves the
+  current `kioku-core` transitive package set under mori's pin-set, and applies kioku read-model
+  migrations in its ephemeral test DB after kiroku and keiro. Verification: mori
+  `cabal build mori-core`; `cabal test mori-core-test --test-options='-p TestSupport.Database'`.
 
 - 2026-06-24: EP-4 M2 now has a focused byte-stability regression for the `{{agent_memories}}`
   prompt variable. Rei compares legacy `AgentMemoryRow` fixtures against equivalent
