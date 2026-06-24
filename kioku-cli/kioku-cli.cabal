@@ -37,6 +37,7 @@ library
   exposed-modules:
     Kioku.Cli
     Kioku.Cli.Commands.Demo
+    Kioku.Cli.Commands.DemoSession
 
   build-depends:
     , base                  >=4.21 && <5

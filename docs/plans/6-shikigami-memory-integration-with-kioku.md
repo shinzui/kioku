@@ -243,7 +243,7 @@ real trigger or sink, stop — that is out of scope.
   `actor.kind: "agent"`. This plan reads an envelope from a JSON file and maps it into a kioku
   memory or turn; it does **not** consume a live Kafka stream.
 - **kioku Session.** An event-sourced record of one agent run. Created by `Kioku.Session.start`,
-  closed by `Kioku.Session.complete` or `Kioku.Session.fail`. It carries a free-form `focus :: Text`,
+  closed by `Kioku.Session.complete` or `Kioku.Session.failSession`. It carries a free-form `focus :: Text`,
   a `scope :: MemoryScope`, an optional `subjectRef :: Maybe Text`, and may capture raw `TurnRecorded`
   events while open. Projected to the `kioku_sessions` (and `kioku_turns`) read-model table.
 - **kioku Memory.** An event-sourced durable learning, recorded by `Kioku.Memory.record`. It carries
@@ -826,7 +826,7 @@ binding integration contracts (IP-1…IP-6 from MasterPlan #1,
   (`MemoryType`, `Confidence`, `MemoryRecord`), `Kioku.Id` (`MemoryId`, `SessionId`, `genMemoryId`,
   `genSessionId`, `idText`). The wire types shikigami maps its agent names into.
 - `kioku-core` — `Kioku.Memory` (write: `record`/…), `Kioku.Session` (write: `start`/`complete`/
-  `fail`/`recordTurn`), `Kioku.Recall` (read: `getActiveByScope` and the other scoped queries),
+  `failSession`/`recordTurn`), `Kioku.Recall` (read: `getActiveByScope` and the other scoped queries),
   `Kioku.App` (`AppEnv`, `runAppIO`, `noopTracer`). **shikigami imports only these top-level
   modules + `kioku-api` types — never `Kioku.*.Domain.*` internals (IP-1).**
 - `kioku-migrations` — `Kioku.Migrations.kiokuMigrations` (composed into shikigami's migration set,

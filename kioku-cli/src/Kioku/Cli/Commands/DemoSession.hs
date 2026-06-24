@@ -1,0 +1,89 @@
+module Kioku.Cli.Commands.DemoSession
+  ( runDemoSession,
+  )
+where
+
+import Data.Text qualified as Text
+import Data.Time (getCurrentTime)
+import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
+import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.Id (genSessionId, idText)
+import Kioku.Session qualified as Session
+import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), StartSessionData (..))
+import Kioku.Session.ReadModel (SessionRow (..), TurnRow (..))
+import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import System.Environment (lookupEnv)
+
+runDemoSession :: IO ()
+runDemoSession = do
+  connStr <- requireEnv "PG_CONNECTION_STRING"
+  withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
+    tr <- noopTracer
+    sid <- genSessionId
+    now <- getCurrentTime
+    let scope = ScopeEntity (Namespace "rei") (ScopeKind "intention") "intention_demo"
+        startPayload =
+          StartSessionData
+            { sessionId = sid,
+              agentId = "demo-agent",
+              focus = "demo",
+              scope = scope,
+              subjectRef = Just "intention_demo",
+              previousSessionId = Nothing,
+              startedAt = now
+            }
+        turnPayload =
+          RecordTurnData
+            { sessionId = sid,
+              turnId = idText sid <> "-turn-1",
+              turnIndex = 1,
+              role = "user",
+              content = "Please remember I prefer concise answers.",
+              toolSummary = Nothing,
+              promptTokens = Just 7,
+              outputTokens = Nothing,
+              recordedAt = now
+            }
+        completePayload =
+          CompleteSessionData
+            { sessionId = sid,
+              completedAt = now,
+              modelUsed = Just "demo-model",
+              summary = Just "Demo session completed"
+            }
+        env = AppEnv {store = st, tracer = tr, metrics = Nothing}
+    result <- runAppIO env do
+      startResult <- Session.start startPayload
+      turnResult <- Session.recordTurn turnPayload
+      completeResult <- Session.complete completePayload
+      rowResult <- Session.getById sid
+      turnsResult <- Session.getTurns sid
+      pure (startResult, turnResult, completeResult, rowResult, turnsResult)
+    case result of
+      Left storeErr -> ioError (userError ("kioku session demo store error: " <> show storeErr))
+      Right (Left writeErr, _, _, _, _) -> ioError (userError ("kioku session demo start error: " <> show writeErr))
+      Right (_, Left writeErr, _, _, _) -> ioError (userError ("kioku session demo turn error: " <> show writeErr))
+      Right (_, _, Left writeErr, _, _) -> ioError (userError ("kioku session demo complete error: " <> show writeErr))
+      Right (_, _, _, Left readErr, _) -> ioError (userError ("kioku session demo read error: " <> show readErr))
+      Right (_, _, _, _, Left readErr) -> ioError (userError ("kioku session demo turns read error: " <> show readErr))
+      Right (_, _, _, Right Nothing, Right _) -> ioError (userError "kioku session demo did not project the session row")
+      Right (_, _, _, Right (Just row), Right turns) -> do
+        putStrLn ("Recorded session " <> Text.unpack (idText sid) <> " with status " <> Text.unpack row.status)
+        mapM_ printTurn turns
+
+requireEnv :: String -> IO String
+requireEnv name = do
+  found <- lookupEnv name
+  case found of
+    Just value -> pure value
+    Nothing -> ioError (userError (name <> " is not set"))
+
+printTurn :: TurnRow -> IO ()
+printTurn turn =
+  putStrLn $
+    "- turn "
+      <> show turn.turnIndex
+      <> " "
+      <> Text.unpack turn.role
+      <> ": "
+      <> Text.unpack turn.content

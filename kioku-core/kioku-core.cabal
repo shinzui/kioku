@@ -42,6 +42,10 @@ library
     Kioku.Memory.EventStream
     Kioku.Memory.ReadModel
     Kioku.Recall
+    Kioku.Session
+    Kioku.Session.Domain
+    Kioku.Session.EventStream
+    Kioku.Session.ReadModel
 
   build-depends:
     , aeson                   >=2.2

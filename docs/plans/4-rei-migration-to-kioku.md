@@ -251,7 +251,7 @@ internals):
   `createdAt :: UTCTime`), plus the text round-trips (`memoryTypeToText`, `confidenceToText`, …).
 - `Kioku.Memory` — the memory **write** API: `record`, `supersede`, `archive`, `updateTags`,
   `updateConfidence`, each running `runCommandWithProjections` with kioku's inline projection.
-- `Kioku.Session` — the session **write** API: `start`, `complete`, `fail`, `recordInteractive`,
+- `Kioku.Session` — the session **write** API: `start`, `complete`, `failSession`, `recordInteractive`,
   `recordTurn` (turns are opt-in; Rei never records turns).
 - `Kioku.Recall` — the **read** API: EP-1 ships scoped SQL queries (`getActiveByScope`, `getGlobal`,
   `getBySession`, `getByType`); EP-2 fills in a hybrid (vector + full-text + RRF) recall behind the
@@ -455,7 +455,7 @@ each writer to kioku and rely on M3 to backfill history.
 
 6. **Re-home the session writers.** Same pattern for
    `Rei.Modules.AgentSession.Application.StoreHandler`'s `startSession`, `completeSession`,
-   `failSession`, `recordInteractiveSession` → `Kioku.Session.start`/`complete`/`fail`/
+   `failSession`, `recordInteractiveSession` → `Kioku.Session.start`/`complete`/`failSession`/
    `recordInteractive`, mapping `CoachingFocusType` to `focusToText`, the intention to
    `sessionScope`/`subjectRef`, and re-prefixing the id (`agent_session` → `kioku_session`).
 

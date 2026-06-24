@@ -79,7 +79,7 @@ This section must always reflect the actual current state of the work.
       `Kioku.Memory.record` / `Kioku.Recall.getActiveByScope`. Record a memory in scope
       `mori/group/<gid>` from the CLI and list it back. Grant `claude` access to
       `mori agent memory record` via `--allowedTools` in the exec handler.
-- [ ] M2: open a kioku **session** (`Kioku.Session.start`/`complete`/`fail`) around each repo run,
+- [ ] M2: open a kioku **session** (`Kioku.Session.start`/`complete`/`failSession`) around each repo run,
       scope `mori/repo/<projectId>`, focus = the prompt/skill label, `subjectRef = <group name>`.
       A `psql` query shows one `kioku_sessions` row per repo, `status='completed'`.
 - [ ] M3: before each repo run, recall group-scoped + repo-scoped memories and inject them into the
@@ -580,7 +580,7 @@ telling the agent: *"When you learn something reusable about this repo or the gr
   start input carries `focus = <prompt-or-skill label>`, `scope = repoScope projectId`,
   `subjectRef = Just (opts ^. #groupName)`, and (M3) `previousSessionId = mPrev`.
 - After `waitForProcess`: on exit 0 `Kioku.Session.complete sid (summary)`, on non-zero
-  `Kioku.Session.fail sid (errMsg)`. Run both through `runMoriEffWithStore`.
+  `Kioku.Session.failSession sid (errMsg)`. Run both through `runMoriEffWithStore`.
 
 Open the store **once** at the top of `runAgentExec` (one `withStore`) and thread it through the
 loop, rather than re-opening per repo, so all repos share one pool and one connection budget.
@@ -845,10 +845,10 @@ milestone. Use full module paths.
   - `Kioku.Api.Types` — `MemoryRecord(..)`, `MemoryType`, `Confidence`.
   - `Kioku.Id` — `MemoryId`, `SessionId`, `genMemoryId`, `genSessionId`.
   - `Kioku.Memory` — the write API (`record`, and as needed `supersede`/`archive`/`updateTags`).
-  - `Kioku.Session` — `start`, `complete`, `fail` (and `recordTurn` if EP-5 later opts into turns).
+  - `Kioku.Session` — `start`, `complete`, `failSession` (and `recordTurn` if EP-5 later opts into turns).
   - `Kioku.Recall` — `getActiveByScope` (EP-1 placeholder); `recall` + `RecallRequest`/
     `RecallStrategy` once EP-2 lands (soft dependency).
-  Read the exact argument records of `record`/`start`/`complete`/`fail` in EP-1's
+  Read the exact argument records of `record`/`start`/`complete`/`failSession` in EP-1's
   `kioku-core/src/Kioku/Memory.hs` and `Kioku/Session.hs` and construct them accordingly; if EP-1
   exposes smart constructors, use them rather than raw records.
 - **mori** existing modules:

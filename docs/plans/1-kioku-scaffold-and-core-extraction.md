@@ -98,9 +98,13 @@ This section must always reflect the actual current state of the work.
       Completed 2026-06-24: the command printed `Recorded memory
       kioku_memory_01kvx9my35e5y825cpy4nycjgz in scope rei/intention/intention_demo` followed by the
       recalled row `prefers concise answers`; a direct Postgres query showed `has_tsv = t`.
-- [ ] M3: Session aggregate (`Kioku.Session.Domain`, `.EventStream`, `.ReadModel`) builds; events
+- [x] M3: Session aggregate (`Kioku.Session.Domain`, `.EventStream`, `.ReadModel`) builds; events
       `SessionStarted`/`SessionCompleted`/`SessionFailed`/`InteractiveSessionRecorded`/`TurnRecorded`;
-      `Kioku.Session` write API builds and a session start→turn→complete demo runs.
+      `Kioku.Session` write API builds and a session start→turn→complete demo runs. Completed
+      2026-06-24: `cabal build all` compiled the session domain/event stream/read model/write API
+      and CLI, `cabal run kioku -- demo-session` printed a completed session plus one user turn,
+      and direct `psql` queries showed the row in `kiroku.kioku_sessions` with `status =
+      'completed'` and the corresponding `kiroku.kioku_turns` row.
 - [ ] M4: A golden test in `kioku-core/test` decodes a sample Rei `agent_memory` JSON payload
       (`{"type":"agent_memory_recorded","data":{…}}`) and a sample Rei `agent_session` payload
       through kioku's codec into the kioku event types, proving IP-6 backward compatibility.
@@ -163,6 +167,13 @@ Record every decision made while working on the plan.
   turns simply never issues `recordTurn`.
   Rationale: MasterPlan Decision Log ("Raw conversation turns are an optional, per-session
   capability"). Rei's current sessions record no turns; shikigami/mori may.
+  Date: 2026-06-24
+
+- Decision: The public failure helper is named `Kioku.Session.failSession` rather than
+  `Kioku.Session.fail`.
+  Rationale: exporting a top-level `fail` conflicts with the implicit Prelude `fail` in module export
+  lists and is a poor API name for downstream users. `failSession` matches Rei's existing handler
+  vocabulary and keeps call sites unambiguous.
   Date: 2026-06-24
 
 - Decision: EP-1 pins `kiroku` to `4312aa8cc3e4f6ab0d19fc8bb12d0dd9f8cc164a`, matching Rei and mori,
@@ -566,17 +577,17 @@ session is open; `Completed`, `Failed`, `Interactive` are terminal. The `focus` 
 - `kioku-core/src/Kioku/Session/Domain.hs` — the transducer (mirrors Rei's AgentSession transducer
   but with `focus :: Text`, `scope :: MemoryScope`, and an extra `RecordTurn` edge out of `Running`
   back to `Running`).
-- `kioku-core/src/Kioku/Session/EventStream.hs` — codec (native + lenient Rei decode) and stream
+- `kioku-core/src/Kioku/Session/EventStream.hs` — native codec and stream
   `kioku_session-<id>`.
 - `kioku-core/src/Kioku/Session/ReadModel.hs` — inline projection upserting `kioku_sessions` (all
   five event constructors) and inserting a `kioku_turns` row on `TurnRecorded`.
-- `kioku-core/src/Kioku/Session.hs` — write API `start`, `complete`, `fail`, `recordInteractive`,
+- `kioku-core/src/Kioku/Session.hs` — write API `start`, `complete`, `failSession`, `recordInteractive`,
   `recordTurn`.
 - Extend the `demo` command (or add `demo-session`) to start a session, record a turn, and complete
   it, then read the session and its turn back.
 
 **Acceptance for M3.** `cabal build all` exits 0. A session demo records a turn and completes; a
-`psql` query of `kioku.kioku_sessions` and `kioku.kioku_turns` shows the session `status='completed'`
+`psql` query of `kiroku.kioku_sessions` and `kiroku.kioku_turns` shows the session `status='completed'`
 and one turn row.
 
 ### Milestone M4 — Rei-JSON backward-compatible decode (golden test)
@@ -1129,11 +1140,11 @@ Mirror Rei's AgentSession transducer (`Domain/Transducer.hs`) but:
   toolSummary :: Maybe Text, promptTokens :: Maybe Int, outputTokens :: Maybe Int, recordedAt`.
 
 The inline projection upserts `kioku_sessions` (start/interactive insert, complete/fail update) and
-inserts a `kioku_turns` row on `TurnRecorded` (idempotent on `(session_id, turn_index)`). The codec
-again accepts native + Rei legacy (`agent_session_started` → kioku `SessionStarted` with
-`focus = focus_type` text, `scope = ScopeEntity "rei" "intention" intention_id` or
-`ScopeGlobal "rei"` when `intention_id` is null). `Kioku.Session` exposes `start`/`complete`/`fail`/
-`recordInteractive`/`recordTurn`.
+inserts a `kioku_turns` row on `TurnRecorded` (idempotent on `(session_id, turn_index)`). The native
+codec uses the shared `eventAesonOptions` envelope; M4 adds Rei legacy decode
+(`agent_session_started` → kioku `SessionStarted` with `focus = focus_type` text,
+`scope = ScopeEntity "rei" "intention" intention_id` or `ScopeGlobal "rei"` when `intention_id` is
+null). `Kioku.Session` exposes `start`/`complete`/`failSession`/`recordInteractive`/`recordTurn`.
 
 Extend the CLI: add a `demo-session` (or fold into `demo`) that starts a session, records one turn,
 completes it. Build, run, and verify:
@@ -1305,10 +1316,10 @@ binding integration contracts (IP-1…IP-6 from MasterPlan #1).
 - `Kioku.Session.Domain`: `SessionCommand(..)`, `SessionEvent(SessionStarted|SessionCompleted|
   SessionFailed|InteractiveSessionRecorded|TurnRecorded)`, `SessionVertex(NotCreated|Running|
   Completed|Failed|Interactive)` (terminal `{Completed,Failed,Interactive}`), `sessionTransducer`.
-- `Kioku.Session.EventStream`: `sessionEventStream`, `sessionCodec` (native + Rei legacy),
+- `Kioku.Session.EventStream`: `sessionEventStream`, `sessionCodec` (native in M3; Rei legacy in M4),
   `sessionStream :: SessionId -> Stream SessionEventStream`.
 - `Kioku.Session.ReadModel`: `sessionInlineProjection :: InlineProjection SessionEvent`.
-- `Kioku.Session` (IP-1): `start`, `complete`, `fail`, `recordInteractive`, `recordTurn`.
+- `Kioku.Session` (IP-1): `start`, `complete`, `failSession`, `recordInteractive`, `recordTurn`.
 
 **End of M4**: a passing `ReiCompat` tasty group in `kioku-core:kioku-test`.
 

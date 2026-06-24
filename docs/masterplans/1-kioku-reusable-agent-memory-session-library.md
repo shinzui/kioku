@@ -124,7 +124,7 @@ Complete.
 ## Integration Points
 
 **IP-1 — kioku public API surface.** The modules `Kioku.Memory` (write: record/supersede/
-merge/archive/retag/reconfidence), `Kioku.Session` (write: start/complete/fail/recordTurn/
+merge/archive/retag/reconfidence), `Kioku.Session` (write: start/complete/failSession/recordTurn/
 recordInteractive), and `Kioku.Recall` (read: hybrid recall + simple scoped queries), plus the
 re-exported core types. EP-1 defines `Kioku.Memory`/`Kioku.Session` and a *placeholder*
 `Kioku.Recall` (scoped SQL queries only). EP-2 fills in hybrid `Kioku.Recall`. EP-4/5/6 consume
@@ -217,9 +217,10 @@ binds EP-5's `mori agent exec` and any agent-spawning code.
 Track milestone-level progress across all child plans.
 
 - [x] EP-1: kioku 4-package project scaffolds and builds (`cabal build all`) with the kikan pin-set
-- [ ] EP-1: memory + session keiki aggregates, codecs, and generic `MemoryScope` model exist
-- [ ] EP-1: inline projections (structured row + `tsvector` FTS) and `kioku-migrations` apply to a fresh DB
-- [ ] EP-1: `Kioku.Memory`/`Kioku.Session` write API + placeholder scoped `Kioku.Recall` demonstrated via `kioku-cli`
+- [x] EP-1: memory + session keiki aggregates, native codecs, and generic `MemoryScope` model exist
+- [x] EP-1: inline projections (structured row + `tsvector` FTS) and `kioku-migrations` apply to a fresh DB
+- [x] EP-1: `Kioku.Memory`/`Kioku.Session` write API + placeholder scoped `Kioku.Recall` demonstrated via `kioku-cli`
+- [ ] EP-1: Rei legacy memory/session JSON decode is covered by a golden compatibility test
 - [ ] EP-2: `pgvector` column + ANN index + embedding async projection (baikai) backfills vectors
 - [ ] EP-2: hybrid RRF recall (FTS + cosine + recency/priority) returns ranked results via CLI
 - [ ] EP-3: L1 atom extraction + LLM consolidation (`store|update|merge|skip`) recorded as events
