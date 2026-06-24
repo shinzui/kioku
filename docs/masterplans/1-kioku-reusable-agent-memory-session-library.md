@@ -282,6 +282,16 @@ Track milestone-level progress across all child plans.
       `validateAgentExecIntent` and `buildAgentExecPrompt`; full `cabal test mori-cli-test`; real
       registry dry-run/debug smokes against `frontend`/`intentui/intentui`; and a non-debug
       fake-`claude` smoke proving repo `cwd`.
+- [x] EP-5: M2 memory write/list and per-repo sessions completed. `mori agent memory record/list`
+      writes group-scoped Kioku memories and lists them through `Kioku.Recall.getActiveByScope`;
+      spawned `mori agent exec` prompts include concrete memory-record commands and the allow-list
+      grants `mori agent memory record`; each visited repo opens and completes/fails a Kioku
+      session scoped to `mori/repo/<projectId>` with `subjectRef=<group>`. Verification: mori
+      `cabal build mori-cli`; full `cabal test mori-cli-test` (320 tests); live `frontend`
+      memory record/list smoke; `mori agent exec --group frontend --filter intentui/intentui
+      --debug` session smoke; `psql` confirmed a completed `kioku_sessions` row. Local live DB
+      required applying Kioku's idempotent migrations first because only the ephemeral test DB had
+      been migrated previously.
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
 - [ ] EP-6: shikigami adopts kioku for agent_runs (sessions) + per-agent memory
 

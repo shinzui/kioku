@@ -84,13 +84,22 @@ This section must always reflect the actual current state of the work.
       `cabal test mori-cli-test --test-options=-p --test-options=validateAgentExecIntent`;
       `cabal test mori-cli-test --test-options=-p --test-options=buildAgentExecPrompt`;
       `cabal test mori-cli-test` (317 tests).
-- [ ] M2: add `mori agent memory record` and `mori agent memory list` subcommands over kioku's
+- [x] M2: add `mori agent memory record` and `mori agent memory list` subcommands over kioku's
       `Kioku.Memory.record` / `Kioku.Recall.getActiveByScope`. Record a memory in scope
       `mori/group/<gid>` from the CLI and list it back. Grant `claude` access to
-      `mori agent memory record` via `--allowedTools` in the exec handler.
-- [ ] M2: open a kioku **session** (`Kioku.Session.start`/`complete`/`failSession`) around each repo run,
+      `mori agent memory record` via `--allowedTools` in the exec handler. Completed 2026-06-24:
+      `mori agent memory record --group frontend "EP-5 M2 smoke memory; safe to archive after
+      verification" --tag ep5-m2 --type fact` printed
+      `recorded kioku_memory_01kvy0z68geasv4zxgxcscg2j1`, and
+      `mori agent memory list --group frontend --type fact` listed the memory.
+- [x] M2: open a kioku **session** (`Kioku.Session.start`/`complete`/`failSession`) around each repo run,
       scope `mori/repo/<projectId>`, focus = the prompt/skill label, `subjectRef = <group name>`.
-      A `psql` query shows one `kioku_sessions` row per repo, `status='completed'`.
+      A `psql` query shows one `kioku_sessions` row per repo, `status='completed'`. Completed
+      2026-06-24: `mori agent exec --group frontend --filter intentui/intentui --prompt "EP-5 M2
+      debug smoke; do not modify files." --debug` visited one repo with zero failures; `SELECT
+      focus, namespace, scope_kind, scope_ref, subject_ref, status FROM kiroku.kioku_sessions WHERE
+      agent_id='mori-agent-exec' ORDER BY started_at DESC LIMIT 3` returned
+      `prompt: EP-5 M2 debug smoke; do not modify files.|mori|repo|proj_01kmp6vqwmec3sqtsmgeqhhyn9|frontend|completed`.
 - [ ] M3: before each repo run, recall group-scoped + repo-scoped memories and inject them into the
       `--append-system-prompt`. Demonstrate: a memory recorded while processing repo #1 is visibly
       present in the injected context for repo #2 (shown with `--debug`).
@@ -99,6 +108,9 @@ This section must always reflect the actual current state of the work.
       second invocation builds on the first. Demonstrate with two consecutive invocations.
 - [ ] Tests: pure unit tests for repo-ordering, prompt-injection assembly, and scope mapping; a
       DB-gated integration test that records a memory in one scope and recalls it in another.
+      Current coverage includes pure scope mapping and prompt memory-command assertions in
+      `Mori.Command.Agent.ExecSpec`; the DB-gated memory/session exercise is manual against the
+      local `mori` database for M2 and should become automated in the next test slice.
 
 
 ## Surprises & Discoveries
@@ -127,6 +139,15 @@ implementation. Provide concise evidence.
   handler validated `--prompt`/`--skill` before rendering the repo list. The handler now resolves
   projects and renders dry-run output before requiring an execution intent; non-dry-run still
   enforces the XOR rule.
+
+- **The live mori dev database did not yet have kioku read-model tables.** M0 proved the ephemeral
+  mori test DB applied kioku migrations, but the M2 live smoke initially failed with
+  `relation "kioku_memories" does not exist`. Applying kioku's idempotent embedded migrations to
+  the `mori` database fixed the local schema:
+  `CODD_CONNECTION="$MORI_PG_CONNECTION_STRING user=$(id -un)" ... cabal run
+  kioku-migrations:kioku-migrate`. After that, `mori agent memory record/list` and the session
+  smoke both passed. This reinforces that production/dev migration wiring remains a deployment
+  precondition, even though the app code and test DB path are green.
 
 
 ## Decision Log
