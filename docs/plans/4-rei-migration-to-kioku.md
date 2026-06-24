@@ -142,10 +142,15 @@ This section must always reflect the actual current state of the work.
       `cabal test rei-core-test --test-options='-p Kioku'`.
 - [ ] M3: old Rei AgentMemory/AgentSession domain/projection/infrastructure/store-handler modules
       decommissioned (deleted from `rei-core.cabal` and the tree), keeping only the thin adapters.
-      The old AgentMemory filesystem reactor is already removed; remaining work covers the old
-      command/domain types, inline projections/read-model helpers, store-handler facades, migration
-      fixture dependence on old transducers/projections, and the old AgentSession modules. `cabal
-      test rei-core` green; AgentSchedule untouched.
+      The old AgentMemory filesystem reactor is already removed, and `AgentMemoryRow` has moved to
+      `Rei.Modules.Agent.Memory.Types` so live context rendering, Kioku adapter code, agent memory
+      CLI output, and FZF selection no longer import the legacy `AgentMemory.Infrastructure.Table`
+      module directly. The legacy table re-exports the row for old projections and migration
+      fixtures while they remain. Remaining work covers the old command/domain types, inline
+      projections/read-model helpers, store-handler facades, migration fixture dependence on old
+      transducers/projections, the old AgentSession modules, and the `rei today` memory summary,
+      which still reads `getActiveMemoryCounts` / `getLastRecordedMemory` through the old Hasql
+      `AgentMemoryReadModelEff`. `cabal test rei-core` green; AgentSchedule untouched.
 
 
 ## Surprises & Discoveries
@@ -243,6 +248,13 @@ implementation. Provide concise evidence.
   covers both an intention-scoped active memory and a workspace-global active memory while keeping a
   superseded workspace memory excluded. Evidence: Rei
   `cabal test rei-core-test --test-options='-p /rei-kioku-migrate/'`; Kioku `cabal test kioku-test`.
+
+- Extracting `AgentMemoryRow` exposed one remaining live read-model dependency outside the agent
+  memory command surface. `rei today` still builds its dashboard memory summary through the old
+  Hasql `AgentMemoryReadModelEff` (`getActiveMemoryCounts`, `getLastRecordedMemory`). The row shape
+  is now independent of the old table module for prompt rendering and agent-memory CLI paths, but
+  fully decommissioning the read model also needs a Kioku-backed dashboard query path or a
+  `StoreRunner`-fed memory summary. Evidence: Rei `rg "AgentMemoryReadModelEff|getActiveMemoryCounts|getLastRecordedMemory" rei-cli rei-core`.
 
 (Add further discoveries as work proceeds.)
 
@@ -373,6 +385,15 @@ Record every decision made while working on the plan.
   against a disposable data copy before decommission.
   Date: 2026-06-24
 
+- Decision: Move Rei's stable `AgentMemoryRow` type to `Rei.Modules.Agent.Memory.Types` and keep a
+  compatibility re-export from `Rei.Modules.AgentMemory.Infrastructure.Table` until the legacy
+  projections and migration fixtures are removed.
+  Rationale: prompt rendering, the Kioku adapter, the agent memory CLI, and FZF selection need the
+  same row shape, but they should not depend on the old `agent_memories` SQL table module once
+  reads have moved to Kioku. A re-export keeps historical projections compiling during the staged
+  decommission.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -440,6 +461,13 @@ Summarize outcomes, gaps, and lessons learned at major milestones or at completi
   `AgentMemoryConfidenceUpdatedData` had no remaining callers. Removing them leaves the workspace
   memory renderer on generic text/scope data owned by the Kioku adapter path. Verification: Rei
   `cabal build rei-cli`; `cabal test rei-core-test --test-options='-p Kioku'`; `git diff --check`.
+
+- 2026-06-24: M3 memory row extraction landed. `AgentMemoryRow` now lives in
+  `Rei.Modules.Agent.Memory.Types`; prompt context building, the Kioku adapter, `rei agent memory`
+  output, FZF selection, and the Kioku adapter tests import that type from the Kioku-adapter-side
+  module. The legacy `AgentMemory.Infrastructure.Table` module only re-exports the row for old
+  table/projection code while it remains. Verification: Rei
+  `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`; `git diff --check`.
 
 
 ## Context and Orientation

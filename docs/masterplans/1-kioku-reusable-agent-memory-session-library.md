@@ -252,9 +252,11 @@ Track milestone-level progress across all child plans.
       integration coverage now proves coaching context recall reads Kioku-backed intention and
       workspace memories; the Rei workspace filesystem mirror now decodes native Kioku memory events
       from `kioku_memory`, the old AgentMemory filesystem reactor is removed, and the workspace
-      memory renderer no longer imports legacy AgentMemory event/domain modules; disposable
-      production data-copy execution and the remaining old AgentMemory/AgentSession decommission
-      work remain.
+      memory renderer no longer imports legacy AgentMemory event/domain modules; Rei's stable
+      `AgentMemoryRow` shape now lives in `Rei.Modules.Agent.Memory.Types` so live prompt/agent CLI
+      paths no longer import the old SQL table module directly. Disposable production data-copy
+      execution and remaining old AgentMemory/AgentSession decommission work remain, including the
+      `rei today` memory summary still backed by the old Hasql read-model effect.
 - [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [ ] EP-5: `mori agent exec --group` runs a prompt/skill across a repo group sequentially
 - [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
@@ -332,6 +334,13 @@ Track milestone-level progress across all child plans.
   `FocusIntentionAssist`, etc.) to Rei's stored focus strings (`today`, `intention_assist`, etc.).
   Both fixes are now covered by Kioku's `ReiCompatSpec` and Rei's `KiokuMigrateSpec`. Discovered
   during EP-4 M3 implementation.
+
+- **EP-4 row extraction found a remaining dashboard read-model consumer.** Moving
+  `AgentMemoryRow` behind `Rei.Modules.Agent.Memory.Types` removed direct legacy table imports from
+  prompt rendering and the agent memory CLI/FZF path, but `rei today` still gets memory counts and
+  the last recorded memory through the old Hasql `AgentMemoryReadModelEff`. That dashboard summary
+  needs a Kioku-backed query path before the old read-model facade can disappear. Discovered during
+  EP-4 M3 decommission work.
 
 
 ## Decision Log
@@ -463,6 +472,13 @@ Track milestone-level progress across all child plans.
   `Rei.Workspace.Memory` no longer expose unused AgentMemory-event path/rendering wrappers; the
   workspace memory renderer now consumes generic text/scope data from the Kioku adapter path.
   Verification: Rei `cabal build rei-cli`; `cabal test rei-core-test --test-options='-p Kioku'`;
+  `git diff --check`.
+
+- 2026-06-24: EP-4 M3 memory row extraction completed. Rei's stable `AgentMemoryRow` type now lives
+  in `Rei.Modules.Agent.Memory.Types`; prompt context rendering, Kioku adapter code, the agent memory
+  CLI, FZF selection, and the adapter tests import it from that Kioku-adapter-side module. The legacy
+  SQL table module only re-exports the row while old projections and migration fixtures remain.
+  Verification: Rei `cabal test rei-core-test --test-options='-p Kioku'`; `cabal build rei-cli`;
   `git diff --check`.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
