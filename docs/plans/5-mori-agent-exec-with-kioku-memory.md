@@ -100,17 +100,30 @@ This section must always reflect the actual current state of the work.
       focus, namespace, scope_kind, scope_ref, subject_ref, status FROM kiroku.kioku_sessions WHERE
       agent_id='mori-agent-exec' ORDER BY started_at DESC LIMIT 3` returned
       `prompt: EP-5 M2 debug smoke; do not modify files.|mori|repo|proj_01kmp6vqwmec3sqtsmgeqhhyn9|frontend|completed`.
-- [ ] M3: before each repo run, recall group-scoped + repo-scoped memories and inject them into the
-      `--append-system-prompt`. Demonstrate: a memory recorded while processing repo #1 is visibly
-      present in the injected context for repo #2 (shown with `--debug`).
-- [ ] M3 (follow-up): `--follow-up` recalls the prior run's session id (newest session for the
+- [x] M3: before each repo run, recall group-scoped + repo-scoped memories and inject them into the
+      `--append-system-prompt`. Completed 2026-06-24: after recording
+      `kioku_memory_01kvy1ecrheevav43bg525ab33` under group `frontend`,
+      `mori agent exec --group frontend --filter 'TanStack/*' --prompt "EP-5 M3 recall smoke; do
+      not modify files." --debug` visited `TanStack/router` and `TanStack/table`; both debug
+      prompts included `## Accumulated learnings`, the `mori/group/grp_01kr9s6...` scope label,
+      and the `#ep5-m3` memory row.
+- [x] M3 (follow-up): `--follow-up` recalls the prior run's session id (newest session for the
       group scope) and chains it via `previousSessionId`, and recalls the prior run's memories so a
-      second invocation builds on the first. Demonstrate with two consecutive invocations.
-- [ ] Tests: pure unit tests for repo-ordering, prompt-injection assembly, and scope mapping; a
-      DB-gated integration test that records a memory in one scope and recalls it in another.
-      Current coverage includes pure scope mapping and prompt memory-command assertions in
-      `Mori.Command.Agent.ExecSpec`; the DB-gated memory/session exercise is manual against the
-      local `mori` database for M2 and should become automated in the next test slice.
+      second invocation builds on the first. Completed 2026-06-24: a consecutive
+      `mori agent exec --group frontend --filter 'TanStack/*' --follow-up --prompt "EP-5 M3
+      follow-up smoke; do not modify files." --debug` rendered `## Follow-up` with prior session
+      `kioku_session_01kvy1ejgverfbvjdg1j50p8z3`. SQL over `kiroku.kioku_sessions` showed the
+      first follow-up repo session chained to that prior run and the second repo session chained to
+      the first follow-up repo session.
+- [x] Tests: pure unit tests cover prompt-injection assembly, follow-up rendering, memory-section
+      rendering, and scope mapping in `Mori.Command.Agent.ExecSpec`; live two-repo debug smokes
+      cover ordered accumulation across repos. `TestSupport.DatabaseSpec` now has DB-gated Kioku
+      memory/session coverage: one isolated test records group/repo memories and proves scoped
+      recall isolation, and another starts/completes a Kioku session. Verification: mori
+      `cabal build mori-cli`; `cabal test mori-cli-test --test-options '-p "Mori.Command.Agent
+      exec"'`; full `cabal test mori-cli-test` (323 tests);
+      `cabal test mori-core-test --test-options '-p TestSupport.Database'`; full
+      `cabal test mori-core-test` (1234 tests).
 
 
 ## Surprises & Discoveries
@@ -148,6 +161,12 @@ implementation. Provide concise evidence.
   kioku-migrations:kioku-migrate`. After that, `mori agent memory record/list` and the session
   smoke both passed. This reinforces that production/dev migration wiring remains a deployment
   precondition, even though the app code and test DB path are green.
+
+- **Kioku write tests must use isolated test databases.** The first automated DB-gated M3 memory
+  tests wrote Kioku memory/session rows into the shared `getTestDb` database, which polluted later
+  history specs that assert exact event counts. Wrapping the Kioku write/read tests in
+  `bracket acquireTestDb releaseTestDb` gives each case a disposable migrated database while
+  keeping the lightweight table-existence check on the shared test DB.
 
 
 ## Decision Log
@@ -232,6 +251,13 @@ Record every decision made while working on the plan.
   exists to prove repo selection, prompt assembly, and `cwd` propagation before adding memory.
   Date: 2026-06-24
 
+- Decision: `--follow-up` uses the latest completed-or-started `mori-agent-exec` session with
+  `subject_ref = <group name>` as the prior run anchor, then threads `previousSessionId` through
+  the current sequential run so repo #2 points at repo #1 from the same follow-up invocation.
+  Rationale: mori's per-repo sessions are the durable run units available today; this preserves a
+  navigable chain without introducing a separate run aggregate for EP-5.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -251,6 +277,15 @@ Compare the result against the original purpose.
   tests); `mori agent exec --group frontend --filter intentui/intentui --dry-run`; `mori agent exec
   --group frontend --filter intentui/intentui -p "print your working directory" --debug`; and a
   non-debug smoke with a temporary fake `claude`.
+
+- 2026-06-24: M2 and M3 completed in mori. `mori agent memory record/list` writes and lists
+  group/repo Kioku memories, `mori agent exec --group` opens one Kioku session per visited repo,
+  recalled group/repo memories are injected under `## Accumulated learnings`, and `--follow-up`
+  renders the prior session and chains `previousSessionId` across the sequential repo run.
+  Verification: mori `cabal build mori-cli`; focused and full `mori-cli-test` (323 tests); focused
+  and full `mori-core-test` (1234 tests); live `frontend` memory record/list smoke; two-repo
+  `TanStack/*` debug recall smoke; two-repo follow-up smoke; and SQL over
+  `kiroku.kioku_sessions` proving the prior-run → repo #1 → repo #2 session chain.
 
 
 ## Context and Orientation

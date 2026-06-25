@@ -92,7 +92,7 @@ five milestones / ten files.
 | 2 | kioku Hybrid Retrieval (pgvector + FTS + RRF) | docs/plans/2-kioku-hybrid-retrieval-pgvector-fts-rrf.md | EP-1 | None | Complete |
 | 3 | kioku Distillation Pyramid (L0 to L3) | docs/plans/3-kioku-distillation-pyramid-l0-to-l3.md | EP-1 | EP-2 | In Progress |
 | 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | In Progress |
-| 5 | mori agent exec with kioku Memory | docs/plans/5-mori-agent-exec-with-kioku-memory.md | EP-1 | EP-2 | In Progress |
+| 5 | mori agent exec with kioku Memory | docs/plans/5-mori-agent-exec-with-kioku-memory.md | EP-1 | EP-2 | Complete |
 | 6 | shikigami Memory Integration with kioku | docs/plans/6-shikigami-memory-integration-with-kioku.md | EP-1 | EP-2, EP-3 | Not Started |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
@@ -292,7 +292,14 @@ Track milestone-level progress across all child plans.
       --debug` session smoke; `psql` confirmed a completed `kioku_sessions` row. Local live DB
       required applying Kioku's idempotent migrations first because only the ephemeral test DB had
       been migrated previously.
-- [ ] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs
+- [x] EP-5: cross-run learnings recorded/recalled in kioku improve subsequent runs. `mori agent
+      exec --group` now recalls group-scoped and repo-scoped Kioku memories before each repo,
+      injects them under `## Accumulated learnings`, and `--follow-up` anchors the current run to
+      the latest prior group session while chaining `previousSessionId` across the sequential repo
+      run. Verification: mori `cabal build mori-cli`; focused and full `mori-cli-test` (323 tests);
+      focused `TestSupport.Database` and full `mori-core-test` (1234 tests); live `frontend`
+      memory record/list smoke; two-repo `TanStack/*` debug recall smoke; two-repo follow-up smoke;
+      SQL over `kiroku.kioku_sessions` proving prior-run -> repo #1 -> repo #2 session chaining.
 - [ ] EP-6: shikigami adopts kioku for agent_runs (sessions) + per-agent memory
 
 
@@ -335,6 +342,12 @@ Track milestone-level progress across all child plans.
   Baikai pin `d0ac866907239189d8f30efc42ddb6cd14ba0e4d` is a descendant of kioku's standalone
   Baikai pin `a219b92278d8e475b0e45c602e65dbf108cf8dc1`, so EP-5 kept mori's consumer pin and
   expanded its Baikai `subdir` list. Discovered during EP-5 M0 implementation.
+
+- **EP-5 Kioku write tests need disposable databases.** Adding automated memory/session DB tests
+  first wrote Kioku rows into mori-core's shared `getTestDb`, which polluted later history specs
+  that assert exact event counts. The M3 test slice now uses `acquireTestDb`/`releaseTestDb` around
+  the Kioku write/read tests, while the simple table-existence test still uses the shared DB.
+  Discovered during EP-5 M3 implementation.
 
 - **EP-4 migration composition uses kioku-owned migrations only.** Rei already applies Kiroku and
   Keiro framework migrations via `Keiro.Migrations.allKeiroMigrations`; kioku's exported
@@ -542,6 +555,15 @@ Track milestone-level progress across all child plans.
   immediately reinterpret.
   Date: 2026-06-24
 
+- Decision: In EP-5 M3, model a follow-up run as a chain of per-repo Kioku sessions rather than a
+  new run-level aggregate: `--follow-up` finds the latest prior `mori-agent-exec` session for the
+  group, repo #1 points at that prior session, and each later repo points at the previous repo's
+  session.
+  Rationale: per-repo sessions already exist as the durable units for `mori agent exec`; threading
+  `previousSessionId` preserves navigability and keeps the integration inside Kioku's public session
+  API.
+  Date: 2026-06-24
+
 
 ## Outcomes & Retrospective
 
@@ -557,6 +579,13 @@ Track milestone-level progress across all child plans.
   `cabal test mori-cli-test` (317 tests); real registry dry-run/debug smokes against
   `frontend`/`intentui/intentui`; and a non-debug fake-`claude` smoke that printed
   `/Users/shinzui/Keikaku/hub/ui-libraries/intentui-project` from the child.
+
+- 2026-06-24: EP-5 completed in mori. The consumer now has `mori agent memory record/list`, one
+  Kioku session per visited repo, recall of group/repo memories before each repo, prompt injection
+  under `## Accumulated learnings`, and `--follow-up` session chaining across the sequential run.
+  Verification: mori `cabal build mori-cli`; focused and full `mori-cli-test` (323 tests); focused
+  `TestSupport.Database` and full `mori-core-test` (1234 tests); live `frontend` record/list smoke;
+  two-repo `TanStack/*` debug recall and follow-up smokes; and SQL proving session chaining.
 
 - 2026-06-24: EP-4 M2 now has a focused byte-stability regression for the `{{agent_memories}}`
   prompt variable. Rei compares legacy `AgentMemoryRow` fixtures against equivalent
