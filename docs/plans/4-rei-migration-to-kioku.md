@@ -85,11 +85,15 @@ This section must always reflect the actual current state of the work.
 - [x] M1: kioku migrations are composed into Rei's migration runner by appending
       `Kioku.Migrations.kiokuOwnMigrations` after Rei's existing Kiroku/Keiro framework
       migrations and before Rei's application migrations.
-- [ ] M1 remaining: run `just run-migrations` against a disposable Rei DB and verify it creates
-      `kiroku.kioku_memories` / `kiroku.kioku_sessions` / `kiroku.kioku_turns`. A direct
-      `rei-migrations` run against `rei_kioku_mig_check_20260624` did not reach the codd/kioku
-      migration pass because frozen legacy hasql migrations fail first on missing historical
-      `message_store`/`messages` schema objects.
+- [x] M1: disposable Rei DB migration verification completed on 2026-06-25. `rei-migrations` now
+      preflights fresh historical migration replays by creating the minimal legacy
+      `message_store`/`reporting` compatibility objects only when the historical search-path
+      migration has not yet been recorded, and skips pg-cron-only historical scripts when the local
+      PostgreSQL install does not provide `pg_cron`. Verification against
+      `rei_kioku_mig_codex_20260625_5`: the scratch `rei-migrations` command completed from an
+      empty database with `HASKELL_ENV=production`, `SELECT ... information_schema.tables ...` returned
+      `kiroku.kioku_memories`, `kiroku.kioku_sessions`, and `kiroku.kioku_turns`, and rerunning the
+      same command reported `[0 found]` pending codd migrations.
 - [x] M1: new adapter module `Rei.Modules.Agent.Memory.KiokuAdapter` maps `MemoryAnchor ↔ MemoryScope`,
       `CoachingFocusType → focus :: Text`, session intention scope, and `Kioku` read rows →
       Rei `AgentMemoryRow`; it also owns Rei→Kioku ID re-prefixing and command-data conversion.
@@ -206,9 +210,17 @@ implementation. Provide concise evidence.
   hasql migrations before Rei reaches the codd migration list that now contains Kioku. With
   `HASKELL_ENV=development`, `rei-core:rei-migrations` first failed in
   `20260119180244_search_path.sql` because schema `message_store` did not exist; after creating
-  that schema in the disposable DB, it failed later because relation `messages` did not exist. This
-  means the current M1 verification cannot prove or disprove Kioku's composed migrations until the
-  legacy bootstrap assumptions are satisfied or bypassed.
+  that schema in the disposable DB, it failed later because relation `messages` did not exist. The
+  migration runner now preflights only not-yet-replayed historical databases with minimal legacy
+  compatibility objects, preserving already-applied historical migration checksums and avoiding
+  re-creating `message_store` on databases where the final legacy drop already ran.
+
+- Fresh disposable Rei databases may not have `pg_cron` installed. The historical pg-cron scripts
+  are checksum-tracked, so changing those SQL files would break existing migrated databases. The
+  migration runner now probes `pg_available_extensions` and skips only the three pg-cron-only
+  historical scripts when the extension is unavailable; deployments that have `pg_cron` still run
+  and validate the original script bytes. This lets empty local PostgreSQL 17 databases reach the
+  codd pass and apply Kioku migrations.
 
 - Moving `ContextBuilder` recall to Kioku changed its effect requirement from Hasql-only reads to
   the kiroku `Store` effect. The Rei CLI had several prompt-building paths (`rei agent --debug`,
@@ -522,6 +534,16 @@ Record every decision made while working on the plan.
 ## Outcomes & Retrospective
 
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
+
+- 2026-06-25: M1 disposable migration verification completed. Rei's migration runner now safely
+  handles from-empty rehearsal databases whose PostgreSQL install lacks the old MessageDB bootstrap
+  and `pg_cron`, without modifying checksum-tracked historical SQL files. A fresh scratch database
+  `rei_kioku_mig_codex_20260625_5` ran through TypeID, PGMQ, historical migrations, Keiro/Kiroku,
+  Rei codd migrations, and Kioku's own migrations; the Kioku memory/session/turn tables exist, and a
+  second run reported zero pending codd migrations. Verification: Rei
+  `cabal build rei-core:rei-migrations`; scratch `rei-migrations` run and rerun; SQL table check;
+  `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
+  `cabal test rei-core-test --test-options='-p Kioku'`; `git diff --check`.
 
 - 2026-06-24: M2 ContextBuilder recall slice compiles and passes focused tests. Verification:
   `cabal build kioku-core`; `cabal test kioku-test`; Rei `cabal build rei-core`;

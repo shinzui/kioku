@@ -241,8 +241,11 @@ Track milestone-level progress across all child plans.
       access
 - [ ] EP-4: Rei AgentMemory/AgentSession re-homed onto kioku with `IntentionId`/`HabitId` scope mapping
       has started: Rei now consumes local kioku packages, composes kioku's own migrations into the
-      migration runner, has a tested `Rei.Modules.Agent.Memory.KiokuAdapter` for scope/focus/row
-      mapping, delegates AgentMemory/AgentSession writes to `Kioku.Memory`/`Kioku.Session`, and
+      migration runner, and verifies a from-empty disposable Rei DB reaches Kioku's own migrations
+      and creates `kiroku.kioku_memories`, `kiroku.kioku_sessions`, and `kiroku.kioku_turns` even
+      when the local PostgreSQL install lacks legacy `pg_cron`; it has a tested
+      `Rei.Modules.Agent.Memory.KiokuAdapter` for scope/focus/row mapping, delegates
+      AgentMemory/AgentSession writes to `Kioku.Memory`/`Kioku.Session`, and
       rewires `ContextBuilder` and `rei agent memory list/show/archive` memory reads onto scoped
       `Kioku.Recall` adapter functions. The `{{agent_memories}}` byte-stability proof is covered;
       the additive `rei-kioku-migrate` executable for historical stream copy now builds; its
@@ -354,6 +357,14 @@ Track milestone-level progress across all child plans.
   `kiokuMigrations` includes those framework migrations again. Rei therefore composes
   `Kioku.Migrations.kiokuOwnMigrations` into its codd pass, between framework migrations and
   Rei-owned app migrations. Discovered during EP-4 implementation.
+
+- **EP-4 fresh Rei migration rehearsal must preserve historical SQL checksums.** Rei's old
+  hasql migrations are checksum-tracked. A from-empty rehearsal needs compatibility objects for
+  frozen MessageDB-era scripts and must skip pg-cron-only scripts when `pg_cron` is unavailable,
+  but changing those historical SQL files would break existing migrated databases. The fix lives in
+  the migration runner: preflight only databases that have not recorded the historical search-path
+  migration, and skip only the three pg-cron-only historical scripts when the extension is absent.
+  Discovered during EP-4 disposable migration verification.
 
 - **Rei focus storage text has no `focus_` prefix.** The live mapping is the private
   `focusTypeToText` table in `Rei.Modules.AgentSession.Projection.InlineReadModel`, where
@@ -707,6 +718,15 @@ Track milestone-level progress across all child plans.
   `cabal test rei-core-test --test-options='-p Kioku'`;
   `cabal test rei-core-test --test-option=-p --test-option='Transducer diagrams'`;
   stale-reference `rg` sweep; `git diff --check`.
+
+- 2026-06-25: EP-4 M1 disposable migration verification completed in Rei. `rei-migrations` now
+  handles from-empty rehearsal databases by preflighting missing legacy MessageDB compatibility
+  objects only before the historical search-path migration is recorded, and by skipping pg-cron-only
+  historical scripts on PostgreSQL installs without `pg_cron`. A fresh scratch DB
+  `rei_kioku_mig_codex_20260625_5` ran through historical migrations plus the codd pass and created
+  `kiroku.kioku_memories`, `kiroku.kioku_sessions`, and `kiroku.kioku_turns`; a second run reported
+  zero pending codd migrations. Verification: Rei `cabal build rei-core:rei-migrations`; scratch
+  migration run/rerun; SQL table check; focused `rei-kioku-migrate` and `Kioku` tests; diff check.
 
 - 2026-06-24: EP-2 fail-open recall coverage tightened. `Kioku.Recall` now exposes a pure
   `RecallExecutionPlan`/`planRecallExecution` seam, and `Kioku.RecallSpec` proves that unavailable
