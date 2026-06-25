@@ -170,6 +170,10 @@ Milestone M4 — deterministic end-to-end test:
       duplicate preference turns, runs replay-backed extraction/consolidation/scene/persona runners,
       asserts one stored atom plus one merge, checks a `merge` audit row, reads the loser memory stream
       for `MemoryMerged`, and verifies scene/persona rows. `cabal test kioku-core` passes 7 tests.
+- [x] Reverified the local no-network EP-3 gates on 2026-06-25. `nix develop -c cabal test kioku-core`
+      passed all 8 tests, including the replay-backed distillation pyramid test. A first parallel
+      `cabal build all` attempt raced the test build in `dist-newstyle` and failed with package
+      database/dylib file contention; rerunning serially as `nix develop -c cabal build all` passed.
 
 (M0-M4 structural work is complete. Live L1/L2/L3 acceptance remains blocked by missing
 `ANTHROPIC_API_KEY` in this environment.)
@@ -323,6 +327,11 @@ filesystem mirror, L3 personas with filesystem mirror, and CLI commands for manu
 persona. The deterministic M4 test now proves the no-network path: a replayed duplicate preference
 session produces one active atom, one merged loser stream event, a merge audit row, one scene row, and
 one persona row. Live CLI acceptance for M1/M2/M3 remains blocked until `ANTHROPIC_API_KEY` is set.
+
+On 2026-06-25, the local verification was rerun after the other child plans were closed:
+`nix develop -c cabal test kioku-core` passed all 8 tests and `nix develop -c cabal build all` passed
+when run serially. The live CLI acceptance remains unproven because this shell still does not have
+`ANTHROPIC_API_KEY`.
 
 
 ## Context and Orientation

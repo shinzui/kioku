@@ -238,7 +238,10 @@ Track milestone-level progress across all child plans.
       the worker, and scenes CLI/filesystem mirror exist; live L2 acceptance and L3 persona
       acceptance remain; L3 persona program, reactor, timer route, CLI, and filesystem mirror exist;
       deterministic replay coverage now proves L1 merge, L2 scene, and L3 persona rows without network
-      access
+      access. Local no-network gates were reverified on 2026-06-25: `nix develop -c cabal test
+      kioku-core` passed all 8 tests, including the replay-backed distillation pyramid test, and a
+      serial `nix develop -c cabal build all` passed. Live L1/L2/L3 acceptance is still blocked by the
+      missing `ANTHROPIC_API_KEY` credential.
 - [x] EP-4: Rei AgentMemory/AgentSession re-homed onto kioku with `IntentionId`/`HabitId` scope mapping
       is complete: Rei consumes local kioku packages, composes kioku's own migrations into the
       migration runner, and verifies a from-empty disposable Rei DB reaches Kioku's own migrations
@@ -479,6 +482,12 @@ Track milestone-level progress across all child plans.
   `package blake3` `ghc-options: -optc-DBLAKE3_USE_NEON=0` matches Kioku's working configuration
   and makes Rei `cabal build all` plus `cabal test rei-core` pass. Discovered during EP-4 final
   acceptance.
+
+- **Do not run Cabal build and test concurrently in the same checkout.** A 2026-06-25 EP-3
+  reverification attempt ran `cabal build all` and `cabal test kioku-core` in parallel and the build
+  failed with `package.conf.inplace already exists` / `install_name_tool` file contention inside
+  `dist-newstyle`. The source was fine: `cabal test kioku-core` passed, and a serial
+  `cabal build all` passed immediately afterward. Discovered during EP-3 final acceptance audit.
 
 
 ## Decision Log
