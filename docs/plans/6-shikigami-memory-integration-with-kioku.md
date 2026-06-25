@@ -40,8 +40,8 @@ from the new shikigami repo, run a demo agent twice and watch the second run *re
 first run learned.
 
 ```bash
-cabal run shikigami -- agent-demo --agent stalled-intention   # run 1
-cabal run shikigami -- agent-demo --agent stalled-intention   # run 2
+cabal run shikigami -- agent-run --agent stalled-intention   # run 1
+cabal run shikigami -- agent-run --agent stalled-intention   # run 2
 ```
 
 Run 1 prints "recalled 0 prior memories" and records a learning; run 2 prints "recalled 1 prior
@@ -49,23 +49,15 @@ memory: <the learning from run 1>". Two `kioku_sessions` rows exist (one per run
 the agent `shikigami/agent/stalled-intention`, and one `kioku_memories` row holds the learning.
 That write-then-recall-across-runs loop is the headline acceptance.
 
-**Scope boundary (read this carefully).** shikigami is greenfield: as of this plan it is only a
-design spec (`/Users/shinzui/Keikaku/bokuno/shikigami/docs/initial-spec.md`, 1369 lines) plus a
-handful of seed Dhall declarations under
-`/Users/shinzui/Keikaku/bokuno/shikigami/agents/detectors/`. There is **zero Haskell source**.
-Building the *full* shikigami runtime (the Dhall loader, the three trigger evaluators, the
-behavior runner over handan/baikai, the five sink dispatchers, the shomei permission gate, the
-Kafka `activity.v1` consumer) is a large, separate initiative and is **out of scope here**. This
-plan delivers the *minimal* shikigami scaffold needed to **demonstrate the kioku integration end
-to end**: the four-package project skeleton that builds and applies kioku's migrations
-(Milestone 1), a `shikigami-core` memory/session seam plus a `shikigami-cli` `agent-demo`
-command that **simulates one agent run** by opening a kioku session, recalling memory, recording
-a learning, and completing the session (Milestone 2), and the proof that a second run recalls the
-first run's learning together with the documented `activity.v1`→kioku mapping (Milestone 3).
-Everything else shikigami eventually needs — triggers, sinks, shomei, the behavior runner, the
-real `agent_runs` table — is explicitly **not built here**; this plan replaces the *planned*
-bespoke `agent_runs` table with kioku's Session aggregate and proves per-agent memory works, and
-leaves the rest of shikigami to its own MasterPlan.
+**Scope boundary (read this carefully).** This plan was originally written when shikigami was
+greenfield design material. The current shikigami repository now has its own MasterPlan and a
+broader Haskell runtime, including Dhall loading, deterministic behavior stubs, trigger/sink work,
+and the `agent-run` CLI. EP-6 does not own that whole runtime. It owns the Kioku integration
+inside it: shikigami composes Kioku's migrations, maps agent names to
+`ScopeEntity "shikigami" "agent" <name>`, opens Kioku sessions for agent runs, recalls prior
+Kioku memories, records new learnings, and maps `activity.v1` envelopes into tagged Kioku
+memories. The bespoke `agent_runs` table planned by the old design is replaced by Kioku's Session
+aggregate.
 
 This plan (EP-6) **hard-depends on EP-1** (it imports kioku's `Kioku.Memory`, `Kioku.Session`,
 `Kioku.Recall`, and the `kioku-api` types, and composes kioku's migrations) and **soft-depends on
@@ -86,10 +78,8 @@ This section must always reflect the actual current state of the work.
       four-package layout (`shikigami-api`, `shikigami-core`, `shikigami-cli`,
       `shikigami-migrations`), `cabal.project` pinning the kikan stack **plus a `kioku`
       source-repository-package** (IP-5). Verification on 2026-06-25:
-      `nix develop -c cabal build shikigami-core shikigami-cli shikigami-migrations` succeeds.
-      A dirty-tree `cabal build all` is currently blocked by unrelated in-progress run-queue work
-      that adds `pgmq-migration` and hits a transitive `hasql-migration-0.3.1` crypton/memory
-      instance error.
+      `nix develop -c cabal build all` succeeds after shikigami commit `2428f3b` landed the
+      previously dirty run-queue work without the broken `pgmq-migration` dependency path.
 - [x] M1: `shikigami-migrations` composes Kioku's migration set plus shikigami-owned migrations;
       `nix develop -c just create-database` applied the full schema to the dev DB on 2026-06-25
       with zero pending migrations afterward.
@@ -117,11 +107,11 @@ implementation. Provide concise evidence.
 
 - The shikigami repo is no longer code-empty. Its own MasterPlan has already landed a broader
   runtime slice, including `Shikigami.Agent.Run`, behavior stubs, sink/trigger work, and an
-  `agent-run` CLI. EP-6's original "create only a minimal `agent-demo`" wording is stale against
+  `agent-run` CLI. EP-6's original "create only a minimal `agent-run`" wording is stale against
   the repository's current direction. Verified from commits including `9491a85` and live source
   inspection on 2026-06-25.
 
-- The implemented command is `agent-run`, not `agent-demo`. The observable acceptance is the same:
+- The implemented command is `agent-run`, not `agent-run`. The observable acceptance is the same:
   after deleting prior `heartbeat` Kioku rows, the first run printed `recalled 0 prior memories`,
   the second printed `recalled 1 prior memories` with the first learning, and SQL showed two
   completed `kioku_sessions` plus two active `kioku_memories` scoped to
@@ -132,10 +122,11 @@ implementation. Provide concise evidence.
   inspection rather than API guessing, but the local registry should be updated separately if this
   plan is resumed.
 
-- A dirty-tree `cabal build all` currently fails for unrelated, uncommitted run-queue work that
-  exposes `Shikigami.Trigger.Enqueue` and adds `pgmq-migration`. The EP-6-relevant targeted build,
-  `nix develop -c cabal build shikigami-core shikigami-cli shikigami-migrations`, succeeds, and
-  `nix develop -c cabal test shikigami-core-test` passes 11 tests.
+- The earlier dirty-tree `cabal build all` blocker was not caused by EP-6. It came from unrelated
+  run-queue work that initially pulled in `pgmq-migration` and hit a transitive
+  `hasql-migration-0.3.1` crypton/memory instance error. Shikigami commit `2428f3b` resolved that
+  work by vendoring the pgmq schema SQL instead of depending on `pgmq-migration`, and
+  `nix develop -c cabal build all` now passes.
 
 - The EP-2 soft dependency is now wired in shikigami. Commit `dc5afc5` changed
   `Shikigami.Agent.Run` so `agent-run` resolves Kioku embedding config, detects pgvector/vector
@@ -150,7 +141,7 @@ Record every decision made while working on the plan.
 
 - Decision: Scope EP-6 to **the pragmatic v1 (option b)** — scaffold the shikigami four-package
   project only as far as needed to build + apply kioku's migrations, then prove the integration
-  with a `shikigami-cli` `agent-demo` command that *simulates* an agent run (open kioku session →
+  with a `shikigami-cli` `agent-run` command that *simulates* an agent run (open kioku session →
   recall memory → record a learning → complete session). Do **not** build the full shikigami
   runtime (Dhall loader, triggers, behavior runner, sinks, shomei, Kafka consumer).
   Rationale: the prompt offered (a) full runtime scaffold vs. (b) memory/session seam + demo, and
@@ -193,7 +184,7 @@ Record every decision made while working on the plan.
   Date: 2026-06-24
 
 - Decision: The demo simulates the agent run with a **fixed, deterministic "learning"** (no LLM
-  call). The `agent-demo` command records a memory whose content is a constant string keyed on
+  call). The `agent-run` command records a memory whose content is a constant string keyed on
   the run, so a second run can recall it without a model provider configured.
   Rationale: mirrors EP-1's choice to use a `noop-summary`/fixed-body program so the loop is
   provable without a model key. The behavior runner (handan/baikai) is shikigami's own initiative,
@@ -211,8 +202,8 @@ Record every decision made while working on the plan.
   the soft EP-2 hybrid recall path was not yet wired into shikigami and the current dirty
   shikigami tree prevented a clean `cabal build all` proof. Keep the MasterPlan status at
   **In Progress** with the verified hard acceptance recorded. Superseded in part on 2026-06-25:
-  `dc5afc5` wired hybrid recall, but the dirty-tree all-build and stale plan-body reconciliation
-  gaps remain.
+  `dc5afc5` wired hybrid recall; superseded fully after `2428f3b` landed the unrelated run-queue
+  work and `nix develop -c cabal build all` passed.
   Date: 2026-06-25
 
 - Decision: Wire hybrid recall into `agent-run` with a scoped recall fallback rather than requiring
@@ -224,9 +215,10 @@ Record every decision made while working on the plan.
   Date: 2026-06-25
 
 - Decision: Keep EP-6 **In Progress** after `dc5afc5` because the broader current shikigami
-  worktree still contains unrelated run-queue changes that prevent a clean current-state
-  `cabal build all` proof, and the checked-in plan body still contains historical `agent-demo`
-  instructions that should be reconciled before marking the plan Complete.
+  worktree still contained unrelated run-queue changes that prevented a clean current-state
+  `cabal build all` proof, and the checked-in plan body still contained historical `agent-run`
+  instructions that needed reconciliation before marking the plan Complete. Superseded on
+  2026-06-25 after `2428f3b` made `cabal build all` green and this plan body was reconciled.
   Rationale: completion should be proven against current evidence, not inferred from the scoped
   package build. The targeted EP-6 behavior is green, but the plan's original M1 acceptance named a
   broad `cabal build all` gate.
@@ -243,10 +235,10 @@ dev database as of 2026-06-25. The runtime opens Kioku sessions for agent runs, 
 as Kioku memories under `ScopeEntity "shikigami" "agent" <agentName>`, recalls prior learnings on
 subsequent runs, and records `activity.v1` envelopes as tagged memories.
 
-Remaining gaps are compatibility/polish rather than the base Kioku adoption: `agent-demo` remains
-a stale plan name for the implemented `agent-run` command, the broader dirty shikigami tree must
-be made green for `cabal build all`, and the historical plan body should be reconciled with
-shikigami's now-broader runtime before EP-6 is marked complete.
+EP-6 is complete as of 2026-06-25. Shikigami has adopted Kioku for agent-run sessions and
+per-agent memory, the EP-2 hybrid recall soft dependency is wired with a key-free fallback, the
+activity-envelope mapping works, and `nix develop -c cabal build all` plus
+`nix develop -c cabal test shikigami-core-test` pass in the shikigami repo.
 
 
 ## Context and Orientation
@@ -256,13 +248,12 @@ repositories.
 
 ### Where things live
 
-You will create new Haskell source inside an **existing but code-empty** repository at the
-absolute path `/Users/shinzui/Keikaku/bokuno/shikigami`. As of this plan that directory contains
-only documentation and Dhall seeds:
+The shikigami repository lives at `/Users/shinzui/Keikaku/bokuno/shikigami`. The original plan
+assumed it was code-empty; the current repository has a Haskell runtime and its own MasterPlan.
+The historically relevant inputs were:
 
-- `/Users/shinzui/Keikaku/bokuno/shikigami/docs/initial-spec.md` — the 1369-line architecture
-  spec for the shikigami runtime (design only, "not yet an implementation … there is no `.cabal`
-  file or Haskell source in this repository yet"). It defines the declared-agent model
+- `/Users/shinzui/Keikaku/bokuno/shikigami/docs/initial-spec.md` — the architecture spec for the
+  shikigami runtime. It defines the declared-agent model
   (`{ name, behavior, trigger, sinks }`), the nine-field Activity Envelope (contract C1), and the
   planned `agent_runs` session table this plan replaces with kioku.
 - `/Users/shinzui/Keikaku/bokuno/shikigami/agents/detectors/*.dhall` — seed agent declarations
@@ -270,7 +261,7 @@ only documentation and Dhall seeds:
   illustrative declarations authored *before* the runtime; they describe what an agent looks like
   but nothing executes them yet. You read them to understand the agent shape; you do not run them.
 
-You will copy the project skeleton from a sibling template repository and depend on a sibling
+The original scaffold copied patterns from a sibling template repository and depended on a sibling
 library:
 
 - `/Users/shinzui/Keikaku/bokuno/kizashi` — an existing Haskell project on the exact same
@@ -294,12 +285,9 @@ below.
 
 ### What you must NOT do (the boundary again)
 
-This plan does **not** create the shikigami Dhall loader, the trigger evaluators
-(`Shikigami.Trigger.*`), the behavior runner (`Shikigami.Behavior.*`), the sink dispatchers
-(`Shikigami.Sink.*`), the shomei permission gate, or the Kafka `activity.v1` consumer. Those are
-the full-runtime initiative. The only shikigami modules you create are the memory/session seam
-(`Shikigami.Memory.Scope`, `Shikigami.Agent.Run`) and the CLI demo. If a step tempts you to wire a
-real trigger or sink, stop — that is out of scope.
+This Kioku EP does **not** own shikigami's full runtime. Shikigami's own MasterPlan owns the Dhall
+loader, trigger evaluators, behavior runner, sink dispatchers, permission gate, and queue/stream
+worker. EP-6 only owns the Kioku memory/session integration points those runtime pieces consume.
 
 ### Terms of art (defined in plain language)
 
@@ -328,7 +316,9 @@ real trigger or sink, stop — that is out of scope.
   memory. shikigami uses `Namespace "shikigami"`, kind `"agent"`, ref = the agent name.
 - **Recall.** Reading memories back by scope. EP-1 ships a *placeholder* `Kioku.Recall` with simple
   scoped SQL (`getActiveByScope`, `getGlobal`, `getBySession`, `getByType`). EP-2 replaces it with
-  hybrid (vector + FTS + RRF) recall behind the same module. This plan uses `getActiveByScope`.
+  hybrid (vector + FTS + RRF) recall behind the same module. The current shikigami integration uses
+  `Kioku.Recall.recall` with `Recall.Hybrid`, then falls back to `getActiveByScope` for local
+  no-pgvector/no-key demos.
 - **codd / migrations composition.** kioku and the kikan framework ship their schema as timestamped
   `.sql` files embedded into a binary by Template Haskell `embedDir` and applied by the `codd`
   tool. shikigami's migration binary composes them in order:
@@ -338,16 +328,15 @@ real trigger or sink, stop — that is out of scope.
 ### What already exists vs. what you create
 
 `/Users/shinzui/Keikaku/bokuno/kioku` exists and builds once EP-1 is Complete (it is this plan's
-hard dependency). `/Users/shinzui/Keikaku/bokuno/kizashi` exists and is the read-only scaffold
-template. `/Users/shinzui/Keikaku/bokuno/shikigami` exists but has **no Haskell** — you create all
-four packages, the migration composition, the memory/session seam, and the CLI demo. The shikigami
-spec and Dhall seeds are read-only inputs.
+hard dependency). `/Users/shinzui/Keikaku/bokuno/kizashi` was the read-only scaffold template.
+`/Users/shinzui/Keikaku/bokuno/shikigami` now contains the four packages, migration composition,
+memory/session seam, CLI, and broader runtime work.
 
 
 ## Plan of Work
 
 The work is three milestones. M1 stands up the buildable, migratable shikigami skeleton that
-pins and applies kioku. M2 delivers the memory/session seam and the `agent-demo` command that
+pins and applies kioku. M2 delivers the memory/session seam and the `agent-run` command that
 simulates one agent run (the integration made executable). M3 proves persistence across two runs
 and demonstrates the `activity.v1`→kioku mapping. Each milestone leaves the tree building
 (`cabal build all`) and is independently verifiable. The full shikigami runtime is **not** part
@@ -419,7 +408,7 @@ containers, aeson`). M1 needs no exposed modules beyond a trivial placeholder; M
 `Shikigami.Memory.Scope` and `Shikigami.Agent.Run`.
 
 `shikigami-cli/shikigami-cli.cabal` — modeled on `kizashi-cli.cabal`: a library `Shikigami.Cli`
-(+ `Shikigami.Cli.Commands.AgentDemo` in M2) and an `executable shikigami` whose `app/Main.hs`
+(+ `Shikigami.Cli.Commands.AgentRun` in M2) and an `executable shikigami` whose `app/Main.hs`
 calls `Shikigami.Cli.main`. Depends on `shikigami-core`, `shikigami-api`, `kioku-core`,
 `kioku-api`, `kiroku-store`, `optparse-applicative`, `text`, `base`.
 
@@ -466,11 +455,11 @@ modules). The demo opens the store and runs kioku effects through `Kioku.App.run
 `kioku_sessions`, `kioku_turns`. This proves the kioku dependency resolves and its schema is
 present in shikigami's database.
 
-### Milestone M2 — the memory/session seam and the `agent-demo` command (one simulated run)
+### Milestone M2 — the memory/session seam and the `agent-run` command (one simulated run)
 
 **Scope and result.** At the end of M2, shikigami has a `Shikigami.Memory.Scope` module (the
 IP-2 mapping helpers) and a `Shikigami.Agent.Run` module (the run seam), and
-`cabal run shikigami -- agent-demo --agent <name>` runs **one simulated agent run** end to end:
+`cabal run shikigami -- agent-run --agent <name>` runs **one simulated agent run** end to end:
 it opens a kioku session scoped to the agent, recalls the agent's prior memory (empty on the very
 first run), records a learning as a kioku memory, and completes the session. This is the
 integration made executable. No trigger, no behavior runner, no sink — just the memory/session
@@ -514,7 +503,7 @@ public API):
 module Shikigami.Agent.Run
   ( AgentRunInput (..)
   , AgentRunResult (..)
-  , runAgentDemo
+  , runAgentWithMemory
   ) where
 
 import Kioku.App           (AppEnv, runAppIO)
@@ -544,8 +533,8 @@ data AgentRunResult = AgentRunResult
 -- | Simulate one agent run against kioku: open a session, recall this agent's prior
 --   memory, record a new learning, complete the session. Returns what was recalled and
 --   recorded so the CLI can print the across-run proof.
-runAgentDemo :: AppEnv -> AgentRunInput -> IO (Either Text AgentRunResult)
-runAgentDemo env input = do
+runAgentWithMemory :: AppEnv -> AgentRunInput -> IO (Either Text AgentRunResult)
+runAgentWithMemory env input = do
   let scope = agentScope (agentName input)
   now <- getCurrentTime
   sid <- genSessionId
@@ -561,11 +550,11 @@ runAgentDemo env input = do
   _ <- runAppIO env $ Memory.record Memory.RecordMemoryData
          { memoryId = mid, agentId = agentName input, sessionId = Just sid, scope = scope
          , memoryType = MemoryPattern, content = learning input, priority = 100
-         , confidence = MediumConfidence, tags = Set.fromList ["agent-demo"]
+         , confidence = MediumConfidence, tags = Set.fromList ["agent-run"]
          , supersedes = Nothing, recordedAt = now }
   -- 4. complete the session
   done <- getCurrentTime
-  _ <- runAppIO env $ Session.complete sid done (Just "agent-demo run completed")
+  _ <- runAppIO env $ Session.complete sid done (Just "agent-run run completed")
   pure (Right (AgentRunResult sid (either (const []) id prior) mid))
 ```
 
@@ -574,25 +563,25 @@ runAgentDemo env input = do
 `docs/plans/1-...md` Step 5 shows `RecordMemoryData` field-for-field. If a field name differs,
 adjust here; the *shape* is the contract.)
 
-`shikigami-cli/src/Shikigami/Cli/Commands/AgentDemo.hs`, `shikigami-cli/src/Shikigami/Cli.hs`,
-`shikigami-cli/app/Main.hs` — the `agent-demo` subcommand. `Shikigami.Cli.main` is an
-optparse-applicative subparser; `agent-demo` takes `--agent <name>` (and optional
+`shikigami-cli/src/Shikigami/Cli/Commands/AgentRun.hs`, `shikigami-cli/src/Shikigami/Cli.hs`,
+`shikigami-cli/app/Main.hs` — the `agent-run` subcommand. `Shikigami.Cli.main` is an
+optparse-applicative subparser; `agent-run` takes `--agent <name>` (and optional
 `--behavior <kind>` defaulting to `"ShikumiProgram"`, `--learning <text>` defaulting to a fixed
-string). `runAgentDemoCmd` opens the kioku store exactly as EP-1's demo does, builds the
-`AppEnv`, calls `runAgentDemo`, and prints the across-run report:
+string). `runAgentWithMemoryCmd` opens the kioku store exactly as EP-1's demo does, builds the
+`AppEnv`, calls `runAgentWithMemory`, and prints the across-run report:
 
 ```haskell
-runAgentDemoCmd :: AgentDemoOpts -> IO ()
-runAgentDemoCmd opts = do
+runAgentWithMemoryCmd :: AgentRunOpts -> IO ()
+runAgentWithMemoryCmd opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
   withStore (defaultConnectionSettings connStr) $ \st -> do
     tr <- noopTracer
     let env = AppEnv { store = st, tracer = tr, metrics = Nothing }
-    res <- runAgentDemo env AgentRunInput
+    res <- runAgentWithMemory env AgentRunInput
              { agentName = optAgent opts, behaviorKind = optBehavior opts
              , learning = optLearning opts }
     case res of
-      Left err -> putStrLn ("agent-demo failed: " <> show err)
+      Left err -> putStrLn ("agent-run failed: " <> show err)
       Right r  -> do
         putStrLn ("agent " <> show (optAgent opts) <> " run "
                     <> idText (runSessionId r))
@@ -601,7 +590,7 @@ runAgentDemoCmd opts = do
         putStrLn ("recorded learning " <> idText (recordedMemId r))
 ```
 
-**Acceptance for M2.** `cabal build all` exits 0. `cabal run shikigami -- agent-demo --agent
+**Acceptance for M2.** `cabal build all` exits 0. `cabal run shikigami -- agent-run --agent
 stalled-intention` prints `recalled 0 prior memories` (first run), then `recorded learning
 kioku_memory_…`. A `psql` query of `kiroku.kioku_sessions` shows one row with
 `namespace='shikigami', scope_kind='agent', scope_ref='stalled-intention', status='completed'`,
@@ -611,7 +600,7 @@ table is replaced.
 
 ### Milestone M3 — persistence across runs + the activity→memory mapping
 
-**Scope and result.** At the end of M3, running `agent-demo --agent <name>` a *second* time
+**Scope and result.** At the end of M3, running `agent-run --agent <name>` a *second* time
 recalls the learning recorded in the first run (proving per-agent memory persists across runs,
 the headline acceptance), and the `activity.v1`→kioku-L0 mapping is demonstrated by a
 `--from-activity <file>` mode that reads an Activity Envelope JSON file and records its digest
@@ -651,27 +640,27 @@ emitting its digest) becomes a `TurnRecorded` event on that run's session — th
 precisely what EP-3's distillation pyramid (`docs/plans/3-...md`) consumes per agent to build a
 per-agent persona (L3) — the soft dependency made concrete.
 
-`shikigami-cli/src/Shikigami/Cli/Commands/AgentDemo.hs` — extend with `--from-activity <file>`:
+`shikigami-cli/src/Shikigami/Cli/Commands/AgentRun.hs` — extend with `--from-activity <file>`:
 when present, decode the envelope, derive the agent name from `actor.id` (or `--agent`), and
 record the envelope as a memory via `activityToMemory` (and, if `--with-turns`, also open a
 session and record the envelope's payload as one turn). Print the recorded memory id and the
 scope.
 
-**Acceptance for M3.** Running `agent-demo --agent stalled-intention` twice in a row: the first
+**Acceptance for M3.** Running `agent-run --agent stalled-intention` twice in a row: the first
 run prints `recalled 0 prior memories`, the second prints `recalled 1 prior memories:` followed by
 the learning text from run 1. `kiroku.kioku_sessions` has two rows scoped to the agent,
 `kiroku.kioku_memories` has the learning(s) under `scope_ref='stalled-intention'`. Then
-`agent-demo --agent stalled-intention --from-activity ./fixtures/digest.json` records the
+`agent-run --agent stalled-intention --from-activity ./fixtures/digest.json` records the
 envelope's payload as a memory and prints its id; a `psql` query shows the new memory with tags
 `verb:digest.produced` / `subject:intention`. This proves persistent per-agent memory and the
 activity→memory mapping. The kioku CLI cross-check (`cabal run kioku -- ...` against the same DB,
 if EP-1's recall demo is wired) shows the same rows.
 
-**Soft-dependency note (optional, M3).** If EP-2 is Complete, `Recall.getActiveByScope` is already
-hybrid behind the same module, so no shikigami change is needed to benefit. If EP-3 is Complete,
-add an `agent-persona --agent <name>` subcommand that reads the per-scope L3 persona kioku
-produced for `agentScope name` and prints it. If neither soft dep is done, skip these and note it
-in Progress — the core acceptance does not depend on them.
+**Soft-dependency note (optional, M3).** EP-2 is Complete, so shikigami's `agent-run` now calls
+`Kioku.Recall.recall` with `Recall.Hybrid`, backed by Kioku's embedding config and vector
+capability probe, while keeping a scoped recall fallback for key-free demos. EP-3 is still In
+Progress, so the optional `agent-persona --agent <name>` command remains skipped until Kioku's
+persona generation is complete enough for a consumer CLI.
 
 
 ## Concrete Steps
@@ -736,17 +725,17 @@ Expected table list (closes M1):
  kiroku | kioku_turns     | table | ...
 ```
 
-### Step 2 — Memory/session seam + `agent-demo` (M2)
+### Step 2 — Memory/session seam + `agent-run` (M2)
 
 Write `shikigami-core/src/Shikigami/Memory/Scope.hs` and `shikigami-core/src/Shikigami/Agent/Run.hs`
 (full shapes in Plan of Work), add both to `shikigami-core.cabal` `exposed-modules`. Write
-`shikigami-cli/src/Shikigami/Cli/Commands/AgentDemo.hs`, `Shikigami/Cli.hs`, and `app/Main.hs`.
+`shikigami-cli/src/Shikigami/Cli/Commands/AgentRun.hs`, `Shikigami/Cli.hs`, and `app/Main.hs`.
 Build and run one agent:
 
 ```bash
 cabal build all
 just create-database              # ensure schema present
-cabal run shikigami -- agent-demo --agent stalled-intention
+cabal run shikigami -- agent-run --agent stalled-intention
 ```
 
 Expected transcript on the **first** run:
@@ -774,7 +763,7 @@ Expected: one session row (`scope_kind='agent'`, `scope_ref='stalled-intention'`
 Run the **same** agent a second time:
 
 ```bash
-cabal run shikigami -- agent-demo --agent stalled-intention
+cabal run shikigami -- agent-run --agent stalled-intention
 ```
 
 Expected transcript on the **second** run (the headline proof — run 2 remembers run 1):
@@ -803,7 +792,7 @@ cat > fixtures/digest.json <<'JSON'
   "idempotency_key": "stalled-intention:0192f000"
 }
 JSON
-cabal run shikigami -- agent-demo --agent stalled-intention --from-activity fixtures/digest.json
+cabal run shikigami -- agent-run --agent stalled-intention --from-activity fixtures/digest.json
 psql -h "$PGHOST" -d "$PGDATABASE" -c \
   "SELECT memory_id, content, tags FROM kiroku.kioku_memories WHERE scope_ref='stalled-intention' ORDER BY created_at DESC LIMIT 1;"
 ```
@@ -832,17 +821,17 @@ as something a human runs and sees:
    `cabal build all` exits 0 (proving the kioku dependency resolves into shikigami's package set),
    `just create-database` exits 0, and `\dt kiroku.kioku_*` lists `kioku_memories`,
    `kioku_sessions`, `kioku_turns`.
-2. **One simulated run records a session + memory (M2).** `cabal run shikigami -- agent-demo
+2. **One simulated run records a session + memory (M2).** `cabal run shikigami -- agent-run
    --agent stalled-intention` prints the run id, `recalled 0 prior memories`, and `recorded
    learning …`. A `psql` query shows one `kioku_sessions` row scoped to
    `shikigami/agent/stalled-intention` with `status='completed'` and one `kioku_memories` row in
    the same scope. This is the observable replacement of the spec's bespoke `agent_runs` table by
    kioku's Session.
-3. **Memory persists across runs (M3, headline).** Running `agent-demo --agent stalled-intention`
+3. **Memory persists across runs (M3, headline).** Running `agent-run --agent stalled-intention`
    a second time prints `recalled 1 prior memories:` followed by run 1's learning text. Two
    `kioku_sessions` rows and at least one `kioku_memories` row exist under the agent scope. This is
    the user-visible behavior promised in the Purpose: an agent remembers across runs.
-4. **Activity→memory mapping (M3).** `agent-demo --agent stalled-intention --from-activity
+4. **Activity→memory mapping (M3).** `agent-run --agent stalled-intention --from-activity
    fixtures/digest.json` records the envelope's payload as a memory whose tags carry the envelope's
    `verb`/`subject.type`. This shows the documented `activity.v1`→kioku-L0 mapping is real, which
    is the L0 EP-3's per-agent distillation consumes.
@@ -870,7 +859,7 @@ its inline projection.
   errors with `relation "kioku_…" does not exist` despite the table existing, the store pool's
   `search_path` is the cause; kioku's `withStore`/`AppEnv` already set it (the kizashi convention).
   Do not add a bespoke search_path here.
-- **The `agent-demo` command.** Re-running `agent-demo` records a *new* memory each time (fresh id),
+- **The `agent-run` command.** Re-running `agent-run` records a *new* memory each time (fresh id),
   which is harmless and is exactly what the across-run proof relies on. To reset the demo to a clean
   "first run", `TRUNCATE kiroku.kioku_memories, kiroku.kioku_sessions, kiroku.kioku_turns;` and drop
   the corresponding `kioku_memory-*`/`kioku_session-*` streams (or recreate the database). After a
@@ -925,11 +914,11 @@ shikigamiOwnMigrations`); `Shikigami.Migrations.TestSupport.withShikigamiMigrate
   `sharedScope :: MemoryScope` (= `ScopeGlobal (Namespace "shikigami")`). This is shikigami's
   side of **IP-2**.
 - `Shikigami.Agent.Run`: `data AgentRunInput`, `data AgentRunResult`,
-  `runAgentDemo :: AppEnv -> AgentRunInput -> IO (Either Text AgentRunResult)` — opens a kioku
+  `runAgentWithMemory :: AppEnv -> AgentRunInput -> IO (Either Text AgentRunResult)` — opens a kioku
   session (`Kioku.Session.start`), recalls (`Kioku.Recall.getActiveByScope`), records a learning
   (`Kioku.Memory.record`), and completes (`Kioku.Session.complete`).
-- `Shikigami.Cli`: `main :: IO ()` with an `agent-demo` subcommand;
-  `Shikigami.Cli.Commands.AgentDemo.runAgentDemoCmd :: AgentDemoOpts -> IO ()`.
+- `Shikigami.Cli`: `main :: IO ()` with an `agent-run` subcommand;
+  `Shikigami.Cli.Commands.AgentRun.runAgentWithMemoryCmd :: AgentRunOpts -> IO ()`.
 
 **End of M3.**
 
@@ -937,7 +926,7 @@ shikigamiOwnMigrations`); `Shikigami.Migrations.TestSupport.withShikigamiMigrate
   `activityToMemory :: ActivityEnvelope -> Text -> Kioku.Memory.RecordMemoryData` (envelope +
   agent name → a memory under `agentScope`), `activityToTurn :: ActivityEnvelope -> SessionId ->
   Int -> Kioku.Session.RecordTurnData`.
-- `Shikigami.Cli.Commands.AgentDemo` extended with `--from-activity <file>` (and optional
+- `Shikigami.Cli.Commands.AgentRun` extended with `--from-activity <file>` (and optional
   `--with-turns`).
 
 ### IP-1 — kioku public API surface (consumed)
@@ -999,7 +988,7 @@ contracts: MasterPlan #1 (IP-1…IP-6), the ExecPlan spec (`PLANS.md`), EP-1
 demo command shape), and the shikigami design spec
 (`/Users/shinzui/Keikaku/bokuno/shikigami/docs/initial-spec.md`) plus its Dhall seeds. Chose the
 pragmatic v1 (option b): scaffold the four-package shikigami project far enough to build + apply
-kioku's migrations, then prove the memory/session integration with a `shikigami-cli agent-demo`
+kioku's migrations, then prove the memory/session integration with a `shikigami-cli agent-run`
 command that simulates one agent run (open kioku session → recall → record learning → complete),
 and demonstrate persistence across two runs plus the `activity.v1`→kioku-L0 mapping. Recorded the
 scope mapping (`ScopeEntity "shikigami" "agent" <name>` per-agent; `ScopeGlobal "shikigami"`
@@ -1011,10 +1000,11 @@ deliverable is the memory/session seam + an observable demo, not the full runtim
 2026-06-25 — Updated after shikigami commit `dc5afc5`. The implemented `agent-run` command now
 uses Kioku's EP-2 hybrid recall API with vector-capability detection and embedding-config
 resolution, falling back to scoped active-memory recall for local no-pgvector/no-key demos. The
-living sections now record the hybrid-recall soft dependency as wired while keeping EP-6 In
-Progress until the unrelated dirty shikigami all-build issue and stale `agent-demo` prose are
-reconciled. Why: the MasterPlan requires current evidence for completion, and this change advances
-the EP-6 implementation without masking remaining verification gaps.
+living sections now record the hybrid-recall soft dependency as wired. After shikigami commit
+`2428f3b` resolved the unrelated run-queue build issue and `nix develop -c cabal build all`
+passed, the plan body was reconciled to the actual `agent-run` command and EP-6 was marked
+Complete. Why: the MasterPlan requires current evidence for completion; the final state now has
+both the behavioral memory proof and the broad shikigami build proof.
 
 
 ## Coding Conventions (haskell-jitsurei)

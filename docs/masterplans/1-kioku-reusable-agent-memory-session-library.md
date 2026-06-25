@@ -93,7 +93,7 @@ five milestones / ten files.
 | 3 | kioku Distillation Pyramid (L0 to L3) | docs/plans/3-kioku-distillation-pyramid-l0-to-l3.md | EP-1 | EP-2 | In Progress |
 | 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | In Progress |
 | 5 | mori agent exec with kioku Memory | docs/plans/5-mori-agent-exec-with-kioku-memory.md | EP-1 | EP-2 | Complete |
-| 6 | shikigami Memory Integration with kioku | docs/plans/6-shikigami-memory-integration-with-kioku.md | EP-1 | EP-2, EP-3 | In Progress |
+| 6 | shikigami Memory Integration with kioku | docs/plans/6-shikigami-memory-integration-with-kioku.md | EP-1 | EP-2, EP-3 | Complete |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 
@@ -303,16 +303,14 @@ Track milestone-level progress across all child plans.
       focused `TestSupport.Database` and full `mori-core-test` (1234 tests); live `frontend`
       memory record/list smoke; two-repo `TanStack/*` debug recall smoke; two-repo follow-up smoke;
       SQL over `kiroku.kioku_sessions` proving prior-run -> repo #1 -> repo #2 session chaining.
-- [ ] EP-6: shikigami adopts kioku for agent_runs (sessions) + per-agent memory. Hard loop verified
+- [x] EP-6: shikigami adopts kioku for agent_runs (sessions) + per-agent memory. Hard loop verified
       on 2026-06-25: shikigami builds the Kioku-backed core/CLI/migrations packages, applies the
       composed Kioku migrations, `agent-run --agent heartbeat` records a Kioku session+memory on
       run 1 and recalls that learning on run 2, and `agent-run --from-activity fixtures/digest.json`
       records a tagged activity memory. Shikigami commit `dc5afc5` now makes `agent-run` use
       `Kioku.Recall.recall` with `Recall.Hybrid`, vector-capability detection, and embedding-config
-      resolution, falling back to scoped active-memory recall for local no-pgvector/no-key demos.
-      Remaining: unrelated dirty run-queue work currently blocks a clean dirty-tree
-      `cabal build all`, and the EP-6 plan body still needs reconciliation from historical
-      `agent-demo` wording to shikigami's current `agent-run` runtime.
+      resolution, falling back to scoped active-memory recall for local no-pgvector/no-key demos;
+      after shikigami commit `2428f3b`, `nix develop -c cabal build all` also passes.
 
 
 ## Surprises & Discoveries
