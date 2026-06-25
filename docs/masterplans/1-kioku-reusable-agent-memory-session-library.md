@@ -91,7 +91,7 @@ five milestones / ten files.
 | 1 | kioku Scaffold and Core Extraction | docs/plans/1-kioku-scaffold-and-core-extraction.md | None | None | Complete |
 | 2 | kioku Hybrid Retrieval (pgvector + FTS + RRF) | docs/plans/2-kioku-hybrid-retrieval-pgvector-fts-rrf.md | EP-1 | None | Complete |
 | 3 | kioku Distillation Pyramid (L0 to L3) | docs/plans/3-kioku-distillation-pyramid-l0-to-l3.md | EP-1 | EP-2 | In Progress |
-| 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | In Progress |
+| 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | Complete |
 | 5 | mori agent exec with kioku Memory | docs/plans/5-mori-agent-exec-with-kioku-memory.md | EP-1 | EP-2 | Complete |
 | 6 | shikigami Memory Integration with kioku | docs/plans/6-shikigami-memory-integration-with-kioku.md | EP-1 | EP-2, EP-3 | Complete |
 
@@ -239,8 +239,8 @@ Track milestone-level progress across all child plans.
       acceptance remain; L3 persona program, reactor, timer route, CLI, and filesystem mirror exist;
       deterministic replay coverage now proves L1 merge, L2 scene, and L3 persona rows without network
       access
-- [ ] EP-4: Rei AgentMemory/AgentSession re-homed onto kioku with `IntentionId`/`HabitId` scope mapping
-      has started: Rei now consumes local kioku packages, composes kioku's own migrations into the
+- [x] EP-4: Rei AgentMemory/AgentSession re-homed onto kioku with `IntentionId`/`HabitId` scope mapping
+      is complete: Rei consumes local kioku packages, composes kioku's own migrations into the
       migration runner, and verifies a from-empty disposable Rei DB reaches Kioku's own migrations
       and creates `kiroku.kioku_memories`, `kiroku.kioku_sessions`, and `kiroku.kioku_turns` even
       when the local PostgreSQL install lacks legacy `pg_cron`; it has a tested
@@ -274,8 +274,14 @@ Track milestone-level progress across all child plans.
       are deleted; the unused top-level AgentMemory/AgentSession facades are deleted; and the memory
       handler error type moved to `Rei.Modules.Agent.Memory.Errors`. The M3 fixture still proves
       copy, verify, and idempotent re-copy without any remaining `Rei.Modules.AgentMemory` /
-      `Rei.Modules.AgentSession` modules. Disposable production data-copy execution remains.
-- [ ] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
+      `Rei.Modules.AgentSession` modules. The disposable production-data rehearsal restored dump
+      `.backups/prod_kioku_rehearsal_20260625_015233.dump` to scratch DB
+      `rei_kioku_prod_rehearsal_20260625_015233`, applied Rei+Kioku migrations, copied 4 memory
+      events and 243 session events, passed `memories.count`, `sessions.count`, `memories.rows`,
+      `sessions.rows`, `memories.recall`, and `OVERALL PASS`, then proved idempotent re-copy
+      appended 0 events. Rei `nix develop -c cabal build all` and
+      `nix develop -c cabal test rei-core` passed after the `blake3` Apple Silicon build fix.
+- [x] EP-4: Rei historical memory/session streams migrated; coaching context recall unchanged or improved
 - [x] EP-5: M0 pin/schema slice completed. mori links local kioku packages, resolves current
       `kioku-core`'s `shikumi`/Baikai transitive package needs under mori's pin-set, and applies
       kioku read-model migrations in its ephemeral test DB. Verification: mori
@@ -459,6 +465,20 @@ Track milestone-level progress across all child plans.
   `agent_memories` / `agent_sessions` rows preserved the copy/verify/idempotency proof and allowed
   the old AgentMemory/AgentSession event/transducer/projection/table modules, specs, and diagram
   sections to be deleted. Discovered during EP-4 M3 decommission work.
+
+- **EP-4 production data copy is complete as a disposable rehearsal.** The plan intentionally
+  avoided mutating the real production database; it dumped the local production `rei` database,
+  restored it into scratch database `rei_kioku_prod_rehearsal_20260625_015233`, applied Rei+Kioku
+  migrations with `HASKELL_ENV=production`, and ran `rei-kioku-migrate copy-all`/`verify`. The copy
+  moved 4 memory events and 243 session events, all verifier checks passed, and a second copy
+  appended 0 events. Discovered during EP-4 final acceptance.
+
+- **Rei's all-build needs Kioku's `blake3` NEON disable stanza on Apple Silicon.** Rei already had
+  `blake3 -avx512 -avx2 -sse41 -sse2` constraints, but `cabal build all` still linked against the
+  `_blake3_hash_many_neon` symbol through transitive shikumi packages. Adding
+  `package blake3` `ghc-options: -optc-DBLAKE3_USE_NEON=0` matches Kioku's working configuration
+  and makes Rei `cabal build all` plus `cabal test rei-core` pass. Discovered during EP-4 final
+  acceptance.
 
 
 ## Decision Log

@@ -116,7 +116,7 @@ This section must always reflect the actual current state of the work.
       fact/pattern/preference/constraint memories. The regression compares legacy
       `AgentMemoryRow` fixtures against equivalent `Kioku.MemoryRecord` fixtures converted through
       the adapter, and also covers the empty placeholder plus unknown-type dropping.
-- [ ] M3: historical `agent_memory`/`agent_session` kiroku streams copied into kioku streams by a
+- [x] M3: historical `agent_memory`/`agent_session` kiroku streams copied into kioku streams by a
       one-shot transform; additive `rei-kioku-migrate` executable now builds and exposes
       `copy-memories`, `copy-sessions`, `copy-all`, and `verify`. It decodes legacy Rei payloads
       through Kioku's compatibility parsers, re-encodes native Kioku events, appends only missing
@@ -125,8 +125,16 @@ This section must always reflect the actual current state of the work.
       memories and sessions, plus active recall-equivalent memory sets by scope. A focused
       disposable-Postgres rehearsal now seeds legacy Rei memory/session streams through the old
       transducers, runs the copy, proves `verify` passes for intention and workspace-global active
-      recall scopes, and proves a second copy appends zero events. Remaining: run against a
-      disposable production data copy and add any production-derived stream-replay probes needed.
+      recall scopes, and proves a second copy appends zero events. A disposable production-data
+      rehearsal on 2026-06-25 dumped the local production `rei` database to
+      `.backups/prod_kioku_rehearsal_20260625_015233.dump`, restored it to scratch database
+      `rei_kioku_prod_rehearsal_20260625_015233`, applied Rei+Kioku migrations with
+      `HASKELL_ENV=production`, ran `rei-kioku-migrate copy-all`, and then ran `verify`.
+      Production-derived copy results: 4 legacy memory events copied to 4 Kioku memory streams, 243
+      legacy session events copied to 169 Kioku session streams, `memories.count`,
+      `sessions.count`, `memories.rows`, `sessions.rows`, and `memories.recall` all PASS, and
+      `OVERALL PASS`. A second `copy-all` over the same scratch DB appended 0 events and still
+      passed verification; explicit counts were old/new memories 4/4 and old/new sessions 169/169.
 - [x] M3: live coaching-context recall path is covered by an integration test. Rei's
       `ContextBuilderSpec` now writes intention-scoped, workspace-global, and unrelated memories
       through the production Kioku-backed `AgentMemoryStore.recordMemory`, runs
@@ -159,6 +167,13 @@ This section must always reflect the actual current state of the work.
       `cabal test rei-core-test --test-option=-p --test-option='Transducer diagrams'`;
       stale-reference `rg` sweep over `rei-core/src rei-cli/src rei-core/test docs/dev/architecture/transducer-diagrams.md`;
       `git diff --check`.
+- [x] M3: final EP-4 acceptance audit passed on 2026-06-25. Rei `nix develop -c cabal build all`
+      passed after adding `package blake3` `ghc-options: -optc-DBLAKE3_USE_NEON=0` to avoid the
+      Apple Silicon `blake3_hash_many_neon` link path. Rei `nix develop -c cabal test rei-core`
+      passed all 942 tests. Focused migration verification also passed:
+      `nix develop -c cabal test rei-core-test --test-options='-p rei-kioku-migrate'`. Stale
+      module audit `rg "Rei\\.Modules\\.AgentMemory\\.Domain|Rei\\.Modules\\.AgentSession\\.Domain" rei-core rei-cli`
+      returned no matches, while `AgentSchedule` remains present in Rei.
 
 
 ## Surprises & Discoveries
@@ -322,6 +337,25 @@ implementation. Provide concise evidence.
   `Rei.Modules.AgentMemory` / `Rei.Modules.AgentSession` module references; Rei
   `cabal test rei-core-test --test-options='-p rei-kioku-migrate'`;
   `cabal test rei-core-test --test-options='-p Kioku'`.
+
+- The production-data rehearsal requirement is satisfied by restoring a fresh dump into a
+  disposable local database, not by mutating the real production database. The local production
+  server runs PostgreSQL 18, so the first ambient `pg_dump` from PostgreSQL 17 failed with a server
+  version mismatch; running `pg_dump` inside Rei's `nix develop` shell produced a valid custom dump.
+  The restored scratch database also needed `HASKELL_ENV=production` before Rei's migrations would
+  parse configuration. Once restored and migrated, `rei-kioku-migrate copy-all` copied 4 memory
+  events and 243 session events, `verify` reported every check PASS, and a second `copy-all`
+  appended 0 events. Evidence: dump
+  `.backups/prod_kioku_rehearsal_20260625_015233.dump`, scratch DB
+  `rei_kioku_prod_rehearsal_20260625_015233`, verification checks `memories.count`,
+  `sessions.count`, `memories.rows`, `sessions.rows`, `memories.recall`, `OVERALL PASS`.
+
+- Rei's broad `cabal build all` exposed an Apple Silicon link failure in transitive `blake3-0.3.1`
+  (`_blake3_hash_many_neon`) even though Rei already disabled the x86 SIMD flags in the solver
+  constraints. Mirroring Kioku's `package blake3` stanza with
+  `ghc-options: -optc-DBLAKE3_USE_NEON=0` removes the NEON object path and lets Rei's full package
+  set link. Evidence: Rei `nix develop -c cabal build all`; Rei
+  `nix develop -c cabal test rei-core` passed all 942 tests.
 
 (Add further discoveries as work proceeds.)
 
