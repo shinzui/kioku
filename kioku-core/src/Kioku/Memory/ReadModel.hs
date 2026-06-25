@@ -6,11 +6,17 @@ module Kioku.Memory.ReadModel
     MemoriesByScopeQuery (..),
     MemoriesBySessionQuery (..),
     MemoriesByTypeQuery (..),
+    MemorySupersessionChainQuery (..),
     memoryByIdReadModel,
     memoriesByNamespaceReadModel,
+    memoriesByNamespaceRowsReadModel,
     memoriesByScopeReadModel,
+    memoriesByScopeRowsReadModel,
     memoriesBySessionReadModel,
+    memoriesBySessionRowsReadModel,
     memoriesByTypeReadModel,
+    memoriesByTypeRowsReadModel,
+    memorySupersessionChainReadModel,
   )
 where
 
@@ -65,6 +71,8 @@ data MemoriesByScopeQuery = MemoriesByScopeQuery Text (Maybe Text) (Maybe Text)
 newtype MemoriesBySessionQuery = MemoriesBySessionQuery Text
 
 data MemoriesByTypeQuery = MemoriesByTypeQuery Text Text
+
+newtype MemorySupersessionChainQuery = MemorySupersessionChainQuery Text
 
 memoryInlineProjection :: InlineProjection MemoryEvent
 memoryInlineProjection =
@@ -135,6 +143,18 @@ memoriesByNamespaceReadModel =
       query = \(MemoriesByNamespaceQuery ns) -> Tx.statement ns selectActiveByNamespaceStmt
     }
 
+memoriesByNamespaceRowsReadModel :: ReadModel MemoriesByNamespaceQuery [MemoryRow]
+memoriesByNamespaceRowsReadModel =
+  ReadModel
+    { name = "kioku-memory-rows-by-namespace",
+      tableName = "kioku_memories",
+      subscriptionName = "kioku-memory-inline",
+      version = 1,
+      shapeHash = "kioku-memory-v1",
+      defaultConsistency = Eventual,
+      query = \(MemoriesByNamespaceQuery ns) -> Tx.statement ns selectActiveByNamespaceRowsStmt
+    }
+
 memoriesByScopeReadModel :: ReadModel MemoriesByScopeQuery [MemoryRecord]
 memoriesByScopeReadModel =
   ReadModel
@@ -145,6 +165,18 @@ memoriesByScopeReadModel =
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
       query = \(MemoriesByScopeQuery ns sk sr) -> Tx.statement (ns, sk, sr) selectActiveByScopeStmt
+    }
+
+memoriesByScopeRowsReadModel :: ReadModel MemoriesByScopeQuery [MemoryRow]
+memoriesByScopeRowsReadModel =
+  ReadModel
+    { name = "kioku-memory-rows-by-scope",
+      tableName = "kioku_memories",
+      subscriptionName = "kioku-memory-inline",
+      version = 1,
+      shapeHash = "kioku-memory-v1",
+      defaultConsistency = Eventual,
+      query = \(MemoriesByScopeQuery ns sk sr) -> Tx.statement (ns, sk, sr) selectActiveByScopeRowsStmt
     }
 
 memoriesBySessionReadModel :: ReadModel MemoriesBySessionQuery [MemoryRecord]
@@ -159,6 +191,18 @@ memoriesBySessionReadModel =
       query = \(MemoriesBySessionQuery sid) -> Tx.statement sid selectBySessionStmt
     }
 
+memoriesBySessionRowsReadModel :: ReadModel MemoriesBySessionQuery [MemoryRow]
+memoriesBySessionRowsReadModel =
+  ReadModel
+    { name = "kioku-memory-rows-by-session",
+      tableName = "kioku_memories",
+      subscriptionName = "kioku-memory-inline",
+      version = 1,
+      shapeHash = "kioku-memory-v1",
+      defaultConsistency = Eventual,
+      query = \(MemoriesBySessionQuery sid) -> Tx.statement sid selectBySessionRowsStmt
+    }
+
 memoriesByTypeReadModel :: ReadModel MemoriesByTypeQuery [MemoryRecord]
 memoriesByTypeReadModel =
   ReadModel
@@ -169,6 +213,30 @@ memoriesByTypeReadModel =
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
       query = \(MemoriesByTypeQuery ns mt) -> Tx.statement (ns, mt) selectByTypeStmt
+    }
+
+memoriesByTypeRowsReadModel :: ReadModel MemoriesByTypeQuery [MemoryRow]
+memoriesByTypeRowsReadModel =
+  ReadModel
+    { name = "kioku-memory-rows-by-type",
+      tableName = "kioku_memories",
+      subscriptionName = "kioku-memory-inline",
+      version = 1,
+      shapeHash = "kioku-memory-v1",
+      defaultConsistency = Eventual,
+      query = \(MemoriesByTypeQuery ns mt) -> Tx.statement (ns, mt) selectByTypeRowsStmt
+    }
+
+memorySupersessionChainReadModel :: ReadModel MemorySupersessionChainQuery [MemoryRow]
+memorySupersessionChainReadModel =
+  ReadModel
+    { name = "kioku-memory-supersession-chain",
+      tableName = "kioku_memories",
+      subscriptionName = "kioku-memory-inline",
+      version = 1,
+      shapeHash = "kioku-memory-v1",
+      defaultConsistency = Eventual,
+      query = \(MemorySupersessionChainQuery mid) -> Tx.statement mid selectSupersessionChainStmt
     }
 
 memoryRowDecoder :: D.Row MemoryRow
@@ -222,6 +290,41 @@ memoryRowColumns :: Text
 memoryRowColumns =
   "memory_id, agent_id, session_id, namespace, scope_kind, scope_ref, memory_type, content, priority, confidence, tags::text, status, superseded_by, supersedes, created_at, updated_at"
 
+qualifiedMemoryRowColumns :: Text -> Text
+qualifiedMemoryRowColumns prefix =
+  prefix
+    <> ".memory_id, "
+    <> prefix
+    <> ".agent_id, "
+    <> prefix
+    <> ".session_id, "
+    <> prefix
+    <> ".namespace, "
+    <> prefix
+    <> ".scope_kind, "
+    <> prefix
+    <> ".scope_ref, "
+    <> prefix
+    <> ".memory_type, "
+    <> prefix
+    <> ".content, "
+    <> prefix
+    <> ".priority, "
+    <> prefix
+    <> ".confidence, "
+    <> prefix
+    <> ".tags::text, "
+    <> prefix
+    <> ".status, "
+    <> prefix
+    <> ".superseded_by, "
+    <> prefix
+    <> ".supersedes, "
+    <> prefix
+    <> ".created_at, "
+    <> prefix
+    <> ".updated_at"
+
 selectMemoryByIdStmt :: Statement Text (Maybe MemoryRow)
 selectMemoryByIdStmt =
   preparable
@@ -237,10 +340,20 @@ selectActiveByNamespaceStmt =
   preparable
     ( "SELECT "
         <> memoryRowColumns
-        <> " FROM kioku_memories WHERE status = 'active' AND namespace = $1 ORDER BY created_at DESC"
+        <> " FROM kioku_memories WHERE status = 'active' AND namespace = $1 ORDER BY priority ASC, created_at DESC"
     )
     (E.param (E.nonNullable E.text))
     (D.rowList memoryRecordDecoder)
+
+selectActiveByNamespaceRowsStmt :: Statement Text [MemoryRow]
+selectActiveByNamespaceRowsStmt =
+  preparable
+    ( "SELECT "
+        <> memoryRowColumns
+        <> " FROM kioku_memories WHERE status = 'active' AND namespace = $1 ORDER BY priority ASC, created_at DESC"
+    )
+    (E.param (E.nonNullable E.text))
+    (D.rowList memoryRowDecoder)
 
 selectActiveByScopeStmt :: Statement (Text, Maybe Text, Maybe Text) [MemoryRecord]
 selectActiveByScopeStmt =
@@ -256,6 +369,20 @@ selectActiveByScopeStmt =
     )
     (D.rowList memoryRecordDecoder)
 
+selectActiveByScopeRowsStmt :: Statement (Text, Maybe Text, Maybe Text) [MemoryRow]
+selectActiveByScopeRowsStmt =
+  preparable
+    ( "SELECT "
+        <> memoryRowColumns
+        <> " FROM kioku_memories WHERE status = 'active' AND namespace = $1 AND ((scope_kind = $2 AND scope_ref = $3) OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL)) ORDER BY priority ASC, created_at DESC"
+    )
+    ( contrazip3
+        (E.param (E.nonNullable E.text))
+        (E.param (E.nullable E.text))
+        (E.param (E.nullable E.text))
+    )
+    (D.rowList memoryRowDecoder)
+
 selectBySessionStmt :: Statement Text [MemoryRecord]
 selectBySessionStmt =
   preparable
@@ -265,6 +392,16 @@ selectBySessionStmt =
     )
     (E.param (E.nonNullable E.text))
     (D.rowList memoryRecordDecoder)
+
+selectBySessionRowsStmt :: Statement Text [MemoryRow]
+selectBySessionRowsStmt =
+  preparable
+    ( "SELECT "
+        <> memoryRowColumns
+        <> " FROM kioku_memories WHERE session_id = $1 ORDER BY created_at DESC"
+    )
+    (E.param (E.nonNullable E.text))
+    (D.rowList memoryRowDecoder)
 
 selectByTypeStmt :: Statement (Text, Text) [MemoryRecord]
 selectByTypeStmt =
@@ -278,6 +415,41 @@ selectByTypeStmt =
         (E.param (E.nonNullable E.text))
     )
     (D.rowList memoryRecordDecoder)
+
+selectByTypeRowsStmt :: Statement (Text, Text) [MemoryRow]
+selectByTypeRowsStmt =
+  preparable
+    ( "SELECT "
+        <> memoryRowColumns
+        <> " FROM kioku_memories WHERE status = 'active' AND namespace = $1 AND memory_type = $2 ORDER BY priority ASC, created_at DESC"
+    )
+    ( contrazip2
+        (E.param (E.nonNullable E.text))
+        (E.param (E.nonNullable E.text))
+    )
+    (D.rowList memoryRowDecoder)
+
+selectSupersessionChainStmt :: Statement Text [MemoryRow]
+selectSupersessionChainStmt =
+  preparable
+    ( "WITH RECURSIVE chain AS ("
+        <> "SELECT "
+        <> memoryRowColumns
+        <> " FROM kioku_memories WHERE memory_id = $1 "
+        <> "UNION "
+        <> "SELECT "
+        <> qualifiedMemoryRowColumns "m"
+        <> " FROM kioku_memories m JOIN chain c ON "
+        <> "m.memory_id = c.supersedes "
+        <> "OR m.supersedes = c.memory_id "
+        <> "OR m.memory_id = c.superseded_by "
+        <> "OR m.superseded_by = c.memory_id"
+        <> ") SELECT "
+        <> memoryRowColumns
+        <> " FROM chain ORDER BY created_at ASC, memory_id ASC"
+    )
+    (E.param (E.nonNullable E.text))
+    (D.rowList memoryRowDecoder)
 
 upsertMemoryStmt :: Statement MemoryRow ()
 upsertMemoryStmt =

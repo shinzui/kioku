@@ -6,6 +6,12 @@ module Kioku.Memory
     updateTags,
     updateConfidence,
     merge,
+    getMemoryRowById,
+    getActiveRowsInNamespace,
+    getActiveRowsByScope,
+    getRowsBySession,
+    getActiveRowsByType,
+    getSupersessionChain,
   )
 where
 
@@ -14,12 +20,28 @@ import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError, defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
-import Kioku.Api.Types (confidenceToText)
+import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Api.Types (MemoryType, confidenceToText, memoryTypeToText)
 import Kioku.Distill.L2 (l2SceneTimerScheduleProjection)
-import Kioku.Id (MemoryId, idText)
+import Kioku.Id (MemoryId, SessionId, idText)
 import Kioku.Memory.Domain
 import Kioku.Memory.EventStream (memoryEventStream, memoryStream)
-import Kioku.Memory.ReadModel (MemoryByIdQuery (..), MemoryRow (..), memoryByIdReadModel, memoryInlineProjection)
+import Kioku.Memory.ReadModel
+  ( MemoriesByNamespaceQuery (..),
+    MemoriesByScopeQuery (..),
+    MemoriesBySessionQuery (..),
+    MemoriesByTypeQuery (..),
+    MemoryByIdQuery (..),
+    MemoryRow (..),
+    MemorySupersessionChainQuery (..),
+    memoriesByNamespaceRowsReadModel,
+    memoriesByScopeRowsReadModel,
+    memoriesBySessionRowsReadModel,
+    memoriesByTypeRowsReadModel,
+    memoryByIdReadModel,
+    memoryInlineProjection,
+    memorySupersessionChainReadModel,
+  )
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Error (StoreError)
@@ -119,6 +141,53 @@ lookupMemory ::
   Eff es (Either ReadModelError (Maybe MemoryRow))
 lookupMemory mid =
   runQueryWith Nothing Eventual memoryByIdReadModel (MemoryByIdQuery (idText mid))
+
+getMemoryRowById ::
+  (IOE :> es, Store :> es) =>
+  MemoryId ->
+  Eff es (Either ReadModelError (Maybe MemoryRow))
+getMemoryRowById =
+  lookupMemory
+
+getActiveRowsInNamespace ::
+  (IOE :> es, Store :> es) =>
+  Namespace ->
+  Eff es (Either ReadModelError [MemoryRow])
+getActiveRowsInNamespace (Namespace ns) =
+  runQueryWith Nothing Eventual memoriesByNamespaceRowsReadModel (MemoriesByNamespaceQuery ns)
+
+getActiveRowsByScope ::
+  (IOE :> es, Store :> es) =>
+  MemoryScope ->
+  Eff es (Either ReadModelError [MemoryRow])
+getActiveRowsByScope scope =
+  runQueryWith
+    Nothing
+    Eventual
+    memoriesByScopeRowsReadModel
+    (MemoriesByScopeQuery (scopeNamespaceText scope) (scopeKindText scope) (scopeRefText scope))
+
+getRowsBySession ::
+  (IOE :> es, Store :> es) =>
+  SessionId ->
+  Eff es (Either ReadModelError [MemoryRow])
+getRowsBySession sid =
+  runQueryWith Nothing Eventual memoriesBySessionRowsReadModel (MemoriesBySessionQuery (idText sid))
+
+getActiveRowsByType ::
+  (IOE :> es, Store :> es) =>
+  Namespace ->
+  MemoryType ->
+  Eff es (Either ReadModelError [MemoryRow])
+getActiveRowsByType (Namespace ns) memoryType =
+  runQueryWith Nothing Eventual memoriesByTypeRowsReadModel (MemoriesByTypeQuery ns (memoryTypeToText memoryType))
+
+getSupersessionChain ::
+  (IOE :> es, Store :> es) =>
+  MemoryId ->
+  Eff es (Either ReadModelError [MemoryRow])
+getSupersessionChain mid =
+  runQueryWith Nothing Eventual memorySupersessionChainReadModel (MemorySupersessionChainQuery (idText mid))
 
 runMemoryCommand ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
