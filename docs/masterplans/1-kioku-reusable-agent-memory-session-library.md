@@ -93,7 +93,7 @@ five milestones / ten files.
 | 3 | kioku Distillation Pyramid (L0 to L3) | docs/plans/3-kioku-distillation-pyramid-l0-to-l3.md | EP-1 | EP-2 | In Progress |
 | 4 | Rei Migration to kioku | docs/plans/4-rei-migration-to-kioku.md | EP-1 | EP-2, EP-3 | In Progress |
 | 5 | mori agent exec with kioku Memory | docs/plans/5-mori-agent-exec-with-kioku-memory.md | EP-1 | EP-2 | Complete |
-| 6 | shikigami Memory Integration with kioku | docs/plans/6-shikigami-memory-integration-with-kioku.md | EP-1 | EP-2, EP-3 | Not Started |
+| 6 | shikigami Memory Integration with kioku | docs/plans/6-shikigami-memory-integration-with-kioku.md | EP-1 | EP-2, EP-3 | In Progress |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 
@@ -303,7 +303,13 @@ Track milestone-level progress across all child plans.
       focused `TestSupport.Database` and full `mori-core-test` (1234 tests); live `frontend`
       memory record/list smoke; two-repo `TanStack/*` debug recall smoke; two-repo follow-up smoke;
       SQL over `kiroku.kioku_sessions` proving prior-run -> repo #1 -> repo #2 session chaining.
-- [ ] EP-6: shikigami adopts kioku for agent_runs (sessions) + per-agent memory
+- [ ] EP-6: shikigami adopts kioku for agent_runs (sessions) + per-agent memory. Hard loop verified
+      on 2026-06-25: shikigami builds the Kioku-backed core/CLI/migrations packages, applies the
+      composed Kioku migrations, `agent-run --agent heartbeat` records a Kioku session+memory on
+      run 1 and recalls that learning on run 2, and `agent-run --from-activity fixtures/digest.json`
+      records a tagged activity memory. Remaining: shikigami still uses scoped active-memory recall
+      rather than EP-2 hybrid recall, and unrelated dirty run-queue work currently blocks a clean
+      dirty-tree `cabal build all`.
 
 
 ## Surprises & Discoveries
@@ -419,6 +425,13 @@ Track milestone-level progress across all child plans.
   old replay fixtures working while moving runtime code away from the legacy aggregate namespace;
   those command/type/application aliases were removed in a later M3 cleanup. Discovered during EP-4
   M3 decommission work.
+
+- **EP-6 shikigami was already implemented out of band.** The Kioku-side EP-6 text assumed
+  shikigami had no Haskell source and would receive a minimal `agent-demo` scaffold. The current
+  shikigami repo has its own MasterPlan and already contains the Kioku-backed session/memory seam
+  under `Shikigami.Agent.Run`, exposed through `shikigami agent-run`. The hard two-run recall loop
+  passed live against shikigami's dev database on 2026-06-25, but the implementation name and
+  breadth differ from the original Kioku EP-6 plan. Discovered during EP-6 audit.
 
 - **EP-4 top-level AgentMemory/AgentSession facades became dead code.** Once live imports moved to
   `Rei.Modules.Agent.*`, the broad old facades had no callers and could be deleted, leaving only
