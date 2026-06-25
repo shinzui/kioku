@@ -102,10 +102,12 @@ This section must always reflect the actual current state of the work.
 - [x] M3: a second run of the same agent recalls run 1's learning (printed and asserted), proving
       persistent per-agent memory; the `activity.v1`→kioku-memory/turn mapping is demonstrated by
       `agent-run --from-activity <envelope.json>`.
-- [ ] M3 (soft, optional): if EP-2 is Complete, `agent-demo` uses hybrid recall; if EP-3 is
+- [x] M3 (soft, optional): if EP-2 is Complete, `agent-run` uses hybrid recall; if EP-3 is
       Complete, an `agent-persona --agent <name>` subcommand prints the distilled per-agent
-      persona. Current state: shikigami uses scoped active-memory recall (`getActiveByScope`);
-      hybrid recall and persona CLI are not wired.
+      persona. Current state: shikigami commit `dc5afc5` wires `agent-run` through
+      `Kioku.Recall.recall` with `Recall.Hybrid`, `resolveEmbeddingConfig`, and
+      `detectVectorCapability`, failing open to scoped active-memory recall when vector/embedding
+      recall yields no hits. EP-3 is still In Progress, so the persona CLI remains skipped.
 
 
 ## Surprises & Discoveries
@@ -134,6 +136,12 @@ implementation. Provide concise evidence.
   exposes `Shikigami.Trigger.Enqueue` and adds `pgmq-migration`. The EP-6-relevant targeted build,
   `nix develop -c cabal build shikigami-core shikigami-cli shikigami-migrations`, succeeds, and
   `nix develop -c cabal test shikigami-core-test` passes 11 tests.
+
+- The EP-2 soft dependency is now wired in shikigami. Commit `dc5afc5` changed
+  `Shikigami.Agent.Run` so `agent-run` resolves Kioku embedding config, detects pgvector/vector
+  column capability, calls `Kioku.Recall.recall` with `Recall.Hybrid`, and falls back to
+  `getActiveByScope` when hybrid recall cannot produce hits. This preserves the local no-pgvector
+  demo while using Kioku's hybrid recall path where available.
 
 
 ## Decision Log
@@ -200,9 +208,28 @@ Record every decision made while working on the plan.
   Date: 2026-06-25
 
 - Decision: Do not mark EP-6 complete yet, despite the hard session/memory loop passing, because
-  the soft EP-2 hybrid recall path is not wired into shikigami and the current dirty shikigami tree
-  prevents a clean `cabal build all` proof. Keep the MasterPlan status at **In Progress** with the
-  verified hard acceptance recorded.
+  the soft EP-2 hybrid recall path was not yet wired into shikigami and the current dirty
+  shikigami tree prevented a clean `cabal build all` proof. Keep the MasterPlan status at
+  **In Progress** with the verified hard acceptance recorded. Superseded in part on 2026-06-25:
+  `dc5afc5` wired hybrid recall, but the dirty-tree all-build and stale plan-body reconciliation
+  gaps remain.
+  Date: 2026-06-25
+
+- Decision: Wire hybrid recall into `agent-run` with a scoped recall fallback rather than requiring
+  pgvector and an embedding provider for every local demo run.
+  Rationale: EP-2's recall API already fails open from vector embedding errors to keyword recall,
+  but local shikigami databases may also lack pgvector entirely or may not have keyword matches for
+  a sparse query. The fallback keeps EP-6's observable across-run memory proof stable while making
+  the richer hybrid path the first attempt when the database and embedding provider can support it.
+  Date: 2026-06-25
+
+- Decision: Keep EP-6 **In Progress** after `dc5afc5` because the broader current shikigami
+  worktree still contains unrelated run-queue changes that prevent a clean current-state
+  `cabal build all` proof, and the checked-in plan body still contains historical `agent-demo`
+  instructions that should be reconciled before marking the plan Complete.
+  Rationale: completion should be proven against current evidence, not inferred from the scoped
+  package build. The targeted EP-6 behavior is green, but the plan's original M1 acceptance named a
+  broad `cabal build all` gate.
   Date: 2026-06-25
 
 
@@ -217,9 +244,9 @@ as Kioku memories under `ScopeEntity "shikigami" "agent" <agentName>`, recalls p
 subsequent runs, and records `activity.v1` envelopes as tagged memories.
 
 Remaining gaps are compatibility/polish rather than the base Kioku adoption: `agent-demo` remains
-a stale plan name for the implemented `agent-run` command, shikigami still uses simple scoped
-active-memory recall rather than EP-2 hybrid recall, and the broader dirty shikigami tree must be
-made green for `cabal build all`.
+a stale plan name for the implemented `agent-run` command, the broader dirty shikigami tree must
+be made green for `cabal build all`, and the historical plan body should be reconciled with
+shikigami's now-broader runtime before EP-6 is marked complete.
 
 
 ## Context and Orientation
@@ -938,12 +965,16 @@ no-op). EP-2 later adds a pgvector column to `kioku_memories` and EP-3 adds scen
 those flow in through `kiokuMigrations` automatically when EP-2/EP-3 land and the kioku pin is
 advanced.
 
-### IP-4 — embedding & LLM provider config (not used here)
+### IP-4 — embedding & LLM provider config
 
-EP-6 records a *fixed* learning (no LLM call) and uses EP-1's scoped recall (no embeddings), so it
-needs no `OPENAI_API_KEY`/`baikai` config. If EP-2 is Complete and you want hybrid recall to score
-semantically in the demo, configure EP-2's embedding env vars and run EP-2's embedding worker;
-otherwise recall degrades to FTS/scoped, which is sufficient for the across-run proof.
+EP-6 records a *fixed* learning (no LLM call), so it still needs no Anthropic key. The current
+`agent-run` recall path uses EP-2's hybrid recall API first: it resolves
+`KIOKU_EMBEDDING_BASE_URL`, `KIOKU_EMBEDDING_MODEL`, `KIOKU_EMBEDDING_DIMENSIONS`, and
+`KIOKU_EMBEDDING_API_KEY`/`OPENAI_API_KEY` through `Kioku.Memory.Embedding.resolveEmbeddingConfig`,
+detects vector capability with `Kioku.Recall.Capability.detectVectorCapability`, and calls
+`Kioku.Recall.recall` with `Recall.Hybrid`. If the local database lacks pgvector/vector columns,
+if the embedding provider is unconfigured, or if the sparse demo query produces no hits, shikigami
+falls back to scoped active-memory recall so the across-run proof remains key-free.
 
 ### IP-5 — `cabal.project` pin-set
 
@@ -976,6 +1007,14 @@ shared), the replacement of the spec's bespoke `agent_runs` table by kioku's Ses
 the explicit out-of-scope boundary (triggers, sinks, shomei, behavior runner, Kafka consumer). Why:
 the prompt directed (b) as the pragmatic v1 and shikigami is greenfield with zero Haskell, so the
 deliverable is the memory/session seam + an observable demo, not the full runtime.
+
+2026-06-25 — Updated after shikigami commit `dc5afc5`. The implemented `agent-run` command now
+uses Kioku's EP-2 hybrid recall API with vector-capability detection and embedding-config
+resolution, falling back to scoped active-memory recall for local no-pgvector/no-key demos. The
+living sections now record the hybrid-recall soft dependency as wired while keeping EP-6 In
+Progress until the unrelated dirty shikigami all-build issue and stale `agent-demo` prose are
+reconciled. Why: the MasterPlan requires current evidence for completion, and this change advances
+the EP-6 implementation without masking remaining verification gaps.
 
 
 ## Coding Conventions (haskell-jitsurei)

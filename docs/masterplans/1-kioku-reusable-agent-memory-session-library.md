@@ -307,9 +307,12 @@ Track milestone-level progress across all child plans.
       on 2026-06-25: shikigami builds the Kioku-backed core/CLI/migrations packages, applies the
       composed Kioku migrations, `agent-run --agent heartbeat` records a Kioku session+memory on
       run 1 and recalls that learning on run 2, and `agent-run --from-activity fixtures/digest.json`
-      records a tagged activity memory. Remaining: shikigami still uses scoped active-memory recall
-      rather than EP-2 hybrid recall, and unrelated dirty run-queue work currently blocks a clean
-      dirty-tree `cabal build all`.
+      records a tagged activity memory. Shikigami commit `dc5afc5` now makes `agent-run` use
+      `Kioku.Recall.recall` with `Recall.Hybrid`, vector-capability detection, and embedding-config
+      resolution, falling back to scoped active-memory recall for local no-pgvector/no-key demos.
+      Remaining: unrelated dirty run-queue work currently blocks a clean dirty-tree
+      `cabal build all`, and the EP-6 plan body still needs reconciliation from historical
+      `agent-demo` wording to shikigami's current `agent-run` runtime.
 
 
 ## Surprises & Discoveries
@@ -432,6 +435,13 @@ Track milestone-level progress across all child plans.
   under `Shikigami.Agent.Run`, exposed through `shikigami agent-run`. The hard two-run recall loop
   passed live against shikigami's dev database on 2026-06-25, but the implementation name and
   breadth differ from the original Kioku EP-6 plan. Discovered during EP-6 audit.
+
+- **EP-6 can use hybrid recall without making local demos key-dependent.** Shikigami commit
+  `dc5afc5` wires `agent-run` through `Kioku.Recall.recall` with `Recall.Hybrid`, resolving the
+  embedding model from Kioku's embedding env vars and detecting pgvector/vector-column capability
+  before recall. The implementation falls back to scoped active-memory recall when vector/embedding
+  recall cannot produce hits, so the local two-run proof remains key-free while EP-2's richer path
+  is used where available. Discovered during EP-6 hybrid-recall closure.
 
 - **EP-4 top-level AgentMemory/AgentSession facades became dead code.** Once live imports moved to
   `Rei.Modules.Agent.*`, the broad old facades had no callers and could be deleted, leaving only
