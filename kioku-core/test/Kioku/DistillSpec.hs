@@ -137,6 +137,8 @@ writeFixtureSession sid scope now = do
           scope,
           subjectRef = Just "intention_distill_test",
           previousSessionId = Nothing,
+          parentSessionId = Nothing,
+          delegationDepth = 0,
           startedAt = now
         }
   void (liftIO (expectRight "Session.start" startResult))

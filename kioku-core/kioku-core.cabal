@@ -105,6 +105,7 @@ test-suite kioku-test
     Kioku.EmbeddingWorkerSpec
     Kioku.RecallSpec
     Kioku.ReiCompatSpec
+    Kioku.SessionLineageSpec
 
   hs-source-dirs: test
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N

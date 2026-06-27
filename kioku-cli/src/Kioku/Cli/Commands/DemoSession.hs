@@ -30,6 +30,8 @@ runDemoSession = do
               scope = scope,
               subjectRef = Just "intention_demo",
               previousSessionId = Nothing,
+              parentSessionId = Nothing,
+              delegationDepth = 0,
               startedAt = now
             }
         turnPayload =

@@ -21,6 +21,7 @@ module Kioku.Session.Domain
   )
 where
 
+import Data.Aeson.Types (withObject, (.!=), (.:), (.:?))
 import Keiki.Builder qualified as B
 import Keiki.Core (HsPred, SymTransducer)
 import Keiki.Generics (emptyRegFile)
@@ -41,6 +42,8 @@ data StartSessionData = StartSessionData
     scope :: !MemoryScope,
     subjectRef :: !(Maybe Text),
     previousSessionId :: !(Maybe SessionId),
+    parentSessionId :: !(Maybe SessionId),
+    delegationDepth :: !Int,
     startedAt :: !UTCTime
   }
   deriving stock (Generic, Eq, Show)
@@ -106,10 +109,26 @@ data SessionStartedData = SessionStartedData
     scope :: !MemoryScope,
     subjectRef :: !(Maybe Text),
     previousSessionId :: !(Maybe SessionId),
+    parentSessionId :: !(Maybe SessionId),
+    delegationDepth :: !Int,
     startedAt :: !UTCTime
   }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (FromJSON, ToJSON)
+  deriving anyclass (ToJSON)
+
+instance FromJSON SessionStartedData where
+  parseJSON =
+    withObject "SessionStartedData" \o ->
+      SessionStartedData
+        <$> o .: "sessionId"
+        <*> o .: "agentId"
+        <*> o .: "focus"
+        <*> o .: "scope"
+        <*> o .:? "subjectRef"
+        <*> o .:? "previousSessionId"
+        <*> o .:? "parentSessionId"
+        <*> o .:? "delegationDepth" .!= 0
+        <*> o .: "startedAt"
 
 data SessionCompletedData = SessionCompletedData
   { sessionId :: !SessionId,
@@ -197,6 +216,8 @@ sessionTransducer =
               scope = d.scope,
               subjectRef = d.subjectRef,
               previousSessionId = d.previousSessionId,
+              parentSessionId = d.parentSessionId,
+              delegationDepth = d.delegationDepth,
               startedAt = d.startedAt
             }
         B.goto Running

@@ -12,6 +12,7 @@ module Kioku.Session
     getByFocus,
     getByStartedRange,
     getChain,
+    getDelegationChildren,
     getTurns,
   )
 where
@@ -30,6 +31,7 @@ import Kioku.Session.EventStream (sessionEventStream, sessionStream)
 import Kioku.Session.ReadModel
   ( SessionByIdQuery (..),
     SessionChainQuery (..),
+    SessionDelegationChildrenQuery (..),
     SessionRow (..),
     SessionsByFocusQuery (..),
     SessionsByNamespaceQuery (..),
@@ -39,6 +41,7 @@ import Kioku.Session.ReadModel
     TurnsBySessionQuery (..),
     sessionByIdReadModel,
     sessionChainReadModel,
+    sessionDelegationChildrenReadModel,
     sessionInlineProjection,
     sessionsByFocusReadModel,
     sessionsByNamespaceReadModel,
@@ -166,6 +169,13 @@ getChain ::
   Eff es (Either ReadModelError [SessionRow])
 getChain sid =
   runQueryWith Nothing Eventual sessionChainReadModel (SessionChainQuery (idText sid))
+
+getDelegationChildren ::
+  (IOE :> es, Store :> es) =>
+  SessionId ->
+  Eff es (Either ReadModelError [SessionRow])
+getDelegationChildren sid =
+  runQueryWith Nothing Eventual sessionDelegationChildrenReadModel (SessionDelegationChildrenQuery (idText sid))
 
 namespaceText :: Namespace -> Text
 namespaceText (Namespace ns) = ns

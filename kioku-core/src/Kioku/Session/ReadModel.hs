@@ -8,6 +8,7 @@ module Kioku.Session.ReadModel
     SessionsByFocusQuery (..),
     SessionsByStartedRangeQuery (..),
     SessionChainQuery (..),
+    SessionDelegationChildrenQuery (..),
     TurnsBySessionQuery (..),
     sessionByIdReadModel,
     sessionsByNamespaceReadModel,
@@ -15,6 +16,7 @@ module Kioku.Session.ReadModel
     sessionsByFocusReadModel,
     sessionsByStartedRangeReadModel,
     sessionChainReadModel,
+    sessionDelegationChildrenReadModel,
     turnsBySessionReadModel,
   )
 where
@@ -43,6 +45,8 @@ data SessionRow = SessionRow
     scopeRef :: !(Maybe Text),
     subjectRef :: !(Maybe Text),
     previousSessionId :: !(Maybe Text),
+    parentSessionId :: !(Maybe Text),
+    delegationDepth :: !Int,
     status :: !Text,
     startedAt :: !UTCTime,
     completedAt :: !(Maybe UTCTime),
@@ -76,6 +80,8 @@ data SessionsByFocusQuery = SessionsByFocusQuery Text Text
 data SessionsByStartedRangeQuery = SessionsByStartedRangeQuery Text UTCTime UTCTime
 
 newtype SessionChainQuery = SessionChainQuery Text
+
+newtype SessionDelegationChildrenQuery = SessionDelegationChildrenQuery Text
 
 newtype TurnsBySessionQuery = TurnsBySessionQuery Text
 
@@ -112,6 +118,8 @@ startedRow d =
       scopeRef = scopeRefText d.scope,
       subjectRef = d.subjectRef,
       previousSessionId = idText <$> d.previousSessionId,
+      parentSessionId = idText <$> d.parentSessionId,
+      delegationDepth = d.delegationDepth,
       status = "running",
       startedAt = d.startedAt,
       completedAt = Nothing,
@@ -131,6 +139,8 @@ interactiveRow d =
       scopeRef = scopeRefText d.scope,
       subjectRef = d.subjectRef,
       previousSessionId = Nothing,
+      parentSessionId = Nothing,
+      delegationDepth = 0,
       status = "interactive",
       startedAt = d.startedAt,
       completedAt = Nothing,
@@ -159,8 +169,8 @@ sessionByIdReadModel =
     { name = "kioku-session-by-id",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 1,
-      shapeHash = "kioku-session-v1",
+      version = 2,
+      shapeHash = "kioku-session-v2",
       defaultConsistency = Eventual,
       query = \(SessionByIdQuery sid) -> Tx.statement sid selectSessionByIdStmt
     }
@@ -171,8 +181,8 @@ sessionsByNamespaceReadModel =
     { name = "kioku-sessions-by-namespace",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 1,
-      shapeHash = "kioku-session-v1",
+      version = 2,
+      shapeHash = "kioku-session-v2",
       defaultConsistency = Eventual,
       query = \q -> Tx.statement q selectSessionsByNamespaceStmt
     }
@@ -183,8 +193,8 @@ sessionsByScopeReadModel =
     { name = "kioku-sessions-by-scope",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 1,
-      shapeHash = "kioku-session-v1",
+      version = 2,
+      shapeHash = "kioku-session-v2",
       defaultConsistency = Eventual,
       query = \q -> Tx.statement q selectSessionsByScopeStmt
     }
@@ -195,8 +205,8 @@ sessionsByFocusReadModel =
     { name = "kioku-sessions-by-focus",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 1,
-      shapeHash = "kioku-session-v1",
+      version = 2,
+      shapeHash = "kioku-session-v2",
       defaultConsistency = Eventual,
       query = \q -> Tx.statement q selectSessionsByFocusStmt
     }
@@ -207,8 +217,8 @@ sessionsByStartedRangeReadModel =
     { name = "kioku-sessions-by-started-range",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 1,
-      shapeHash = "kioku-session-v1",
+      version = 2,
+      shapeHash = "kioku-session-v2",
       defaultConsistency = Eventual,
       query = \q -> Tx.statement q selectSessionsByStartedRangeStmt
     }
@@ -219,10 +229,22 @@ sessionChainReadModel =
     { name = "kioku-session-chain",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 1,
-      shapeHash = "kioku-session-v1",
+      version = 2,
+      shapeHash = "kioku-session-v2",
       defaultConsistency = Eventual,
       query = \(SessionChainQuery sid) -> Tx.statement sid selectSessionChainStmt
+    }
+
+sessionDelegationChildrenReadModel :: ReadModel SessionDelegationChildrenQuery [SessionRow]
+sessionDelegationChildrenReadModel =
+  ReadModel
+    { name = "kioku-session-delegation-children",
+      tableName = "kioku_sessions",
+      subscriptionName = "kioku-session-inline",
+      version = 2,
+      shapeHash = "kioku-session-v2",
+      defaultConsistency = Eventual,
+      query = \(SessionDelegationChildrenQuery sid) -> Tx.statement sid selectDelegationChildrenStmt
     }
 
 turnsBySessionReadModel :: ReadModel TurnsBySessionQuery [TurnRow]
@@ -248,6 +270,8 @@ sessionRowDecoder =
     <*> D.column (D.nullable D.text)
     <*> D.column (D.nullable D.text)
     <*> D.column (D.nullable D.text)
+    <*> D.column (D.nullable D.text)
+    <*> (fromIntegral @Int32 @Int <$> D.column (D.nonNullable D.int4))
     <*> D.column (D.nonNullable D.text)
     <*> D.column (D.nonNullable D.timestamptz)
     <*> D.column (D.nullable D.timestamptz)
@@ -273,7 +297,8 @@ selectSessionByIdStmt =
   preparable
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+           previous_session_id, parent_session_id, delegation_depth, status, started_at,
+           completed_at, model_used, summary, error_message
     FROM kioku_sessions
     WHERE session_id = $1
     """
@@ -285,7 +310,8 @@ selectSessionsByNamespaceStmt =
   preparable
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+           previous_session_id, parent_session_id, delegation_depth, status, started_at,
+           completed_at, model_used, summary, error_message
     FROM kioku_sessions
     WHERE namespace = $1
     ORDER BY started_at DESC
@@ -301,7 +327,8 @@ selectSessionsByScopeStmt =
   preparable
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+           previous_session_id, parent_session_id, delegation_depth, status, started_at,
+           completed_at, model_used, summary, error_message
     FROM kioku_sessions
     WHERE namespace = $1
       AND scope_kind IS NOT DISTINCT FROM $2
@@ -319,7 +346,8 @@ selectSessionsByFocusStmt =
   preparable
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+           previous_session_id, parent_session_id, delegation_depth, status, started_at,
+           completed_at, model_used, summary, error_message
     FROM kioku_sessions
     WHERE namespace = $1
       AND focus = $2
@@ -335,7 +363,8 @@ selectSessionsByStartedRangeStmt =
   preparable
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+           previous_session_id, parent_session_id, delegation_depth, status, started_at,
+           completed_at, model_used, summary, error_message
     FROM kioku_sessions
     WHERE namespace = $1
       AND started_at >= $2
@@ -354,19 +383,36 @@ selectSessionChainStmt =
     """
     WITH RECURSIVE chain AS (
       SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-             previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+             previous_session_id, parent_session_id, delegation_depth, status, started_at,
+             completed_at, model_used, summary, error_message
       FROM kioku_sessions
       WHERE session_id = $1
       UNION ALL
       SELECT s.session_id, s.agent_id, s.focus, s.namespace, s.scope_kind, s.scope_ref, s.subject_ref,
-             s.previous_session_id, s.status, s.started_at, s.completed_at, s.model_used, s.summary, s.error_message
+             s.previous_session_id, s.parent_session_id, s.delegation_depth, s.status, s.started_at,
+             s.completed_at, s.model_used, s.summary, s.error_message
       FROM kioku_sessions s
       INNER JOIN chain c ON s.session_id = c.previous_session_id
     )
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, status, started_at, completed_at, model_used, summary, error_message
+           previous_session_id, parent_session_id, delegation_depth, status, started_at,
+           completed_at, model_used, summary, error_message
     FROM chain
     ORDER BY started_at ASC
+    """
+    (E.param (E.nonNullable E.text))
+    (D.rowList sessionRowDecoder)
+
+selectDelegationChildrenStmt :: Statement Text [SessionRow]
+selectDelegationChildrenStmt =
+  preparable
+    """
+    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
+           previous_session_id, parent_session_id, delegation_depth, status, started_at,
+           completed_at, model_used, summary, error_message
+    FROM kioku_sessions
+    WHERE parent_session_id = $1
+    ORDER BY started_at ASC, session_id ASC
     """
     (E.param (E.nonNullable E.text))
     (D.rowList sessionRowDecoder)
@@ -390,8 +436,9 @@ upsertSessionStmt =
     """
     INSERT INTO kioku_sessions
       (session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-       previous_session_id, status, started_at, completed_at, model_used, summary, error_message, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+       previous_session_id, parent_session_id, delegation_depth, status, started_at,
+       completed_at, model_used, summary, error_message, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
     ON CONFLICT (session_id) DO UPDATE SET
       agent_id = EXCLUDED.agent_id,
       focus = EXCLUDED.focus,
@@ -400,6 +447,8 @@ upsertSessionStmt =
       scope_ref = EXCLUDED.scope_ref,
       subject_ref = EXCLUDED.subject_ref,
       previous_session_id = EXCLUDED.previous_session_id,
+      parent_session_id = EXCLUDED.parent_session_id,
+      delegation_depth = EXCLUDED.delegation_depth,
       status = EXCLUDED.status,
       started_at = EXCLUDED.started_at,
       completed_at = EXCLUDED.completed_at,
@@ -421,6 +470,8 @@ sessionRowEncoder =
     <> ((\row -> row.scopeRef) >$< E.param (E.nullable E.text))
     <> ((\row -> row.subjectRef) >$< E.param (E.nullable E.text))
     <> ((\row -> row.previousSessionId) >$< E.param (E.nullable E.text))
+    <> ((\row -> row.parentSessionId) >$< E.param (E.nullable E.text))
+    <> ((\row -> fromIntegral @Int @Int32 row.delegationDepth) >$< E.param (E.nonNullable E.int4))
     <> ((\row -> row.status) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.startedAt) >$< E.param (E.nonNullable E.timestamptz))
     <> ((\row -> row.completedAt) >$< E.param (E.nullable E.timestamptz))

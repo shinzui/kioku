@@ -96,6 +96,8 @@ parseLegacySessionStarted =
       <*> pure (sessionScope intentionId)
       <*> o .:? "focusTarget"
       <*> pure previousSessionId
+      <*> pure Nothing
+      <*> pure 0
       <*> o .: "startedAt"
 
 parseLegacySessionCompleted :: Value -> Parser SessionCompletedData
