@@ -91,9 +91,11 @@ This section must always reflect the actual current state of the work.
 - [x] M4 — Command API: add `awaitInput`, `resume`, and `getAwaitingByCorrelationKey` to
   `kioku-core/src/Kioku/Session.hs`, with the running/awaiting guards and idempotent resume.
   Completed 2026-06-27 after `cabal build kioku-core` succeeded.
-- [ ] M5 — Tests: add `kioku-core/test/Kioku/AwaitingSpec.hs` exercising park → query → resume,
+- [x] M5 — Tests: add `kioku-core/test/Kioku/AwaitingSpec.hs` exercising park → query → resume,
   aggregate reconstruction after a simulated crash, and idempotent re-delivery; wire it into
   `kioku-core/test/Main.hs` and the test-suite stanza in `kioku-core/kioku-core.cabal`.
+  Completed 2026-06-27 after `cabal test kioku-test` passed all 16 tests, including the seven
+  awaiting park-and-resume cases.
 
 
 ## Surprises & Discoveries
@@ -208,6 +210,30 @@ Record every decision made while working on the plan.
   unrecoverable during event replay. Flattening the command keeps `SessionAwaiting` flat on the
   durable wire and preserves aggregate reconstitution.
   Date: 2026-06-27
+
+
+## Outcomes & Retrospective
+
+2026-06-27: Implemented the awaiting lifecycle end to end. Kioku now has a live `Awaiting`
+session vertex, `AwaitInput` and `ResumeSession` commands, `SessionAwaiting` and
+`SessionResumed` events, durable codec registration, read-model projection columns, an
+awaiting-by-correlation-key query, and public `Session.awaitInput`, `Session.resume`, and
+`Session.getAwaitingByCorrelationKey` functions. The command API can also complete or fail an
+awaiting session directly, and those terminal projections clear the active park columns.
+
+Validation passed with:
+
+```text
+cabal build kioku-core
+just migrate
+psql -h "$PGHOST" -d "$PGDATABASE" -c "\d+ kiroku.kioku_sessions" | rg 'awaiting|resume_input'
+cabal test kioku-test
+```
+
+The final test run reported `All 16 tests passed`, including the seven new
+`Awaiting park-and-resume` cases. The main implementation lesson is that Keiki command payloads
+used by emitted events must expose recoverable fields directly; hiding a nested record behind
+derived projections breaks command recovery during replay.
 
 
 ## Context and Orientation

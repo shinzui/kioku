@@ -101,6 +101,7 @@ test-suite kioku-test
   type:           exitcode-stdio-1.0
   main-is:        Main.hs
   other-modules:
+    Kioku.AwaitingSpec
     Kioku.DistillSpec
     Kioku.EmbeddingWorkerSpec
     Kioku.RecallSpec

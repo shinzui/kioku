@@ -1,5 +1,6 @@
 module Main where
 
+import Kioku.AwaitingSpec qualified as AwaitingSpec
 import Kioku.DistillSpec qualified as DistillSpec
 import Kioku.EmbeddingWorkerSpec qualified as EmbeddingWorkerSpec
 import Kioku.RecallSpec qualified as RecallSpec
@@ -12,7 +13,8 @@ main =
   defaultMain $
     testGroup
       "kioku"
-      [ ReiCompatSpec.tests,
+      [ AwaitingSpec.tests,
+        ReiCompatSpec.tests,
         RecallSpec.tests,
         SessionLineageSpec.tests,
         EmbeddingWorkerSpec.tests,
