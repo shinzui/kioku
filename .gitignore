@@ -12,3 +12,4 @@ db/
 result
 result-*
 .pre-commit-config.yaml
+.mina/
