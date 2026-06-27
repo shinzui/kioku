@@ -78,13 +78,19 @@ This section must always reflect the actual current state of the work.
 - [x] M2 — Codec: register the two new event types in
   `kioku-core/src/Kioku/Session/EventStream.hs` so they round-trip through the durable log.
   Completed 2026-06-27 after `cabal build kioku-core` succeeded.
-- [ ] M3 — Read model + migration: add the awaiting columns to `kioku_sessions` (new migration
+- [x] M3 — Read model + migration: add the awaiting columns to `kioku_sessions` (new migration
   under `kioku-migrations/sql-migrations/`), extend `SessionRow`, project the two new events,
   add an awaiting-by-correlation-key query, clear park columns when an awaiting session completes
   or fails, and bump the session read-model shape to version 3 in
-  `kioku-core/src/Kioku/Session/ReadModel.hs`.
-- [ ] M4 — Command API: add `awaitInput`, `resume`, and `getAwaitingByCorrelationKey` to
+  `kioku-core/src/Kioku/Session/ReadModel.hs`. Completed 2026-06-27 after
+  `cabal build kioku-core` succeeded; migration file
+  `kioku-migrations/sql-migrations/2026-06-27-21-10-35-kioku-awaiting-session-state.sql`
+  was scaffolded, filled in, and applied successfully with `just migrate`. A `psql \d+`
+  spot-check showed `awaiting_reason`, `awaiting_correlation_key`, `awaiting_deadline`,
+  `resume_input`, and `kioku_sessions_awaiting_corr_idx`.
+- [x] M4 — Command API: add `awaitInput`, `resume`, and `getAwaitingByCorrelationKey` to
   `kioku-core/src/Kioku/Session.hs`, with the running/awaiting guards and idempotent resume.
+  Completed 2026-06-27 after `cabal build kioku-core` succeeded.
 - [ ] M5 — Tests: add `kioku-core/test/Kioku/AwaitingSpec.hs` exercising park → query → resume,
   aggregate reconstruction after a simulated crash, and idempotent re-delivery; wire it into
   `kioku-core/test/Main.hs` and the test-suite stanza in `kioku-core/kioku-core.cabal`.
@@ -109,6 +115,21 @@ No instance for HasField "reason" (Keiki.Core.Term ... Continuation) ...
   implementation therefore keeps `Continuation` as an exported semantic payload type but makes
   `AwaitInputData` carry `reason`, `correlationKey`, and `deadline` as top-level fields so the
   `SessionAwaiting` event can recover the command during replay.
+
+- 2026-06-27: The checked-in `Justfile` defines `new-migration name=""` as a positional recipe
+  parameter. Running `just new-migration name=kioku-awaiting-session-state` passes the literal
+  text `name=...` to the recipe and fails validation; the working command is:
+
+```text
+just new-migration kioku-awaiting-session-state
+```
+
+- 2026-06-27: Kioku migrations are embedded with `file-embed`, so adding a new SQL file is not
+  enough to make `kioku-migrate` see it if `Kioku.Migrations` does not recompile. The first
+  `just migrate` run was clean but reported only the older delegation migration as pending.
+  Touching the marker comment above `embeddedKiokuFiles` in
+  `kioku-migrations/src/Kioku/Migrations.hs` forced recompilation, and the next `just migrate`
+  applied `2026-06-27-21-10-35-kioku-awaiting-session-state.sql`.
 
 
 ## Decision Log
@@ -261,7 +282,7 @@ kiroku, pg_catalog;`). Migrations are managed by **codd** (a Haskell migration t
 begins with the directive `-- codd: in-txn` (run inside a transaction) and contains idempotent
 DDL (`CREATE … IF NOT EXISTS`, and for us `ALTER TABLE … ADD COLUMN IF NOT EXISTS`). Migrations
 are embedded into the `kioku-migrate` executable and applied with `just migrate`; the
-`Justfile` recipe `just new-migration name=<slug>` scaffolds a correctly named, timestamped
+`Justfile` recipe `just new-migration <slug>` scaffolds a correctly named, timestamped
 file.
 
 **Ids.** `SessionId` is defined in `kioku-api/src/Kioku/Id.hs` as `KindID "kioku_session"`;
@@ -460,7 +481,7 @@ the new events arrive, and a query can find awaiting sessions by correlation key
 Create the migration with the Justfile scaffolder (from the repo root):
 
 ```bash
-just new-migration name=kioku-awaiting-session-state
+just new-migration kioku-awaiting-session-state
 ```
 
 Edit the generated file (path `kioku-migrations/sql-migrations/<timestamp>-kioku-awaiting-session-state.sql`)
@@ -763,7 +784,7 @@ Scaffold and apply the migration (Milestone 3). First create the dev database if
 exist, then run migrations:
 
 ```bash
-just new-migration name=kioku-awaiting-session-state
+just new-migration kioku-awaiting-session-state
 # edit the generated sql-migrations/<timestamp>-kioku-awaiting-session-state.sql per the plan
 just create-database   # idempotent: creates the DB if missing, then runs `just migrate`
 just migrate           # re-running is safe; ALTER TABLE ... IF NOT EXISTS is idempotent
@@ -820,10 +841,10 @@ All N tests passed
 Acceptance is behavioral, demonstrated by the Milestone-5 tests against a real Postgres. The
 load-bearing observations:
 
-- **Park is visible in the read model.** After `Session.start` then `Session.awaitInput` with a
-  `Continuation { reason = "approval", correlationKey = Just "approval_req_1", deadline =
-  Nothing }`, `Session.getById sid` returns a row with `status == "awaiting"`, `awaitingReason
-  == Just "approval"`, and `awaitingCorrelationKey == Just "approval_req_1"`.
+- **Park is visible in the read model.** After `Session.start` then `Session.awaitInput` with
+  `AwaitInputData { reason = "approval", correlationKey = Just "approval_req_1", deadline =
+  Nothing, ... }`, `Session.getById sid` returns a row with `status == "awaiting"`,
+  `awaitingReason == Just "approval"`, and `awaitingCorrelationKey == Just "approval_req_1"`.
 
 - **Park is durable in the log.** Reading the entity stream with
   `Kiroku.Store.Read.readStreamForward (Stream.streamName (sessionStream sid)) (StreamVersion

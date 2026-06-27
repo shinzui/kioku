@@ -69,6 +69,8 @@ timerRequestsForEvent = \case
     [l1TimerRequest d.sessionId "final" d.completedAt Nothing]
   SessionFailed d ->
     [l1TimerRequest d.sessionId "final" (failedAt d) Nothing]
+  SessionAwaiting _ -> []
+  SessionResumed _ -> []
   TurnRecorded d ->
     let idle = l1TimerRequest d.sessionId "idle" (addUTCTime idleFlushSeconds d.recordedAt) (Just d.turnIndex)
         ramp = l1TimerRequest d.sessionId "ramp" d.recordedAt (Just d.turnIndex)

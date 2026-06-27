@@ -2,6 +2,8 @@ module Kioku.Session
   ( SessionRow (..),
     SessionWriteError (..),
     start,
+    awaitInput,
+    resume,
     complete,
     failSession,
     recordInteractive,
@@ -13,6 +15,7 @@ module Kioku.Session
     getByStartedRange,
     getChain,
     getDelegationChildren,
+    getAwaitingByCorrelationKey,
     getTurns,
   )
 where
@@ -29,7 +32,8 @@ import Kioku.Prelude
 import Kioku.Session.Domain
 import Kioku.Session.EventStream (sessionEventStream, sessionStream)
 import Kioku.Session.ReadModel
-  ( SessionByIdQuery (..),
+  ( AwaitingSessionsByCorrelationKeyQuery (..),
+    SessionByIdQuery (..),
     SessionChainQuery (..),
     SessionDelegationChildrenQuery (..),
     SessionRow (..),
@@ -39,6 +43,7 @@ import Kioku.Session.ReadModel
     SessionsByStartedRangeQuery (..),
     TurnRow,
     TurnsBySessionQuery (..),
+    awaitingSessionsByCorrelationKeyReadModel,
     sessionByIdReadModel,
     sessionChainReadModel,
     sessionDelegationChildrenReadModel,
@@ -57,6 +62,8 @@ data SessionWriteError
   | SessionReadFailed !ReadModelError
   | SessionNotFound
   | SessionNotRunning
+  | SessionNotAwaiting
+  | SessionCorrelationMismatch
   deriving stock (Generic, Show)
 
 start ::
@@ -80,8 +87,8 @@ complete cmdData = do
     Left err -> pure (Left (SessionReadFailed err))
     Right Nothing -> pure (Left SessionNotFound)
     Right (Just row)
-      | row.status /= "running" -> pure (Right cmdData.sessionId)
-      | otherwise -> runSessionCommand cmdData.sessionId (CompleteSession cmdData)
+      | row.status == "running" || row.status == "awaiting" -> runSessionCommand cmdData.sessionId (CompleteSession cmdData)
+      | otherwise -> pure (Right cmdData.sessionId)
 
 failSession ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
@@ -93,8 +100,42 @@ failSession cmdData = do
     Left err -> pure (Left (SessionReadFailed err))
     Right Nothing -> pure (Left SessionNotFound)
     Right (Just row)
-      | row.status /= "running" -> pure (Right cmdData.sessionId)
-      | otherwise -> runSessionCommand cmdData.sessionId (FailSession cmdData)
+      | row.status == "running" || row.status == "awaiting" -> runSessionCommand cmdData.sessionId (FailSession cmdData)
+      | otherwise -> pure (Right cmdData.sessionId)
+
+awaitInput ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  AwaitInputData ->
+  Eff es (Either SessionWriteError SessionId)
+awaitInput cmdData = do
+  existing <- getById cmdData.sessionId
+  case existing of
+    Left err -> pure (Left (SessionReadFailed err))
+    Right Nothing -> pure (Left SessionNotFound)
+    Right (Just row)
+      | row.status == "awaiting" -> pure (Right cmdData.sessionId)
+      | row.status /= "running" -> pure (Left SessionNotRunning)
+      | otherwise -> runSessionCommand cmdData.sessionId (AwaitInput cmdData)
+
+resume ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  ResumeSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+resume cmdData = do
+  existing <- getById cmdData.sessionId
+  case existing of
+    Left err -> pure (Left (SessionReadFailed err))
+    Right Nothing -> pure (Left SessionNotFound)
+    Right (Just row)
+      | row.status == "running" -> pure (Right cmdData.sessionId)
+      | row.status /= "awaiting" -> pure (Left SessionNotAwaiting)
+      | not (correlationMatches row cmdData) -> pure (Left SessionCorrelationMismatch)
+      | otherwise -> runSessionCommand cmdData.sessionId (ResumeSession cmdData)
+  where
+    correlationMatches row d =
+      case d.correlationKey of
+        Nothing -> True
+        Just key -> row.awaitingCorrelationKey == Just key
 
 recordInteractive ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
@@ -176,6 +217,14 @@ getDelegationChildren ::
   Eff es (Either ReadModelError [SessionRow])
 getDelegationChildren sid =
   runQueryWith Nothing Eventual sessionDelegationChildrenReadModel (SessionDelegationChildrenQuery (idText sid))
+
+getAwaitingByCorrelationKey ::
+  (IOE :> es, Store :> es) =>
+  Namespace ->
+  Text ->
+  Eff es (Either ReadModelError [SessionRow])
+getAwaitingByCorrelationKey ns correlationKey =
+  runQueryWith Nothing Eventual awaitingSessionsByCorrelationKeyReadModel (AwaitingSessionsByCorrelationKeyQuery (namespaceText ns) correlationKey)
 
 namespaceText :: Namespace -> Text
 namespaceText (Namespace ns) = ns

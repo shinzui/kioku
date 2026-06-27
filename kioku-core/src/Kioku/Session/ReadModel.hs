@@ -9,6 +9,7 @@ module Kioku.Session.ReadModel
     SessionsByStartedRangeQuery (..),
     SessionChainQuery (..),
     SessionDelegationChildrenQuery (..),
+    AwaitingSessionsByCorrelationKeyQuery (..),
     TurnsBySessionQuery (..),
     sessionByIdReadModel,
     sessionsByNamespaceReadModel,
@@ -17,11 +18,12 @@ module Kioku.Session.ReadModel
     sessionsByStartedRangeReadModel,
     sessionChainReadModel,
     sessionDelegationChildrenReadModel,
+    awaitingSessionsByCorrelationKeyReadModel,
     turnsBySessionReadModel,
   )
 where
 
-import Contravariant.Extras (contrazip3, contrazip4)
+import Contravariant.Extras (contrazip2, contrazip3, contrazip4)
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int32)
 import Hasql.Decoders qualified as D
@@ -52,7 +54,11 @@ data SessionRow = SessionRow
     completedAt :: !(Maybe UTCTime),
     modelUsed :: !(Maybe Text),
     summary :: !(Maybe Text),
-    errorMessage :: !(Maybe Text)
+    errorMessage :: !(Maybe Text),
+    awaitingReason :: !(Maybe Text),
+    awaitingCorrelationKey :: !(Maybe Text),
+    awaitingDeadline :: !(Maybe UTCTime),
+    resumeInput :: !(Maybe Text)
   }
   deriving stock (Generic, Eq, Show)
 
@@ -83,6 +89,8 @@ newtype SessionChainQuery = SessionChainQuery Text
 
 newtype SessionDelegationChildrenQuery = SessionDelegationChildrenQuery Text
 
+data AwaitingSessionsByCorrelationKeyQuery = AwaitingSessionsByCorrelationKeyQuery Text Text
+
 newtype TurnsBySessionQuery = TurnsBySessionQuery Text
 
 sessionInlineProjection :: InlineProjection SessionEvent
@@ -105,6 +113,14 @@ applySessionEvent event _recorded =
       Tx.statement
         (idText d.sessionId, d.failedAt, d.errorMessage)
         updateSessionFailedStmt
+    SessionAwaiting d ->
+      Tx.statement
+        (idText d.sessionId, d.reason, d.correlationKey, d.deadline)
+        updateSessionAwaitingStmt
+    SessionResumed d ->
+      Tx.statement
+        (idText d.sessionId, d.input)
+        updateSessionResumedStmt
     TurnRecorded d -> Tx.statement (turnRow d) insertTurnStmt
 
 startedRow :: SessionStartedData -> SessionRow
@@ -125,7 +141,11 @@ startedRow d =
       completedAt = Nothing,
       modelUsed = Nothing,
       summary = Nothing,
-      errorMessage = Nothing
+      errorMessage = Nothing,
+      awaitingReason = Nothing,
+      awaitingCorrelationKey = Nothing,
+      awaitingDeadline = Nothing,
+      resumeInput = Nothing
     }
 
 interactiveRow :: InteractiveSessionRecordedData -> SessionRow
@@ -146,7 +166,11 @@ interactiveRow d =
       completedAt = Nothing,
       modelUsed = Nothing,
       summary = Nothing,
-      errorMessage = Nothing
+      errorMessage = Nothing,
+      awaitingReason = Nothing,
+      awaitingCorrelationKey = Nothing,
+      awaitingDeadline = Nothing,
+      resumeInput = Nothing
     }
 
 turnRow :: TurnRecordedData -> TurnRow
@@ -169,8 +193,8 @@ sessionByIdReadModel =
     { name = "kioku-session-by-id",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 2,
-      shapeHash = "kioku-session-v2",
+      version = 3,
+      shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
       query = \(SessionByIdQuery sid) -> Tx.statement sid selectSessionByIdStmt
     }
@@ -181,8 +205,8 @@ sessionsByNamespaceReadModel =
     { name = "kioku-sessions-by-namespace",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 2,
-      shapeHash = "kioku-session-v2",
+      version = 3,
+      shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
       query = \q -> Tx.statement q selectSessionsByNamespaceStmt
     }
@@ -193,8 +217,8 @@ sessionsByScopeReadModel =
     { name = "kioku-sessions-by-scope",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 2,
-      shapeHash = "kioku-session-v2",
+      version = 3,
+      shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
       query = \q -> Tx.statement q selectSessionsByScopeStmt
     }
@@ -205,8 +229,8 @@ sessionsByFocusReadModel =
     { name = "kioku-sessions-by-focus",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 2,
-      shapeHash = "kioku-session-v2",
+      version = 3,
+      shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
       query = \q -> Tx.statement q selectSessionsByFocusStmt
     }
@@ -217,8 +241,8 @@ sessionsByStartedRangeReadModel =
     { name = "kioku-sessions-by-started-range",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 2,
-      shapeHash = "kioku-session-v2",
+      version = 3,
+      shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
       query = \q -> Tx.statement q selectSessionsByStartedRangeStmt
     }
@@ -229,8 +253,8 @@ sessionChainReadModel =
     { name = "kioku-session-chain",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 2,
-      shapeHash = "kioku-session-v2",
+      version = 3,
+      shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
       query = \(SessionChainQuery sid) -> Tx.statement sid selectSessionChainStmt
     }
@@ -241,10 +265,22 @@ sessionDelegationChildrenReadModel =
     { name = "kioku-session-delegation-children",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 2,
-      shapeHash = "kioku-session-v2",
+      version = 3,
+      shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
       query = \(SessionDelegationChildrenQuery sid) -> Tx.statement sid selectDelegationChildrenStmt
+    }
+
+awaitingSessionsByCorrelationKeyReadModel :: ReadModel AwaitingSessionsByCorrelationKeyQuery [SessionRow]
+awaitingSessionsByCorrelationKeyReadModel =
+  ReadModel
+    { name = "kioku-sessions-awaiting-by-correlation-key",
+      tableName = "kioku_sessions",
+      subscriptionName = "kioku-session-inline",
+      version = 3,
+      shapeHash = "kioku-session-v3",
+      defaultConsistency = Eventual,
+      query = \q -> Tx.statement q selectAwaitingByCorrelationKeyStmt
     }
 
 turnsBySessionReadModel :: ReadModel TurnsBySessionQuery [TurnRow]
@@ -278,6 +314,10 @@ sessionRowDecoder =
     <*> D.column (D.nullable D.text)
     <*> D.column (D.nullable D.text)
     <*> D.column (D.nullable D.text)
+    <*> D.column (D.nullable D.text)
+    <*> D.column (D.nullable D.text)
+    <*> D.column (D.nullable D.timestamptz)
+    <*> D.column (D.nullable D.text)
 
 turnRowDecoder :: D.Row TurnRow
 turnRowDecoder =
@@ -298,7 +338,8 @@ selectSessionByIdStmt =
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
            previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message
+           completed_at, model_used, summary, error_message,
+           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
     FROM kioku_sessions
     WHERE session_id = $1
     """
@@ -311,7 +352,8 @@ selectSessionsByNamespaceStmt =
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
            previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message
+           completed_at, model_used, summary, error_message,
+           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
     FROM kioku_sessions
     WHERE namespace = $1
     ORDER BY started_at DESC
@@ -328,7 +370,8 @@ selectSessionsByScopeStmt =
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
            previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message
+           completed_at, model_used, summary, error_message,
+           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
     FROM kioku_sessions
     WHERE namespace = $1
       AND scope_kind IS NOT DISTINCT FROM $2
@@ -347,7 +390,8 @@ selectSessionsByFocusStmt =
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
            previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message
+           completed_at, model_used, summary, error_message,
+           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
     FROM kioku_sessions
     WHERE namespace = $1
       AND focus = $2
@@ -364,7 +408,8 @@ selectSessionsByStartedRangeStmt =
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
            previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message
+           completed_at, model_used, summary, error_message,
+           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
     FROM kioku_sessions
     WHERE namespace = $1
       AND started_at >= $2
@@ -384,19 +429,22 @@ selectSessionChainStmt =
     WITH RECURSIVE chain AS (
       SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
              previous_session_id, parent_session_id, delegation_depth, status, started_at,
-             completed_at, model_used, summary, error_message
+             completed_at, model_used, summary, error_message,
+           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
       FROM kioku_sessions
       WHERE session_id = $1
       UNION ALL
       SELECT s.session_id, s.agent_id, s.focus, s.namespace, s.scope_kind, s.scope_ref, s.subject_ref,
              s.previous_session_id, s.parent_session_id, s.delegation_depth, s.status, s.started_at,
-             s.completed_at, s.model_used, s.summary, s.error_message
+             s.completed_at, s.model_used, s.summary, s.error_message,
+             s.awaiting_reason, s.awaiting_correlation_key, s.awaiting_deadline, s.resume_input
       FROM kioku_sessions s
       INNER JOIN chain c ON s.session_id = c.previous_session_id
     )
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
            previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message
+           completed_at, model_used, summary, error_message,
+           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
     FROM chain
     ORDER BY started_at ASC
     """
@@ -409,7 +457,8 @@ selectDelegationChildrenStmt =
     """
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
            previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message
+           completed_at, model_used, summary, error_message,
+           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
     FROM kioku_sessions
     WHERE parent_session_id = $1
     ORDER BY started_at ASC, session_id ASC
@@ -437,8 +486,9 @@ upsertSessionStmt =
     INSERT INTO kioku_sessions
       (session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
        previous_session_id, parent_session_id, delegation_depth, status, started_at,
-       completed_at, model_used, summary, error_message, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+       completed_at, model_used, summary, error_message,
+       awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
     ON CONFLICT (session_id) DO UPDATE SET
       agent_id = EXCLUDED.agent_id,
       focus = EXCLUDED.focus,
@@ -455,6 +505,10 @@ upsertSessionStmt =
       model_used = EXCLUDED.model_used,
       summary = EXCLUDED.summary,
       error_message = EXCLUDED.error_message,
+      awaiting_reason = EXCLUDED.awaiting_reason,
+      awaiting_correlation_key = EXCLUDED.awaiting_correlation_key,
+      awaiting_deadline = EXCLUDED.awaiting_deadline,
+      resume_input = EXCLUDED.resume_input,
       updated_at = EXCLUDED.updated_at
     """
     sessionRowEncoder
@@ -478,11 +532,15 @@ sessionRowEncoder =
     <> ((\row -> row.modelUsed) >$< E.param (E.nullable E.text))
     <> ((\row -> row.summary) >$< E.param (E.nullable E.text))
     <> ((\row -> row.errorMessage) >$< E.param (E.nullable E.text))
+    <> ((\row -> row.awaitingReason) >$< E.param (E.nullable E.text))
+    <> ((\row -> row.awaitingCorrelationKey) >$< E.param (E.nullable E.text))
+    <> ((\row -> row.awaitingDeadline) >$< E.param (E.nullable E.timestamptz))
+    <> ((\row -> row.resumeInput) >$< E.param (E.nullable E.text))
 
 updateSessionCompletedStmt :: Statement (Text, UTCTime, Maybe Text, Maybe Text) ()
 updateSessionCompletedStmt =
   preparable
-    "UPDATE kioku_sessions SET status = 'completed', completed_at = $2, model_used = $3, summary = $4, updated_at = NOW() WHERE session_id = $1"
+    "UPDATE kioku_sessions SET status = 'completed', completed_at = $2, model_used = $3, summary = $4, awaiting_reason = NULL, awaiting_correlation_key = NULL, awaiting_deadline = NULL, updated_at = NOW() WHERE session_id = $1"
     ( contrazip4
         (E.param (E.nonNullable E.text))
         (E.param (E.nonNullable E.timestamptz))
@@ -494,13 +552,51 @@ updateSessionCompletedStmt =
 updateSessionFailedStmt :: Statement (Text, UTCTime, Text) ()
 updateSessionFailedStmt =
   preparable
-    "UPDATE kioku_sessions SET status = 'failed', completed_at = $2, error_message = $3, updated_at = NOW() WHERE session_id = $1"
+    "UPDATE kioku_sessions SET status = 'failed', completed_at = $2, error_message = $3, awaiting_reason = NULL, awaiting_correlation_key = NULL, awaiting_deadline = NULL, updated_at = NOW() WHERE session_id = $1"
     ( contrazip3
         (E.param (E.nonNullable E.text))
         (E.param (E.nonNullable E.timestamptz))
         (E.param (E.nonNullable E.text))
     )
     D.noResult
+
+updateSessionAwaitingStmt :: Statement (Text, Text, Maybe Text, Maybe UTCTime) ()
+updateSessionAwaitingStmt =
+  preparable
+    "UPDATE kioku_sessions SET status = 'awaiting', awaiting_reason = $2, awaiting_correlation_key = $3, awaiting_deadline = $4, updated_at = NOW() WHERE session_id = $1"
+    ( contrazip4
+        (E.param (E.nonNullable E.text))
+        (E.param (E.nonNullable E.text))
+        (E.param (E.nullable E.text))
+        (E.param (E.nullable E.timestamptz))
+    )
+    D.noResult
+
+updateSessionResumedStmt :: Statement (Text, Text) ()
+updateSessionResumedStmt =
+  preparable
+    "UPDATE kioku_sessions SET status = 'running', resume_input = $2, awaiting_reason = NULL, awaiting_correlation_key = NULL, awaiting_deadline = NULL, updated_at = NOW() WHERE session_id = $1"
+    (contrazip2 (E.param (E.nonNullable E.text)) (E.param (E.nonNullable E.text)))
+    D.noResult
+
+selectAwaitingByCorrelationKeyStmt :: Statement AwaitingSessionsByCorrelationKeyQuery [SessionRow]
+selectAwaitingByCorrelationKeyStmt =
+  preparable
+    """
+    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
+           previous_session_id, parent_session_id, delegation_depth, status, started_at,
+           completed_at, model_used, summary, error_message,
+           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
+    FROM kioku_sessions
+    WHERE namespace = $1
+      AND status = 'awaiting'
+      AND awaiting_correlation_key = $2
+    ORDER BY started_at DESC
+    """
+    ( ((\(AwaitingSessionsByCorrelationKeyQuery ns _) -> ns) >$< E.param (E.nonNullable E.text))
+        <> ((\(AwaitingSessionsByCorrelationKeyQuery _ k) -> k) >$< E.param (E.nonNullable E.text))
+    )
+    (D.rowList sessionRowDecoder)
 
 insertTurnStmt :: Statement TurnRow ()
 insertTurnStmt =
