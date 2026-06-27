@@ -47,6 +47,8 @@ sessionCodec =
           <$> "SessionStarted"
             :| [ "SessionCompleted",
                  "SessionFailed",
+                 "SessionAwaiting",
+                 "SessionResumed",
                  "InteractiveSessionRecorded",
                  "TurnRecorded"
                ],
@@ -55,6 +57,8 @@ sessionCodec =
           SessionStarted {} -> "SessionStarted"
           SessionCompleted {} -> "SessionCompleted"
           SessionFailed {} -> "SessionFailed"
+          SessionAwaiting {} -> "SessionAwaiting"
+          SessionResumed {} -> "SessionResumed"
           InteractiveSessionRecorded {} -> "InteractiveSessionRecorded"
           TurnRecorded {} -> "TurnRecorded",
       schemaVersion = 1,

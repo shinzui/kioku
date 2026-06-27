@@ -6,6 +6,9 @@ module Kioku.Session.Domain
     StartSessionData (..),
     CompleteSessionData (..),
     FailSessionData (..),
+    Continuation (..),
+    AwaitInputData (..),
+    ResumeSessionData (..),
     RecordInteractiveSessionData (..),
     RecordTurnData (..),
     SessionCommand (..),
@@ -13,6 +16,8 @@ module Kioku.Session.Domain
     SessionStartedData (..),
     SessionCompletedData (..),
     SessionFailedData (..),
+    SessionAwaitingData (..),
+    SessionResumedData (..),
     InteractiveSessionRecordedData (..),
     TurnRecordedData (..),
     SessionEvent (..),
@@ -30,7 +35,7 @@ import Kioku.Api.Scope (MemoryScope)
 import Kioku.Id (SessionId)
 import Kioku.Prelude
 
-data SessionVertex = NotCreated | Running | Completed | Failed | Interactive
+data SessionVertex = NotCreated | Running | Completed | Failed | Interactive | Awaiting
   deriving stock (Eq, Show, Enum, Bounded)
 
 type SessionRegs = '[]
@@ -63,6 +68,32 @@ data FailSessionData = FailSessionData
   }
   deriving stock (Generic, Eq, Show)
 
+-- | What a parked session is waiting for.
+data Continuation = Continuation
+  { reason :: !Text,
+    correlationKey :: !(Maybe Text),
+    deadline :: !(Maybe UTCTime)
+  }
+  deriving stock (Generic, Eq, Show)
+  deriving anyclass (FromJSON, ToJSON)
+
+data AwaitInputData = AwaitInputData
+  { sessionId :: !SessionId,
+    reason :: !Text,
+    correlationKey :: !(Maybe Text),
+    deadline :: !(Maybe UTCTime),
+    awaitedAt :: !UTCTime
+  }
+  deriving stock (Generic, Eq, Show)
+
+data ResumeSessionData = ResumeSessionData
+  { sessionId :: !SessionId,
+    correlationKey :: !(Maybe Text),
+    input :: !Text,
+    resumedAt :: !UTCTime
+  }
+  deriving stock (Generic, Eq, Show)
+
 data RecordInteractiveSessionData = RecordInteractiveSessionData
   { sessionId :: !SessionId,
     agentId :: !Text,
@@ -90,6 +121,8 @@ data SessionCommand
   = StartSession !StartSessionData
   | CompleteSession !CompleteSessionData
   | FailSession !FailSessionData
+  | AwaitInput !AwaitInputData
+  | ResumeSession !ResumeSessionData
   | RecordInteractiveSession !RecordInteractiveSessionData
   | RecordTurn !RecordTurnData
   deriving stock (Generic, Eq, Show)
@@ -99,6 +132,8 @@ commandSessionId = \case
   StartSession d -> d.sessionId
   CompleteSession d -> d.sessionId
   FailSession d -> d.sessionId
+  AwaitInput d -> d.sessionId
+  ResumeSession d -> d.sessionId
   RecordInteractiveSession d -> d.sessionId
   RecordTurn d -> d.sessionId
 
@@ -147,6 +182,25 @@ data SessionFailedData = SessionFailedData
   deriving stock (Generic, Eq, Show)
   deriving anyclass (FromJSON, ToJSON)
 
+data SessionAwaitingData = SessionAwaitingData
+  { sessionId :: !SessionId,
+    reason :: !Text,
+    correlationKey :: !(Maybe Text),
+    deadline :: !(Maybe UTCTime),
+    awaitedAt :: !UTCTime
+  }
+  deriving stock (Generic, Eq, Show)
+  deriving anyclass (FromJSON, ToJSON)
+
+data SessionResumedData = SessionResumedData
+  { sessionId :: !SessionId,
+    correlationKey :: !(Maybe Text),
+    input :: !Text,
+    resumedAt :: !UTCTime
+  }
+  deriving stock (Generic, Eq, Show)
+  deriving anyclass (FromJSON, ToJSON)
+
 data InteractiveSessionRecordedData = InteractiveSessionRecordedData
   { sessionId :: !SessionId,
     agentId :: !Text,
@@ -176,6 +230,8 @@ data SessionEvent
   = SessionStarted !SessionStartedData
   | SessionCompleted !SessionCompletedData
   | SessionFailed !SessionFailedData
+  | SessionAwaiting !SessionAwaitingData
+  | SessionResumed !SessionResumedData
   | InteractiveSessionRecorded !InteractiveSessionRecordedData
   | TurnRecorded !TurnRecordedData
   deriving stock (Generic, Eq, Show)
@@ -191,6 +247,8 @@ eventSessionId = \case
   SessionStarted d -> d.sessionId
   SessionCompleted d -> d.sessionId
   SessionFailed d -> d.sessionId
+  SessionAwaiting d -> d.sessionId
+  SessionResumed d -> d.sessionId
   InteractiveSessionRecorded d -> d.sessionId
   TurnRecorded d -> d.sessionId
 
@@ -272,6 +330,51 @@ sessionTransducer =
               recordedAt = d.recordedAt
             }
         B.goto Running
+
+      B.onCmd inCtorAwaitInput $ \d -> B.do
+        B.emit
+          wireSessionAwaiting
+          SessionAwaitingTermFields
+            { sessionId = d.sessionId,
+              reason = d.reason,
+              correlationKey = d.correlationKey,
+              deadline = d.deadline,
+              awaitedAt = d.awaitedAt
+            }
+        B.goto Awaiting
+
+    B.from Awaiting do
+      B.onCmd inCtorResumeSession $ \d -> B.do
+        B.emit
+          wireSessionResumed
+          SessionResumedTermFields
+            { sessionId = d.sessionId,
+              correlationKey = d.correlationKey,
+              input = d.input,
+              resumedAt = d.resumedAt
+            }
+        B.goto Running
+
+      B.onCmd inCtorCompleteSession $ \d -> B.do
+        B.emit
+          wireSessionCompleted
+          SessionCompletedTermFields
+            { sessionId = d.sessionId,
+              completedAt = d.completedAt,
+              modelUsed = d.modelUsed,
+              summary = d.summary
+            }
+        B.goto Completed
+
+      B.onCmd inCtorFailSession $ \d -> B.do
+        B.emit
+          wireSessionFailed
+          SessionFailedTermFields
+            { sessionId = d.sessionId,
+              failedAt = d.failedAt,
+              errorMessage = d.errorMessage
+            }
+        B.goto Failed
   where
     isTerminal = \case
       Completed -> True
