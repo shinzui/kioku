@@ -5,7 +5,8 @@ library for the kikan ecosystem. It gives any agent platform one shared engine f
 
 - **Durable memory** — facts, patterns, preferences, constraints, and instructions an agent
   learns, stored as an event-sourced aggregate (the kiroku event stream is the source of truth).
-- **Sessions** — a record of an agent's runs, optionally capturing raw conversation **turns**.
+- **Sessions** — event-sourced agent runs with turn capture, delegation lineage, and
+  park-and-resume state for external input.
 - **Hybrid recall** — Postgres full-text search fused with `pgvector` semantic similarity via
   Reciprocal Rank Fusion (RRF), tuned by recency, priority, and confidence.
 - **A distillation pyramid** — raw evidence (L0) is distilled by LLM programs into memory

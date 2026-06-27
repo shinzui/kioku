@@ -130,6 +130,8 @@ result <- Memory.record payload
 
 ```haskell
 start           :: StartSessionData              -> Eff es (Either SessionWriteError SessionId)
+awaitInput      :: AwaitInputData                -> Eff es (Either SessionWriteError SessionId)
+resume          :: ResumeSessionData             -> Eff es (Either SessionWriteError SessionId)
 complete        :: CompleteSessionData           -> Eff es (Either SessionWriteError SessionId)
 failSession     :: FailSessionData               -> Eff es (Either SessionWriteError SessionId)
 recordInteractive :: RecordInteractiveSessionData -> Eff es (Either SessionWriteError SessionId)
@@ -145,13 +147,88 @@ getByScope          :: MemoryScope        -> Eff es (Either ReadModelError [Sess
 getByFocus          :: Namespace -> Text  -> Eff es (Either ReadModelError [SessionRow])
 getByStartedRange   :: Namespace -> UTCTime -> UTCTime -> Eff es (Either ReadModelError [SessionRow])
 getChain            :: SessionId          -> Eff es (Either ReadModelError [SessionRow])
+getDelegationChildren:: SessionId         -> Eff es (Either ReadModelError [SessionRow])
+getAwaitingByCorrelationKey:: Namespace -> Text -> Eff es (Either ReadModelError [SessionRow])
 getTurns            :: SessionId          -> Eff es (Either ReadModelError [TurnRow])
 ```
 
-Lifecycle: `start` → `running`; then `complete` or `failSession`. `recordTurn` only succeeds
-while a session is `running` (`SessionNotRunning` otherwise). `recordInteractive` captures a
-finished interactive conversation in one event. Turns recorded here are the **L0 evidence** the
-distillation pyramid consumes — see [Distillation](distillation.md).
+`StartSessionData` includes both continuation and delegation links:
+
+```haskell
+data StartSessionData = StartSessionData
+  { sessionId         :: SessionId
+  , agentId           :: Text
+  , focus             :: Text
+  , scope             :: MemoryScope
+  , subjectRef        :: Maybe Text
+  , previousSessionId :: Maybe SessionId
+  , parentSessionId   :: Maybe SessionId
+  , delegationDepth   :: Int
+  , startedAt         :: UTCTime
+  }
+```
+
+`previousSessionId` is for a chronological continuation chain; `getChain` follows it.
+`parentSessionId` and `delegationDepth` are for spawned child work; use
+`getDelegationChildren` to list direct children of a parent session.
+
+Park-and-resume data:
+
+```haskell
+data AwaitInputData = AwaitInputData
+  { sessionId      :: SessionId
+  , reason         :: Text
+  , correlationKey :: Maybe Text
+  , deadline       :: Maybe UTCTime
+  , awaitedAt      :: UTCTime
+  }
+
+data ResumeSessionData = ResumeSessionData
+  { sessionId      :: SessionId
+  , correlationKey :: Maybe Text
+  , input          :: Text
+  , resumedAt      :: UTCTime
+  }
+```
+
+Lifecycle: `start` → `running`; then `complete` or `failSession`, or `awaitInput` → `awaiting`
+→ `resume` → `running`. `complete` and `failSession` may close either a `running` or
+`awaiting` session. `recordTurn` only succeeds while a session is `running`
+(`SessionNotRunning` otherwise). `recordInteractive` captures a finished interactive
+conversation in one event. Turns recorded here are the **L0 evidence** the distillation pyramid
+consumes — see [Distillation](distillation.md).
+
+Session rows include the fields used by the read APIs:
+
+```haskell
+data SessionRow = SessionRow
+  { sessionId               :: Text
+  , agentId                 :: Text
+  , focus                   :: Text
+  , namespace               :: Text
+  , scopeKind               :: Maybe Text
+  , scopeRef                :: Maybe Text
+  , subjectRef              :: Maybe Text
+  , previousSessionId       :: Maybe Text
+  , parentSessionId         :: Maybe Text
+  , delegationDepth         :: Int
+  , status                  :: Text
+  , startedAt               :: UTCTime
+  , completedAt             :: Maybe UTCTime
+  , modelUsed               :: Maybe Text
+  , summary                 :: Maybe Text
+  , errorMessage            :: Maybe Text
+  , awaitingReason          :: Maybe Text
+  , awaitingCorrelationKey  :: Maybe Text
+  , awaitingDeadline        :: Maybe UTCTime
+  , resumeInput             :: Maybe Text
+  }
+```
+
+The session write errors now include `SessionNotAwaiting` and `SessionCorrelationMismatch` in
+addition to command/read failures, `SessionNotFound`, and `SessionNotRunning`. A duplicate
+`resume` after the session is already running is treated as idempotent success; a resume with a
+supplied non-matching correlation key is rejected.
 
 ## Recall (`Kioku.Recall`)
 
@@ -192,6 +269,41 @@ getById             :: MemoryId             -> Eff es (Either ReadModelError (Ma
 getBySession        :: SessionId            -> Eff es (Either ReadModelError [MemoryRecord])
 getByType           :: Namespace -> MemoryType -> Eff es (Either ReadModelError [MemoryRecord])
 ```
+
+Full-detail memory row reads (`Kioku.Memory`) expose projection fields that are intentionally
+not part of the smaller `MemoryRecord` API, including `supersededBy`, `supersedes`, and
+`updatedAt`:
+
+```haskell
+data MemoryRow = MemoryRow
+  { memoryId     :: Text
+  , agentId      :: Text
+  , sessionId    :: Maybe Text
+  , namespace    :: Text
+  , scopeKind    :: Maybe Text
+  , scopeRef     :: Maybe Text
+  , memoryType   :: Text
+  , content      :: Text
+  , priority     :: Int
+  , confidence   :: Text
+  , tags         :: Set Text
+  , status       :: Text
+  , supersededBy :: Maybe Text
+  , supersedes   :: Maybe Text
+  , createdAt    :: UTCTime
+  , updatedAt    :: UTCTime
+  }
+
+getMemoryRowById        :: MemoryId -> Eff es (Either ReadModelError (Maybe MemoryRow))
+getActiveRowsInNamespace:: Namespace -> Eff es (Either ReadModelError [MemoryRow])
+getActiveRowsByScope    :: MemoryScope -> Eff es (Either ReadModelError [MemoryRow])
+getRowsBySession        :: SessionId -> Eff es (Either ReadModelError [MemoryRow])
+getActiveRowsByType     :: Namespace -> MemoryType -> Eff es (Either ReadModelError [MemoryRow])
+getSupersessionChain    :: MemoryId -> Eff es (Either ReadModelError [MemoryRow])
+```
+
+Use the row API when a host needs audit/detail views or supersession inspection. Use
+`MemoryRecord`/recall when the caller only needs active memory content for context injection.
 
 ## Distillation (`Kioku.Distill.*`)
 

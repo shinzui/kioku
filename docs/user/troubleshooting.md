@@ -21,6 +21,20 @@ The command reached Postgres but a query failed. Usual causes:
 - A `pgvector` operation ran against a database where the extension/column is missing — see the
   pgvector section below.
 
+### Session queries fail with missing columns
+
+If a session command or library read mentions missing columns such as `parent_session_id`,
+`delegation_depth`, `awaiting_reason`, `awaiting_correlation_key`, `awaiting_deadline`, or
+`resume_input`, the database is on an older kioku migration set. Run:
+
+```bash
+just migrate
+```
+
+Those columns back the delegation lineage and park-and-resume read model. After migration,
+`getDelegationChildren`, `getAwaitingByCorrelationKey`, and the expanded `SessionRow` fields
+can read correctly.
+
 ### `recall` returns `(no matches)`
 
 - The scope is wrong. Recall is scoped exactly: `rei:intention:abc` does **not** match

@@ -47,7 +47,8 @@ The migrations create three things you care about:
 
 - `kiroku.kioku_memories` — the memory read-model row table, including a `content_tsv`
   `tsvector` column (full-text) and a nullable `embedding` `vector` column (semantic).
-- `kiroku.kioku_sessions` (and a turns table) — the session read model.
+- `kiroku.kioku_sessions` (and a turns table) — the session read model, including continuation
+  chains, delegation lineage, and awaiting/resume fields.
 - The distillation tables for scenes (L2) and personas (L3).
 
 > **pgvector note.** The embedding column and vector index are created only when the `pgvector`

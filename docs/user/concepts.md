@@ -78,20 +78,36 @@ global memories. See [Scopes & Integrations](integrations.md) for per-host conve
 
 A **session** is one agent run (or interactive conversation). Like memory, it is an
 event-sourced aggregate. A session has a `focus` (its task/topic), a `scope`, an optional
-`subjectRef`, and an optional link to a `previousSessionId` (forming a chain).
+`subjectRef`, optional continuation/delegation links, and optional awaiting metadata when the
+run is parked for external input.
 
 Sessions move through states:
 
 - **start → running** — `start` opens a session.
+- **running → awaiting** — `awaitInput` parks it while the host waits for external input,
+  optionally with a correlation key and deadline.
+- **awaiting → running** — `resume` restarts it and stores the resume input on the read model.
 - **running → completed** — `complete` closes it (optionally records the model used and a
   summary).
 - **running → failed** — `failSession` closes it with an error message.
 - **interactive** — `recordInteractive` captures a whole interactive conversation in one shot.
 
+`complete` and `failSession` can also close a session while it is **awaiting**; both clear the
+awaiting fields in the read model. `resume` is idempotent after a successful resume, but a
+resume that supplies a non-matching correlation key is rejected.
+
 While a session is **running**, a host can call `recordTurn` to capture raw conversation
 **turns** (role, content, tool summary, token counts). Turns are the **L0 evidence floor** the
 distillation pyramid feeds on — but only when a host opts in to recording them. A host that
 never records turns can still distill from recorded memories directly.
+
+Sessions have two separate relationship axes:
+
+- **Continuation chain** — `previousSessionId` links repeated work over time. `getChain` follows
+  this chain.
+- **Delegation lineage** — `parentSessionId` and `delegationDepth` record child sessions spawned
+  by a parent run. `getDelegationChildren` returns direct children without mixing them into the
+  continuation chain.
 
 ## Recall
 
