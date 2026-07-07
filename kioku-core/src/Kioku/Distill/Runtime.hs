@@ -32,7 +32,7 @@ import Shikumi.LLM (LLMConfig, defaultLLMConfig, runLLMResilient)
 import Shikumi.Module (predict)
 import Shikumi.Program (Program, runProgram)
 import Shikumi.Routing (routeLLM, runRouting)
-import Shikumi.Schema (FromModel, ToSchema)
+import Shikumi.Schema (FromModel, ToSchema, Validatable)
 import Shikumi.Schema.Types (Field)
 import Shikumi.Signature (mkSignature)
 
@@ -55,7 +55,7 @@ newtype RuntimeSmokeOutput = RuntimeSmokeOutput
   { answer :: Field "the input text repeated back" Text
   }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (ToSchema, FromModel, ToPrompt)
+  deriving anyclass (ToSchema, FromModel, ToPrompt, Validatable)
 
 newDistillRuntime :: IO DistillRuntime
 newDistillRuntime = do

@@ -16,7 +16,7 @@ import Kioku.Prelude
 import Shikumi.Adapter (ToPrompt)
 import Shikumi.Module (predict)
 import Shikumi.Program (Program)
-import Shikumi.Schema (FromModel, ToSchema)
+import Shikumi.Schema (FromModel, ToSchema, Validatable)
 import Shikumi.Schema.Types (Field)
 import Shikumi.Signature (Signature, mkSignature)
 
@@ -53,7 +53,7 @@ data ConsolidationDecision = ConsolidationDecision
     rationale :: Field "one concise reason for the decision" Text
   }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (ToSchema, FromModel, ToPrompt)
+  deriving anyclass (ToSchema, FromModel, ToPrompt, Validatable)
 
 consolidateSignature :: Signature ConsolidateInput ConsolidationDecision
 consolidateSignature =

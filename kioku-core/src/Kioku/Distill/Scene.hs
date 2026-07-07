@@ -13,7 +13,7 @@ import Kioku.Prelude
 import Shikumi.Adapter (ToPrompt)
 import Shikumi.Module (predict)
 import Shikumi.Program (Program)
-import Shikumi.Schema (FromModel, ToSchema)
+import Shikumi.Schema (FromModel, ToSchema, Validatable)
 import Shikumi.Schema.Types (Field)
 import Shikumi.Signature (Signature, mkSignature)
 
@@ -29,7 +29,7 @@ data SceneOutput = SceneOutput
     bodyMd :: Field "a markdown scene block summarizing the atoms as a narrative" Text
   }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (ToSchema, FromModel, ToPrompt)
+  deriving anyclass (ToSchema, FromModel, ToPrompt, Validatable)
 
 sceneSignature :: Signature SceneInput SceneOutput
 sceneSignature =

@@ -13,7 +13,7 @@ import Kioku.Prelude
 import Shikumi.Adapter (ToPrompt)
 import Shikumi.Module (predict)
 import Shikumi.Program (Program)
-import Shikumi.Schema (FromModel, ToSchema)
+import Shikumi.Schema (FromModel, ToSchema, Validatable)
 import Shikumi.Schema.Types (Field)
 import Shikumi.Signature (Signature, mkSignature)
 
@@ -28,7 +28,7 @@ newtype PersonaOutput = PersonaOutput
   { bodyMd :: Field "a single distilled persona/profile markdown for this scope" Text
   }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (ToSchema, FromModel, ToPrompt)
+  deriving anyclass (ToSchema, FromModel, ToPrompt, Validatable)
 
 personaSignature :: Signature PersonaInput PersonaOutput
 personaSignature =
