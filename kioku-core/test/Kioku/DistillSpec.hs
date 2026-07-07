@@ -197,11 +197,13 @@ replayProgram response prog input = do
       $ runProgram prog input
   case live of
     Left err -> pure (Left err)
-    Right _ ->
-      runEff
-        . runLLMReplay (replayIndex tree)
-        . runErrorNoCallStack @ShikumiError
-        $ runProgram prog input
+    Right _ -> case replayIndex tree of
+      Left err -> assertFailure (Text.unpack err)
+      Right idx ->
+        runEff
+          . runLLMReplay idx
+          . runErrorNoCallStack @ShikumiError
+          $ runProgram prog input
 
 runFixedLLM :: Response -> Eff (LLM : es) a -> Eff es a
 runFixedLLM resp = interpret \_ -> \case

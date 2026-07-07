@@ -3,8 +3,6 @@ packages:
   kioku-core
   kioku-cli
   kioku-migrations
-  ../shikumi/shikumi
-  ../shikumi/shikumi-trace
 
 with-compiler: ghc-9.12.4
 
@@ -82,8 +80,14 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/shinzui/baikai
-  tag: a219ace81af9fd8202e1805a16e9ed21356ad214
+  tag: 5f527d8534074875ac02e47ba61d6755b82aca75
   subdir: baikai baikai-claude baikai-effectful
+
+source-repository-package
+  type: git
+  location: https://github.com/shinzui/shikumi
+  tag: 0df4d85928c79cbfe78d7880a263fc0b9696ddc2
+  subdir: shikumi shikumi-trace
 
 source-repository-package
   type: git
