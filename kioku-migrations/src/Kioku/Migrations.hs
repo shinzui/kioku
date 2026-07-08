@@ -1,4 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Kioku.Migrations
@@ -9,30 +8,19 @@ module Kioku.Migrations
   )
 where
 
-import Codd (ApplyResult (SchemasNotVerified), CoddSettings, VerifySchemas, applyMigrations, applyMigrationsNoCheck)
-import Codd.Logging (runCoddLogger)
-import Codd.Parsing (AddedSqlMigration, EnvVars, PureStream (..), parseAddedSqlMigration)
+import Codd (ApplyResult, CoddSettings, VerifySchemas)
+import Codd.Extras.Apply (applyParsedMigrations, applyParsedMigrationsNoCheck)
+import Codd.Extras.Embedded qualified as Embedded
+import Codd.Parsing (AddedSqlMigration, EnvVars)
 import Data.ByteString (ByteString)
 import Data.FileEmbed (embedDir)
 import Data.List (sortOn)
-import Data.Text.Encoding qualified as TE
 import Data.Time (DiffTime)
 import Keiro.Migrations (keiroFrameworkMigrations)
 import Kiroku.Store.Migrations (kirokuMigrations)
-import Streaming.Prelude qualified as Streaming
 
 kiokuOwnMigrations :: (MonadFail m, EnvVars m) => m [AddedSqlMigration m]
-kiokuOwnMigrations =
-  traverse parseEmbeddedMigration embeddedKiokuFiles
-  where
-    parseEmbeddedMigration :: forall m. (MonadFail m, EnvVars m) => (FilePath, ByteString) -> m (AddedSqlMigration m)
-    parseEmbeddedMigration (name, bytes) = do
-      let stream :: PureStream m
-          stream = PureStream $ Streaming.yield (TE.decodeUtf8 bytes)
-      result <- parseAddedSqlMigration name stream
-      case result of
-        Left err -> fail ("Invalid Kioku migration " <> name <> ": " <> err)
-        Right migration -> pure migration
+kiokuOwnMigrations = Embedded.parseEmbeddedMigrations "Kioku" embeddedKiokuFiles
 
 kiokuMigrations :: (MonadFail m, EnvVars m) => m [AddedSqlMigration m]
 kiokuMigrations = do
@@ -43,15 +31,11 @@ kiokuMigrations = do
 
 runKiokuMigrations :: CoddSettings -> DiffTime -> VerifySchemas -> IO ApplyResult
 runKiokuMigrations settings connectTimeout verifySchemas =
-  runCoddLogger do
-    migrations <- kiokuMigrations
-    applyMigrations settings (Just migrations) connectTimeout verifySchemas
+  applyParsedMigrations settings connectTimeout verifySchemas kiokuMigrations
 
 runKiokuMigrationsNoCheck :: CoddSettings -> DiffTime -> IO ApplyResult
 runKiokuMigrationsNoCheck settings connectTimeout =
-  runCoddLogger do
-    migrations <- kiokuMigrations
-    applyMigrationsNoCheck settings (Just migrations) connectTimeout (const (pure SchemasNotVerified))
+  applyParsedMigrationsNoCheck settings connectTimeout kiokuMigrations
 
 embeddedKiokuFiles :: [(FilePath, ByteString)]
 -- Keep this binding source-touched when adding SQL files; Template Haskell embeds
