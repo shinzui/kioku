@@ -54,10 +54,10 @@ This section must always reflect the actual current state of the work.
 - [x] Milestone 1: DistillSpec tests — re-run idempotency, consolidation-failure, multi-target merge with a missing target. — 2026-07-10 (commit `159bbf3`; `cabal test all` → 19 passed)
 - [x] Milestone 1 (added): retired-winner guard — a deterministic winner id that already exists in a non-active state means the atom is already represented; skip rather than merge an active target into a tombstone. — 2026-07-10
 - [x] Milestone 1 (added): `DistillSpec` no longer chdirs the process; tasty runs cases concurrently. — 2026-07-10
-- [ ] Milestone 2: migration `kioku-l1-watermarks` + `Migrations.hs` touch.
-- [ ] Milestone 2: watermark read/skip/write in `distillSessionL1`, new `L1RunMode` and `L1Outcome` types, call sites updated (worker fire, CLI distill `--force`, tests).
-- [ ] Milestone 2: single deterministic idle-timer id per session in `Kioku.Distill.Timer`; ramp/final ids keyed on stable inputs.
-- [ ] Milestone 2: DistillSpec tests — watermark skip without any LLM call; timer-row collapse (one idle row after N turns).
+- [x] Milestone 2: migration `kioku-l1-watermarks` + `Migrations.hs` touch. — 2026-07-10 (`2026-07-10-14-41-38-kioku-l1-watermarks.sql`; embed count 26 → 27)
+- [x] Milestone 2: watermark read/skip/write in `distillSessionL1`, new `L1RunMode` and `L1Outcome` types, call sites updated (worker fire, CLI distill `--force`, tests). — 2026-07-10
+- [x] Milestone 2: single deterministic idle-timer id per session in `Kioku.Distill.Timer`; ramp/final ids keyed on stable inputs. — 2026-07-10
+- [x] Milestone 2: DistillSpec tests — watermark skip without any LLM call; timer-row collapse (one idle row after N turns). — 2026-07-10 (commit `c6c3677`; timer test verified to fail with 3 idle rows against the old `fireAt`-keyed ids)
 - [ ] Milestone 3: worker wires `recallCandidates` instead of `scopedScanCandidates 5`.
 - [ ] Milestone 3: DistillSpec candidate-truncation test (duplicate outside the first five rows is found and merged).
 - [ ] Milestone 4: real `Validatable` instances for `ExtractOutput` and `ConsolidationDecision` + unit tests.
@@ -109,6 +109,28 @@ implementation. Provide concise evidence.
   writing anything, and if the row exists with `status /= 'active'`, treat the atom as
   already represented and skip. Deterministic identity plus "an id I have already retired
   means I have already processed this exact atom" is what makes the pass convergent.
+- (Milestone 2, 2026-07-10) The plan's Validation section says to query
+  `keiro.keiro_timers`. At the pinned keiro (`f1d67a01`) the timer table is **unqualified**
+  and lives in the `kiroku` schema — `scheduleTimerStmt` in the pinned
+  `keiro/src/Keiro/Timer/Schema.hs` reads `INSERT INTO keiro_timers`, and
+  `keiro-migrations/sql-migrations/2026-05-17-00-00-00-keiro-bootstrap.sql` opens with
+  `SET search_path TO kiroku, pg_catalog`. (keiro HEAD *has* relocated to a `keiro` schema
+  — that is exactly the relocation
+  `docs/plans/14-align-read-model-reconciliation-with-keiro-schema-relocation-and-guard-embedded-migrations.md`
+  handles.) The timer test therefore queries `keiro_timers` unqualified and lets
+  search_path resolve it; the CLI transcript in Validation and Acceptance needs the same
+  correction until EP-6 lands.
+- (Milestone 2, 2026-07-10) `Kioku.Session.Domain`'s transducer only accepts `RecordTurn`
+  `B.from Running`, so the watermark test cannot append a turn to the completed fixture
+  session. `writeFixtureSession` was split into `writeRunningFixtureSession` (start + turns,
+  still `Running`) and the completing wrapper; the watermark test uses the former. Fixture
+  turns are now recorded one minute apart so the single idle timer's `fire_at` is
+  observably re-armed forward — with all turns sharing one `recordedAt`, the old
+  `fireAt`-keyed ids would have collided and hidden the defect.
+- (Milestone 2, 2026-07-10) Evidence that the timer test is a real regression test:
+  temporarily restoring the `fireAt`-keyed idle id makes it fail with
+  `expected: 1 / but got: 3` (three distinct idle rows for a 3-turn session; the start
+  event's idle collides with turn 1's because they share a timestamp).
 - (Milestone 1, 2026-07-10) `DistillSpec` wrapped its single test in
   `withSystemTempDirectory` + `withCurrentDirectory`. `withCurrentDirectory` mutates the
   process-wide working directory, and tasty runs test cases concurrently by default — the

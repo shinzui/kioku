@@ -48,6 +48,7 @@ library
   build-depends:
     , base                  >=4.21 && <5
     , containers            >=0.6
+    , effectful             >=2.5
     , kioku-api
     , kioku-core
     , kiroku-store

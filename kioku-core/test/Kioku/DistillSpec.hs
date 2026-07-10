@@ -7,6 +7,7 @@ where
 
 import Baikai (Response, _Response, _TextContent)
 import Baikai.Content (AssistantContent (..))
+import Baikai.Embedding (EmbeddingModel)
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy qualified as BL
 import Data.Foldable (traverse_)
@@ -31,7 +32,7 @@ import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Distill.Consolidate (ConsolidateInput (..), ExistingMemory (..), consolidateProgram)
 import Kioku.Distill.Extract (extractProgram)
-import Kioku.Distill.L1 (L1Error (..), L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, scopedScanCandidates)
+import Kioku.Distill.L1 (L1Error (..), L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
 import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, regenerateScene)
 import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, regeneratePersona)
 import Kioku.Distill.Persona (personaProgram)
@@ -41,9 +42,11 @@ import Kioku.Distill.Timer (idleFlushSeconds, l1ExtractProcessManagerName)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText, parseIdAnyPrefix)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
+import Kioku.Memory.Embedding (EmbeddingConfig (..), toEmbeddingModel)
 import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
+import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), StartSessionData (..))
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
@@ -72,7 +75,8 @@ tests =
       testCase "consolidation failure stores nothing and fails the pass" testConsolidationFailure,
       testCase "merge with a missing target drops it and stays convergent" testMergeMissingTarget,
       testCase "watermark skips re-extraction until a new turn arrives" testWatermarkSkip,
-      testCase "a session accumulates one idle timer however many turns" testIdleTimerCollapse
+      testCase "a session accumulates one idle timer however many turns" testIdleTimerCollapse,
+      testCase "recall candidates find a duplicate outside the scan window" testRecallCandidateWindow
     ]
 
 data MemoryStatus = MemoryStatus
@@ -325,6 +329,113 @@ testIdleTimerCollapse = withDistillEnv \env -> do
         [final] -> final.timerCount @?= 1
         other -> assertFailure ("expected one final timer row, got " <> show other)
 
+-- | The scan finder returns the first @limit@ rows of a @priority ASC@ scan, so
+-- a duplicate that sits behind enough low-priority filler is invisible to the
+-- consolidator and gets stored again. Relevance-ranked recall finds it.
+--
+-- Both halves run in one database against separate scopes, so the contrast is
+-- the only difference between them.
+testRecallCandidateWindow :: Assertion
+testRecallCandidateWindow = withDistillEnv \env -> do
+  base <- replayRuntime
+  recallSid <- genSessionId
+  scanSid <- genSessionId
+  recallDuplicateId <- genMemoryId
+  scanDuplicateId <- genMemoryId
+  now <- getCurrentTime
+  let recallScope = ScopeEntity (Namespace "rei") (ScopeKind "intention") "intention_recall_window"
+      scanScope = ScopeEntity (Namespace "rei") (ScopeKind "intention") "intention_scan_window"
+      -- Merge only when the consolidator was actually shown the duplicate.
+      runtimeFor duplicateId =
+        base
+          { runExtract = replayProgram singleAtomExtractResponse extractProgram,
+            runConsolidate = \input ->
+              if any (\existing -> unField existing.memoryId == idText duplicateId) input.existing
+                then replayProgram (mergeTargetsResponse [idText duplicateId]) consolidateProgram input
+                else replayProgram storeAtomResponse consolidateProgram input
+          }
+  result <-
+    runAppIO env do
+      capability <- detectVectorCapability
+      writeRunningFixtureSession recallSid recallScope now
+      seedCandidateWindow recallSid recallScope now recallDuplicateId
+      recallOutcome <-
+        distillSessionL1
+          RespectWatermark
+          (runtimeFor recallDuplicateId)
+          (recallCandidates dummyEmbeddingModel capability 8)
+          recallSid
+      recallSummary <- liftIO (expectDistilled "recall pass" recallOutcome)
+      recallMemories <- loadMemoryStatuses recallScope
+
+      writeRunningFixtureSession scanSid scanScope now
+      seedCandidateWindow scanSid scanScope now scanDuplicateId
+      scanOutcome <-
+        distillSessionL1
+          RespectWatermark
+          (runtimeFor scanDuplicateId)
+          (scopedScanCandidates 5)
+          scanSid
+      scanSummary <- liftIO (expectDistilled "scan pass" scanOutcome)
+      scanMemories <- loadMemoryStatuses scanScope
+      pure (capability, recallSummary, recallMemories, scanSummary, scanMemories)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (capability, recallSummary, recallMemories, scanSummary, scanMemories) -> do
+      -- ephemeral-pg ships no pgvector, so recall runs FTS-only and never calls
+      -- the embedding endpoint. That is what makes dummyEmbeddingModel safe.
+      capability @?= VectorExtensionUnavailable
+
+      recallSummary.merged @?= 1
+      recallSummary.stored @?= 0
+      assertBool "recall found the duplicate behind the scan window and merged it" $
+        any
+          (\row -> row.memoryId == idText recallDuplicateId && row.status == "merged")
+          recallMemories
+
+      -- The defect being fixed, pinned in place: the scan never sees the duplicate.
+      scanSummary.stored @?= 1
+      scanSummary.merged @?= 0
+      assertBool "the scan window hid the duplicate, so it stayed active" $
+        any
+          (\row -> row.memoryId == idText scanDuplicateId && row.status == "active")
+          scanMemories
+
+-- | Six low-priority fillers ahead of the duplicate in a @priority ASC@ scan,
+-- with content that shares no stem with the extracted atom so full-text search
+-- passes over them.
+seedCandidateWindow ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  SessionId ->
+  MemoryScope ->
+  UTCTime ->
+  MemoryId ->
+  Eff es ()
+seedCandidateWindow sid scope now duplicateId = do
+  traverse_
+    ( \(n :: Int) -> do
+        fillerId <- genMemoryId
+        seedMemoryWith
+          fillerId
+          sid
+          scope
+          ("Filler note " <> Text.pack (show n) <> ": the deployment pipeline runs on Nix flakes.")
+          10
+          now
+    )
+    [1 .. 6]
+  seedMemoryWith duplicateId sid scope "The user prefers concise answers." 90 now
+
+dummyEmbeddingModel :: EmbeddingModel
+dummyEmbeddingModel =
+  toEmbeddingModel
+    EmbeddingConfig
+      { baseUrl = "http://embedding.invalid",
+        model = "test-embedding",
+        dimensions = 8,
+        apiKey = ""
+      }
+
 seedMemory ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   MemoryId ->
@@ -333,7 +444,19 @@ seedMemory ::
   Text ->
   UTCTime ->
   Eff es ()
-seedMemory memoryId sid scope content now = do
+seedMemory memoryId sid scope content =
+  seedMemoryWith memoryId sid scope content 50
+
+seedMemoryWith ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  MemoryId ->
+  SessionId ->
+  MemoryScope ->
+  Text ->
+  Int ->
+  UTCTime ->
+  Eff es ()
+seedMemoryWith memoryId sid scope content priority now = do
   recorded <-
     Memory.record
       RecordMemoryData
@@ -343,7 +466,7 @@ seedMemory memoryId sid scope content now = do
           scope,
           memoryType = MemoryPreference,
           content,
-          priority = 50,
+          priority,
           confidence = HighConfidence,
           tags = Set.fromList ["seed"],
           supersedes = Nothing,
@@ -485,21 +608,24 @@ extractResponse =
   [[ ## completed ## ]]
   """
 
+storeAtomResponse :: Text
+storeAtomResponse =
+  """
+  [[ ## action ## ]]
+  StoreAtom
+  [[ ## targetMemoryIds ## ]]
+  []
+  [[ ## resultContent ## ]]
+  The user prefers concise answers.
+  [[ ## rationale ## ]]
+  The preference is durable and not yet represented.
+  [[ ## completed ## ]]
+  """
+
 consolidateResponse :: ConsolidateInput -> Text
 consolidateResponse input =
   case input.existing of
-    [] ->
-      """
-      [[ ## action ## ]]
-      StoreAtom
-      [[ ## targetMemoryIds ## ]]
-      []
-      [[ ## resultContent ## ]]
-      The user prefers concise answers.
-      [[ ## rationale ## ]]
-      The preference is durable and not yet represented.
-      [[ ## completed ## ]]
-      """
+    [] -> storeAtomResponse
     ExistingMemory {memoryId = targetId} : _ ->
       Text.unlines
         [ "[[ ## action ## ]]",
