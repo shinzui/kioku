@@ -30,8 +30,8 @@ import Keiro.Stream qualified as Stream
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
-import Kioku.Distill.Consolidate (ConsolidateInput (..), ExistingMemory (..), consolidateProgram)
-import Kioku.Distill.Extract (extractProgram)
+import Kioku.Distill.Consolidate (ConsolidateInput (..), ConsolidationAction (..), ConsolidationDecision (..), ExistingMemory (..), consolidateProgram)
+import Kioku.Distill.Extract (ExtractOutput (..), ExtractedAtom (..), extractProgram)
 import Kioku.Distill.L1 (L1Error (..), L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
 import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, regenerateScene)
 import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, regeneratePersona)
@@ -59,7 +59,8 @@ import Shikumi.Effect.Time (runTime)
 import Shikumi.Error (ShikumiError (..))
 import Shikumi.LLM (LLM (..))
 import Shikumi.Program (Program, runProgram)
-import Shikumi.Schema.Types (unField)
+import Shikumi.Schema (Validatable (..))
+import Shikumi.Schema.Types (field, unField)
 import Shikumi.Trace (runTrace, tracedLLM)
 import Shikumi.Trace.Replay (runLLMReplay)
 import Shikumi.Trace.Store (replayIndex)
@@ -76,8 +77,85 @@ tests =
       testCase "merge with a missing target drops it and stays convergent" testMergeMissingTarget,
       testCase "watermark skips re-extraction until a new turn arrives" testWatermarkSkip,
       testCase "a session accumulates one idle timer however many turns" testIdleTimerCollapse,
-      testCase "recall candidates find a duplicate outside the scan window" testRecallCandidateWindow
+      testCase "recall candidates find a duplicate outside the scan window" testRecallCandidateWindow,
+      validationTests
     ]
+
+-- | Pure tests over the 'Validatable' instances; no database, no LLM.
+validationTests :: TestTree
+validationTests =
+  testGroup
+    "extract and consolidate outputs are clamped and rejected"
+    [ testCase "priority is clamped into [0, 100]" do
+        validatedAtom (atomWith "preference" "Keep it short." (-1000000) "high")
+          >>= \atom -> unField atom.priority @?= 0
+        validatedAtom (atomWith "preference" "Keep it short." 250 "high")
+          >>= \atom -> unField atom.priority @?= 100,
+      testCase "atomType and confidence are lowercased" do
+        atom <- validatedAtom (atomWith "  Preference " "Keep it short." 50 "HIGH")
+        unField atom.atomType @?= "preference"
+        unField atom.confidence @?= "high",
+      testCase "an unknown atomType is rejected" $
+        assertValidationFailure "atomType" (ExtractOutput [atomWith "vibe" "Keep it short." 50 "high"]),
+      testCase "an unknown confidence is rejected" $
+        assertValidationFailure "confidence" (ExtractOutput [atomWith "fact" "Keep it short." 50 "certain"]),
+      testCase "blank atom content is rejected" $
+        assertValidationFailure "atom content" (ExtractOutput [atomWith "fact" "   " 50 "high"]),
+      testCase "StoreAtom and SkipAtom drop stray targets" do
+        stored <- expectValid (decisionWith StoreAtom ["kioku_memory_01hxxx"])
+        stored.targetMemoryIds @?= []
+        skipped <- expectValid (decisionWith SkipAtom ["garbage"])
+        skipped.targetMemoryIds @?= [],
+      testCase "MergeAtom and UpdateAtom require at least one target" do
+        assertValidationFailure "MergeAtom requires" (decisionWith MergeAtom [])
+        assertValidationFailure "UpdateAtom requires" (decisionWith UpdateAtom []),
+      testCase "an unparseable target id is rejected" $
+        assertValidationFailure "unparseable id" (decisionWith MergeAtom ["not-a-typeid"]),
+      testCase "a parseable target id is accepted unchanged" do
+        target <- idText <$> genMemoryId
+        decision <- expectValid (decisionWith MergeAtom [target])
+        decision.targetMemoryIds @?= [target]
+    ]
+
+atomWith :: Text -> Text -> Int -> Text -> ExtractedAtom
+atomWith atomType content priority confidence =
+  ExtractedAtom
+    { atomType = field atomType,
+      content = field content,
+      priority = field priority,
+      confidence = field confidence
+    }
+
+decisionWith :: ConsolidationAction -> [Text] -> ConsolidationDecision
+decisionWith action targetMemoryIds =
+  ConsolidationDecision
+    { action,
+      targetMemoryIds,
+      resultContent = Nothing,
+      rationale = field "because"
+    }
+
+validatedAtom :: ExtractedAtom -> IO ExtractedAtom
+validatedAtom atom = do
+  output <- expectValid (ExtractOutput [atom])
+  case output.atoms of
+    [validated] -> pure validated
+    other -> assertFailure ("expected exactly one atom, got " <> show (length other))
+
+expectValid :: (Validatable a) => a -> IO a
+expectValid value =
+  case validate value of
+    Left err -> assertFailure ("expected a valid value, got: " <> Text.unpack err)
+    Right ok -> pure ok
+
+assertValidationFailure :: (Validatable a, Show a) => Text -> a -> Assertion
+assertValidationFailure needle value =
+  case validate value of
+    Right ok -> assertFailure ("expected a validation failure, got: " <> show ok)
+    Left err ->
+      assertBool
+        ("validation message should mention " <> show needle <> ", got: " <> Text.unpack err)
+        (needle `Text.isInfixOf` err)
 
 data MemoryStatus = MemoryStatus
   { memoryId :: !Text,

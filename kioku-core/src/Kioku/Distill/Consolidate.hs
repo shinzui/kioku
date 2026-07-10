@@ -12,11 +12,12 @@ module Kioku.Distill.Consolidate
 where
 
 import Kioku.Distill.Extract (ExtractedAtom)
+import Kioku.Id (MemoryId, parseIdAnyPrefix)
 import Kioku.Prelude
 import Shikumi.Adapter (ToPrompt)
 import Shikumi.Module (predict)
 import Shikumi.Program (Program)
-import Shikumi.Schema (FromModel, ToSchema, Validatable)
+import Shikumi.Schema (FromModel, ToSchema, Validatable (..))
 import Shikumi.Schema.Types (Field)
 import Shikumi.Signature (Signature, mkSignature)
 
@@ -53,7 +54,41 @@ data ConsolidationDecision = ConsolidationDecision
     rationale :: Field "one concise reason for the decision" Text
   }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (ToSchema, FromModel, ToPrompt, Validatable)
+  deriving anyclass (ToSchema, FromModel, ToPrompt)
+
+-- | An @UpdateAtom@ or @MergeAtom@ that names no parseable target is a decision
+-- L1 can only degrade to a store; rejecting it here means the audit trail can
+-- never record a merge that did not happen. @StoreAtom@ and @SkipAtom@ have a
+-- safe canonical form — no targets — so stray ids are cleared rather than
+-- rejected.
+instance Validatable ConsolidationDecision where
+  validate decision =
+    case decision.action of
+      StoreAtom -> Right decision {targetMemoryIds = []}
+      SkipAtom -> Right decision {targetMemoryIds = []}
+      UpdateAtom -> requireTargets decision
+      MergeAtom -> requireTargets decision
+
+requireTargets :: ConsolidationDecision -> Either Text ConsolidationDecision
+requireTargets decision
+  | null decision.targetMemoryIds =
+      Left (actionLabel decision.action <> " requires at least one targetMemoryId")
+  | otherwise = do
+      _ <- traverse parseTarget decision.targetMemoryIds
+      Right decision
+  where
+    parseTarget :: Text -> Either Text MemoryId
+    parseTarget raw =
+      case parseIdAnyPrefix raw of
+        Left err -> Left ("targetMemoryIds contains an unparseable id " <> raw <> ": " <> err)
+        Right mid -> Right mid
+
+actionLabel :: ConsolidationAction -> Text
+actionLabel = \case
+  StoreAtom -> "StoreAtom"
+  UpdateAtom -> "UpdateAtom"
+  MergeAtom -> "MergeAtom"
+  SkipAtom -> "SkipAtom"
 
 consolidateSignature :: Signature ConsolidateInput ConsolidationDecision
 consolidateSignature =

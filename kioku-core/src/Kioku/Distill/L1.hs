@@ -171,12 +171,12 @@ distillSessionL1 mode rt finder sid = do
                   case extractedResult of
                     Left err -> pure (Left (L1ExtractionFailed (Text.pack (show err))))
                     Right output -> do
-                      folded <-
+                      foldResult <-
                         foldM
                           (stepAtom maxTurnIndex session)
                           (Right emptySummary {extracted = length output.atoms})
                           output.atoms
-                      case folded of
+                      case foldResult of
                         Left err -> pure (Left err)
                         Right summary -> do
                           writeWatermark sid maxTurnIndex
@@ -187,7 +187,7 @@ distillSessionL1 mode rt finder sid = do
       applyAtom rt finder sid session maxTurnIndex summary atom
 
 watermarkCovers ::
-  (IOE :> es, Store :> es) =>
+  (Store :> es) =>
   L1RunMode ->
   SessionId ->
   Int ->
@@ -198,7 +198,7 @@ watermarkCovers RespectWatermark sid maxTurnIndex = do
   pure (maybe False (>= maxTurnIndex) stored)
 
 readWatermark ::
-  (IOE :> es, Store :> es) =>
+  (Store :> es) =>
   SessionId ->
   Eff es (Maybe Int)
 readWatermark sid =
