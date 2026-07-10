@@ -15,6 +15,7 @@ import Data.Int (Int64)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
+import Data.Time (addUTCTime, diffUTCTime)
 import Data.Vector qualified as Vector
 import Effectful (Eff, IOE, runEff, (:>))
 import Effectful.Dispatch.Dynamic (interpret)
@@ -30,12 +31,13 @@ import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Distill.Consolidate (ConsolidateInput (..), ExistingMemory (..), consolidateProgram)
 import Kioku.Distill.Extract (extractProgram)
-import Kioku.Distill.L1 (L1Error (..), L1Summary (..), distillSessionL1, scopedScanCandidates)
+import Kioku.Distill.L1 (L1Error (..), L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, scopedScanCandidates)
 import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, regenerateScene)
 import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, regeneratePersona)
 import Kioku.Distill.Persona (personaProgram)
 import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
 import Kioku.Distill.Scene (sceneProgram)
+import Kioku.Distill.Timer (idleFlushSeconds, l1ExtractProcessManagerName)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText, parseIdAnyPrefix)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
@@ -68,7 +70,9 @@ tests =
     [ testCase "replay distills duplicate turns into merged atom scene and persona" testReplayDistillation,
       testCase "re-running distillSessionL1 creates no new memories or audit rows" testRerunIdempotent,
       testCase "consolidation failure stores nothing and fails the pass" testConsolidationFailure,
-      testCase "merge with a missing target drops it and stays convergent" testMergeMissingTarget
+      testCase "merge with a missing target drops it and stays convergent" testMergeMissingTarget,
+      testCase "watermark skips re-extraction until a new turn arrives" testWatermarkSkip,
+      testCase "a session accumulates one idle timer however many turns" testIdleTimerCollapse
     ]
 
 data MemoryStatus = MemoryStatus
@@ -92,6 +96,19 @@ data AuditRowView = AuditRowView
   }
   deriving stock (Generic, Eq, Show)
 
+data TimerKindRow = TimerKindRow
+  { kind :: !Text,
+    timerCount :: !Int64,
+    maxFireAt :: !UTCTime
+  }
+  deriving stock (Generic, Eq, Show)
+
+data TimerQuery = TimerQuery
+  { processManagerName :: !Text,
+    correlationId :: !Text
+  }
+  deriving stock (Generic, Eq, Show)
+
 data DistillResult = DistillResult
   { summary :: !L1Summary,
     memories :: ![MemoryStatus],
@@ -111,8 +128,8 @@ testReplayDistillation = withDistillEnv \env -> do
   result <-
     runAppIO env do
       writeFixtureSession sid scope now
-      distillResult <- distillSessionL1 runtime (scopedScanCandidates 5) sid
-      summary <- liftIO (expectRight "distillSessionL1" distillResult)
+      distillResult <- distillSessionL1 RespectWatermark runtime (scopedScanCandidates 5) sid
+      summary <- liftIO (expectDistilled "distillSessionL1" distillResult)
       sceneResult <- regenerateScene runtime scope
       _scene <- liftIO (expectRight "regenerateScene" sceneResult)
       personaResult <- regeneratePersona runtime scope
@@ -153,12 +170,12 @@ testRerunIdempotent = withDistillEnv \env -> do
   result <-
     runAppIO env do
       writeFixtureSession sid fixtureScope now
-      first <- distillSessionL1 runtime (scopedScanCandidates 5) sid
-      summary1 <- liftIO (expectRight "first pass" first)
+      first <- distillSessionL1 RespectWatermark runtime (scopedScanCandidates 5) sid
+      summary1 <- liftIO (expectDistilled "first pass" first)
       memories1 <- loadMemoryStatuses fixtureScope
       audits1 <- loadAuditCount fixtureScope
-      second <- distillSessionL1 runtime (scopedScanCandidates 5) sid
-      summary2 <- liftIO (expectRight "second pass" second)
+      second <- distillSessionL1 IgnoreWatermark runtime (scopedScanCandidates 5) sid
+      summary2 <- liftIO (expectDistilled "second pass" second)
       memories2 <- loadMemoryStatuses fixtureScope
       audits2 <- loadAuditCount fixtureScope
       pure (summary1, memories1, audits1, summary2, memories2, audits2)
@@ -187,7 +204,7 @@ testConsolidationFailure = withDistillEnv \env -> do
   result <-
     runAppIO env do
       writeFixtureSession sid fixtureScope now
-      distilled <- distillSessionL1 runtime (scopedScanCandidates 5) sid
+      distilled <- distillSessionL1 RespectWatermark runtime (scopedScanCandidates 5) sid
       memories <- loadMemoryStatuses fixtureScope
       audits <- loadAuditCount fixtureScope
       pure (distilled, memories, audits)
@@ -219,12 +236,12 @@ testMergeMissingTarget = withDistillEnv \env -> do
     runAppIO env do
       writeFixtureSession sid fixtureScope now
       seedMemory existingId sid fixtureScope "The user likes concise answers." now
-      first <- distillSessionL1 runtime (scopedScanCandidates 5) sid
-      summary1 <- liftIO (expectRight "first pass" first)
+      first <- distillSessionL1 RespectWatermark runtime (scopedScanCandidates 5) sid
+      summary1 <- liftIO (expectDistilled "first pass" first)
       memories1 <- loadMemoryStatuses fixtureScope
       audits1 <- loadAuditRows fixtureScope
-      second <- distillSessionL1 runtime (scopedScanCandidates 5) sid
-      void (liftIO (expectRight "second pass" second))
+      second <- distillSessionL1 IgnoreWatermark runtime (scopedScanCandidates 5) sid
+      void (liftIO (expectDistilled "second pass" second))
       memories2 <- loadMemoryStatuses fixtureScope
       audits2 <- loadAuditRows fixtureScope
       pure (summary1, memories1, audits1, memories2, audits2)
@@ -243,6 +260,70 @@ testMergeMissingTarget = withDistillEnv \env -> do
         other -> assertFailure ("expected exactly one audit row, got " <> show (length other))
       memories2 @?= memories1
       audits2 @?= audits1
+
+-- | The watermark makes a re-fire with no new turns a pure database read. The
+-- proof is an extractor that fails if it is ever called: the pass succeeds
+-- anyway, so the LLM was not reached. Recording one more turn re-enables it.
+testWatermarkSkip :: Assertion
+testWatermarkSkip = withDistillEnv \env -> do
+  working <- replayRuntime
+  let exploding =
+        working {runExtract = \_ -> pure (Left (ValidationFailure "extractor must not run"))}
+  sid <- genSessionId
+  now <- getCurrentTime
+  result <-
+    runAppIO env do
+      writeRunningFixtureSession sid fixtureScope now
+      first <- distillSessionL1 RespectWatermark working (scopedScanCandidates 5) sid
+      void (liftIO (expectDistilled "first pass" first))
+      skipped <- distillSessionL1 RespectWatermark exploding (scopedScanCandidates 5) sid
+      recordFixtureTurn sid now 4 "Never deploy on a Friday."
+      afterNewTurn <- distillSessionL1 RespectWatermark exploding (scopedScanCandidates 5) sid
+      pure (skipped, afterNewTurn)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (skipped, afterNewTurn) -> do
+      case skipped of
+        Right L1SkippedUpToDate -> pure ()
+        other -> assertFailure ("expected L1SkippedUpToDate, got " <> show other)
+      case afterNewTurn of
+        Left (L1ExtractionFailed _) -> pure ()
+        other -> assertFailure ("expected L1ExtractionFailed after a new turn, got " <> show other)
+
+-- | However many turns a session records, it holds exactly one idle timer,
+-- re-armed forward to the latest turn. Ramp timers fire only on ramp turns
+-- (1, 2, 4, 8, 16, ...), and completion adds one final timer.
+testIdleTimerCollapse :: Assertion
+testIdleTimerCollapse = withDistillEnv \env -> do
+  sid <- genSessionId
+  now <- getCurrentTime
+  result <-
+    runAppIO env do
+      writeFixtureSession sid fixtureScope now
+      loadTimerKinds sid
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right kinds -> do
+      let lookupKind k = [row | row <- kinds, row.kind == k]
+      case lookupKind "idle" of
+        [idle] -> do
+          idle.timerCount @?= 1
+          let lastTurnAt = turnRecordedAt now (length fixtureTurns)
+              expected = addUTCTime idleFlushSeconds lastTurnAt
+          assertBool
+            ( "idle timer should be re-armed to the last turn's recordedAt + 30min; expected "
+                <> show expected
+                <> " but found "
+                <> show idle.maxFireAt
+            )
+            (abs (diffUTCTime idle.maxFireAt expected) < 0.001)
+        other -> assertFailure ("expected exactly one idle timer row, got " <> show other)
+      case lookupKind "ramp" of
+        [ramp] -> ramp.timerCount @?= 2
+        other -> assertFailure ("expected one ramp kind grouping, got " <> show other)
+      case lookupKind "final" of
+        [final] -> final.timerCount @?= 1
+        other -> assertFailure ("expected one final timer row, got " <> show other)
 
 seedMemory ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
@@ -270,13 +351,28 @@ seedMemory memoryId sid scope content now = do
         }
   void (liftIO (expectRight "Memory.record" recorded))
 
-writeFixtureSession ::
+-- | Turn @n@ is recorded one minute after turn @n-1@, so the single debounced
+-- idle timer's @fire_at@ is observably re-armed forward by each turn.
+turnRecordedAt :: UTCTime -> Int -> UTCTime
+turnRecordedAt now turnIndex =
+  addUTCTime (60 * fromIntegral (turnIndex - 1)) now
+
+fixtureTurns :: [(Int, Text)]
+fixtureTurns =
+  [ (1, "I like short answers."),
+    (2, "Please keep replies brief."),
+    (3, "The deploy script is in ops/deploy.sh.")
+  ]
+
+-- | Start a session and record 'fixtureTurns', leaving it @Running@ so further
+-- turns can be recorded. The aggregate only accepts @RecordTurn@ from @Running@.
+writeRunningFixtureSession ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   MemoryScope ->
   UTCTime ->
   Eff es ()
-writeFixtureSession sid scope now = do
+writeRunningFixtureSession sid scope now = do
   startResult <-
     Session.start
       StartSessionData
@@ -291,32 +387,44 @@ writeFixtureSession sid scope now = do
           startedAt = now
         }
   void (liftIO (expectRight "Session.start" startResult))
-  traverse_
-    ( \(turnIndex, content) -> do
-        turnResult <-
-          Session.recordTurn
-            RecordTurnData
-              { sessionId = sid,
-                turnId = idText sid <> "-turn-" <> Text.pack (show turnIndex),
-                turnIndex,
-                role = "user",
-                content,
-                toolSummary = Nothing,
-                promptTokens = Nothing,
-                outputTokens = Nothing,
-                recordedAt = now
-              }
-        void (liftIO (expectRight "Session.recordTurn" turnResult))
-    )
-    [ (1, "I like short answers."),
-      (2, "Please keep replies brief."),
-      (3, "The deploy script is in ops/deploy.sh.")
-    ]
+  traverse_ (uncurry (recordFixtureTurn sid now)) fixtureTurns
+
+recordFixtureTurn ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  SessionId ->
+  UTCTime ->
+  Int ->
+  Text ->
+  Eff es ()
+recordFixtureTurn sid now turnIndex content = do
+  turnResult <-
+    Session.recordTurn
+      RecordTurnData
+        { sessionId = sid,
+          turnId = idText sid <> "-turn-" <> Text.pack (show turnIndex),
+          turnIndex,
+          role = "user",
+          content,
+          toolSummary = Nothing,
+          promptTokens = Nothing,
+          outputTokens = Nothing,
+          recordedAt = turnRecordedAt now turnIndex
+        }
+  void (liftIO (expectRight "Session.recordTurn" turnResult))
+
+writeFixtureSession ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  SessionId ->
+  MemoryScope ->
+  UTCTime ->
+  Eff es ()
+writeFixtureSession sid scope now = do
+  writeRunningFixtureSession sid scope now
   completeResult <-
     Session.complete
       CompleteSessionData
         { sessionId = sid,
-          completedAt = now,
+          completedAt = turnRecordedAt now (length fixtureTurns),
           modelUsed = Just "test-model",
           summary = Just "Captured style preferences."
         }
@@ -481,6 +589,47 @@ loadAuditRows scope =
   runTransaction $
     Tx.statement (scopeParams scope) selectAuditRowsStmt
 
+-- | keiro's timer table is unqualified at the pinned version: it lives in the
+-- @kiroku@ schema, which the connection's search_path already resolves.
+loadTimerKinds ::
+  (Store :> es) =>
+  SessionId ->
+  Eff es [TimerKindRow]
+loadTimerKinds sid =
+  runTransaction $
+    Tx.statement
+      TimerQuery
+        { processManagerName = l1ExtractProcessManagerName,
+          correlationId = idText sid
+        }
+      selectTimerKindsStmt
+
+selectTimerKindsStmt :: Statement TimerQuery [TimerKindRow]
+selectTimerKindsStmt =
+  preparable
+    """
+    SELECT payload->>'kind', count(*), max(fire_at)
+    FROM keiro_timers
+    WHERE process_manager_name = $1
+      AND correlation_id = $2
+    GROUP BY payload->>'kind'
+    ORDER BY payload->>'kind'
+    """
+    timerQueryEncoder
+    (D.rowList timerKindRowDecoder)
+
+timerQueryEncoder :: E.Params TimerQuery
+timerQueryEncoder =
+  ((\q -> q.processManagerName) >$< E.param (E.nonNullable E.text))
+    <> ((\q -> q.correlationId) >$< E.param (E.nonNullable E.text))
+
+timerKindRowDecoder :: D.Row TimerKindRow
+timerKindRowDecoder =
+  TimerKindRow
+    <$> D.column (D.nonNullable D.text)
+    <*> D.column (D.nonNullable D.int8)
+    <*> D.column (D.nonNullable D.timestamptz)
+
 loadLoserEvents ::
   (Store :> es) =>
   [MemoryStatus] ->
@@ -600,6 +749,14 @@ expectRight :: (Show e) => String -> Either e a -> IO a
 expectRight label = \case
   Left err -> assertFailure (label <> " failed: " <> show err)
   Right value -> pure value
+
+-- | Unwrap a pass that was expected to actually run, not skip on the watermark.
+expectDistilled :: String -> Either L1Error L1Outcome -> IO L1Summary
+expectDistilled label outcome = do
+  distilled <- expectRight label outcome
+  case distilled of
+    L1Distilled summary -> pure summary
+    L1SkippedUpToDate -> assertFailure (label <> " unexpectedly skipped on the watermark")
 
 encodeJsonText :: (ToJSON a) => a -> Text
 encodeJsonText =

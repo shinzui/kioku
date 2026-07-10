@@ -3,6 +3,8 @@
 module Kioku.Distill.L1
   ( FindMergeCandidates (..),
     L1Error (..),
+    L1Outcome (..),
+    L1RunMode (..),
     L1Summary (..),
     distillSessionL1,
     recallCandidates,
@@ -17,6 +19,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Either (lefts)
 import Data.Functor.Contravariant ((>$<))
+import Data.Int (Int32)
 import Data.KindID.V7 qualified as KindID
 import Data.List (nub)
 import Data.Maybe (catMaybes)
@@ -79,6 +82,20 @@ data L1Summary = L1Summary
   }
   deriving stock (Generic, Eq, Show)
 
+-- | Whether a pass may skip itself when the per-session watermark shows no new
+-- turns since the last fully successful pass. Timer fires use
+-- 'RespectWatermark' (the debounce); @kioku distill --force@ uses
+-- 'IgnoreWatermark'.
+data L1RunMode
+  = RespectWatermark
+  | IgnoreWatermark
+  deriving stock (Generic, Eq, Show)
+
+data L1Outcome
+  = L1Distilled !L1Summary
+  | L1SkippedUpToDate
+  deriving stock (Generic, Eq, Show)
+
 -- | What the pass actually did with an atom, as opposed to what the
 -- consolidator asked for. A merge whose targets all turned out to be missing
 -- degrades to a store; a merge whose only target is the atom's own prior copy
@@ -97,6 +114,13 @@ data AppliedDecision = AppliedDecision
     appliedNote :: !(Maybe Text)
   }
 
+data WatermarkRow = WatermarkRow
+  { sessionId :: !Text,
+    lastTurnIndex :: !Int32,
+    distilledAt :: !UTCTime
+  }
+  deriving stock (Generic, Eq, Show)
+
 data AuditRow = AuditRow
   { decisionId :: !Text,
     sessionId :: !Text,
@@ -112,13 +136,19 @@ data AuditRow = AuditRow
   }
   deriving stock (Generic, Eq, Show)
 
+-- | Run one L1 distillation pass. Under 'RespectWatermark' a session whose
+-- highest turn index is already covered by a previous fully successful pass is
+-- skipped before any LLM call, which is what makes keiro's at-least-once timer
+-- re-fires cheap. The watermark advances only when the whole fold succeeds, so
+-- a failed pass is retried in full.
 distillSessionL1 ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
+  L1RunMode ->
   DistillRuntime ->
   FindMergeCandidates es ->
   SessionId ->
-  Eff es (Either L1Error L1Summary)
-distillSessionL1 rt finder sid = do
+  Eff es (Either L1Error L1Outcome)
+distillSessionL1 mode rt finder sid = do
   sessionResult <- Session.getById sid
   case sessionResult of
     Left err -> pure (Left (L1SessionReadFailed err))
@@ -129,22 +159,67 @@ distillSessionL1 rt finder sid = do
         Left err -> pure (Left (L1TurnReadFailed err))
         Right turns -> do
           let maxTurnIndex = maximum (0 : fmap (.turnIndex) turns)
-          inputResult <- buildExtractInput sid session turns
-          case inputResult of
-            Left err -> pure (Left err)
-            Right input -> do
-              extractedResult <- liftIO (runExtraction rt input)
-              case extractedResult of
-                Left err -> pure (Left (L1ExtractionFailed (Text.pack (show err))))
-                Right output ->
-                  foldM
-                    (stepAtom maxTurnIndex session)
-                    (Right emptySummary {extracted = length output.atoms})
-                    output.atoms
+          upToDate <- watermarkCovers mode sid maxTurnIndex
+          if upToDate
+            then pure (Right L1SkippedUpToDate)
+            else do
+              inputResult <- buildExtractInput sid session turns
+              case inputResult of
+                Left err -> pure (Left err)
+                Right input -> do
+                  extractedResult <- liftIO (runExtraction rt input)
+                  case extractedResult of
+                    Left err -> pure (Left (L1ExtractionFailed (Text.pack (show err))))
+                    Right output -> do
+                      folded <-
+                        foldM
+                          (stepAtom maxTurnIndex session)
+                          (Right emptySummary {extracted = length output.atoms})
+                          output.atoms
+                      case folded of
+                        Left err -> pure (Left err)
+                        Right summary -> do
+                          writeWatermark sid maxTurnIndex
+                          pure (Right (L1Distilled summary))
   where
     stepAtom _ _ (Left err) _ = pure (Left err)
     stepAtom maxTurnIndex session (Right summary) atom =
       applyAtom rt finder sid session maxTurnIndex summary atom
+
+watermarkCovers ::
+  (IOE :> es, Store :> es) =>
+  L1RunMode ->
+  SessionId ->
+  Int ->
+  Eff es Bool
+watermarkCovers IgnoreWatermark _ _ = pure False
+watermarkCovers RespectWatermark sid maxTurnIndex = do
+  stored <- readWatermark sid
+  pure (maybe False (>= maxTurnIndex) stored)
+
+readWatermark ::
+  (IOE :> es, Store :> es) =>
+  SessionId ->
+  Eff es (Maybe Int)
+readWatermark sid =
+  runTransaction $
+    fmap fromIntegral <$> Tx.statement (idText sid) selectWatermarkStmt
+
+writeWatermark ::
+  (IOE :> es, Store :> es) =>
+  SessionId ->
+  Int ->
+  Eff es ()
+writeWatermark sid maxTurnIndex = do
+  now <- liftIO getCurrentTime
+  runTransaction $
+    Tx.statement
+      WatermarkRow
+        { sessionId = idText sid,
+          lastTurnIndex = fromIntegral maxTurnIndex,
+          distilledAt = now
+        }
+      upsertWatermarkStmt
 
 scopedScanCandidates ::
   (IOE :> es, Store :> es) =>
@@ -527,6 +602,39 @@ emptySummary = L1Summary {extracted = 0, stored = 0, merged = 0, skipped = 0}
 encodeTargetIds :: [Text] -> Text
 encodeTargetIds =
   TE.decodeUtf8 . BL.toStrict . Aeson.encode
+
+selectWatermarkStmt :: Statement Text (Maybe Int32)
+selectWatermarkStmt =
+  preparable
+    """
+    SELECT last_turn_index
+    FROM kioku_l1_watermarks
+    WHERE session_id = $1
+    """
+    (E.param (E.nonNullable E.text))
+    (D.rowMaybe (D.column (D.nonNullable D.int4)))
+
+-- | @GREATEST@ keeps the watermark monotonic: a slow pass over turns 1-3 that
+-- lands after a fast pass over turns 1-5 must not rewind it.
+upsertWatermarkStmt :: Statement WatermarkRow ()
+upsertWatermarkStmt =
+  preparable
+    """
+    INSERT INTO kioku_l1_watermarks (session_id, last_turn_index, distilled_at)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (session_id) DO UPDATE
+      SET last_turn_index =
+            GREATEST(kioku_l1_watermarks.last_turn_index, EXCLUDED.last_turn_index),
+          distilled_at = EXCLUDED.distilled_at
+    """
+    watermarkRowEncoder
+    D.noResult
+
+watermarkRowEncoder :: E.Params WatermarkRow
+watermarkRowEncoder =
+  ((\row -> row.sessionId) >$< E.param (E.nonNullable E.text))
+    <> ((\row -> row.lastTurnIndex) >$< E.param (E.nonNullable E.int4))
+    <> ((\row -> row.distilledAt) >$< E.param (E.nonNullable E.timestamptz))
 
 insertAuditStmt :: Statement AuditRow ()
 insertAuditStmt =

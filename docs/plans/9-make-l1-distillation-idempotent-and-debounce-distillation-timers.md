@@ -49,9 +49,11 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Milestone 1: deterministic atom/winner/audit identity in `Kioku.Distill.L1` (UUIDv5 helper, `recordAtom` uses it, self-merge guard, audit key derivation).
-- [ ] Milestone 1: consolidation failure returns `L1ConsolidationFailed` (delete `fallbackStoreDecision`); `FindMergeCandidates` propagates read errors; target existence filtered before recording the winner; audit rows record the applied (post-degrade) action.
-- [ ] Milestone 1: DistillSpec tests — re-run idempotency, consolidation-failure, multi-target merge with a missing target.
+- [x] Milestone 1: deterministic atom/winner/audit identity in `Kioku.Distill.L1` (UUIDv5 helper, `recordAtom` uses it, self-merge guard, audit key derivation). — 2026-07-10
+- [x] Milestone 1: consolidation failure returns `L1ConsolidationFailed` (delete `fallbackStoreDecision`); `FindMergeCandidates` propagates read errors; target existence filtered before recording the winner; audit rows record the applied (post-degrade) action. — 2026-07-10
+- [x] Milestone 1: DistillSpec tests — re-run idempotency, consolidation-failure, multi-target merge with a missing target. — 2026-07-10 (commit `159bbf3`; `cabal test all` → 19 passed)
+- [x] Milestone 1 (added): retired-winner guard — a deterministic winner id that already exists in a non-active state means the atom is already represented; skip rather than merge an active target into a tombstone. — 2026-07-10
+- [x] Milestone 1 (added): `DistillSpec` no longer chdirs the process; tasty runs cases concurrently. — 2026-07-10
 - [ ] Milestone 2: migration `kioku-l1-watermarks` + `Migrations.hs` touch.
 - [ ] Milestone 2: watermark read/skip/write in `distillSessionL1`, new `L1RunMode` and `L1Outcome` types, call sites updated (worker fire, CLI distill `--force`, tests).
 - [ ] Milestone 2: single deterministic idle-timer id per session in `Kioku.Distill.Timer`; ramp/final ids keyed on stable inputs.
@@ -93,6 +95,28 @@ implementation. Provide concise evidence.
   `Nothing` is retried every ~300 seconds forever. Every failure this plan converts from
   "silently succeed" to "return Nothing" must therefore be safe under unbounded retries —
   which the deterministic ids and the watermark provide.
+- (Milestone 1, 2026-07-10) The self-merge guard the plan specified is necessary but
+  **not sufficient**. The plan's guard only drops a merge target whose id equals the
+  winner id. The destructive case that actually shows up on the very first re-run of the
+  existing fixture is different: atom A's deterministic winner `W_A` was *merged away*
+  into atom B's winner `W_B` during pass 1. On pass 2, the scope's only active memory is
+  `W_B`, so the consolidator returns `MergeAtom [W_B]` for atom A. Here `W_B /= W_A`, so
+  the plan's guard does not fire; `Memory.record W_A` is a no-op (the row exists, status
+  `merged`), and `Memory.merge W_B W_A` then merges the only *active* memory into a
+  tombstone — leaving the scope with zero active memories. Evidence: without the extra
+  guard, `testRerunIdempotent` fails with `active == 0` after the second pass.
+  The fix is a second guard on the merge/update path: look up the winner id before
+  writing anything, and if the row exists with `status /= 'active'`, treat the atom as
+  already represented and skip. Deterministic identity plus "an id I have already retired
+  means I have already processed this exact atom" is what makes the pass convergent.
+- (Milestone 1, 2026-07-10) `DistillSpec` wrapped its single test in
+  `withSystemTempDirectory` + `withCurrentDirectory`. `withCurrentDirectory` mutates the
+  process-wide working directory, and tasty runs test cases concurrently by default — the
+  moment the spec grew a second database-backed case, cases raced and failed with
+  `changeWorkingDirectory: does not exist`. The chdir was vestigial: `ephemeral-pg`'s
+  `startCached` puts its cluster under `XDG_CACHE_HOME`/`~/.cache/ephemeral-pg`
+  (`ephemeral-pg/src/EphemeralPg/Internal/Cache.hs`, `defaultCacheConfig`), never in the
+  working directory, and no other spec in `kioku-core/test/` chdirs. Removed.
 
 
 ## Decision Log
@@ -204,6 +228,27 @@ Record every decision made while working on the plan.
   record a merge that never happened. Normalizing instead of rejecting wherever a
   canonical form exists avoids wedging a timer on output the model produces persistently.
   Date: 2026-07-07
+- Decision: (Milestone 1, implementation) Add a *retired-winner* guard alongside the
+  planned self-merge guard: on the `UpdateAtom`/`MergeAtom` paths, look up the
+  deterministic winner id before any write, and if the row exists with a non-`active`
+  status, return `AppliedSkipped` with the note "this atom was already distilled and is
+  now <status>; already represented". The `StoreAtom` path needs no such guard —
+  `Memory.record` already no-ops on an existing id regardless of status, so it can neither
+  resurrect nor duplicate.
+  Rationale: see Surprises & Discoveries. Without it, the second pass over an unchanged
+  session merges the scope's only active memory into a tombstone. The rule generalizes
+  cleanly: a deterministic id that has already been retired is proof that this exact atom
+  was processed and folded into something else.
+  Date: 2026-07-10
+- Decision: (Milestone 1, implementation) `AppliedDecision` became a record carrying the
+  applied action, the winner id, the surviving targets, and an optional degradation note,
+  replacing the three-constructor sum. `writeAudit` derives the audit row's `decision`,
+  `target_ids`, `result_memory_id`, and rationale suffix from it.
+  Rationale: the plan required the audit to record the applied (post-degrade) action and
+  the surviving targets. Threading an "effective action" argument alongside the old sum
+  would have let the two drift; making the applied decision the single source for the
+  audit row makes that impossible by construction.
+  Date: 2026-07-10
 - Decision: Keep the fire result as `Maybe EventId` and keep `Nothing` as the only failure
   signal, per the MasterPlan integration contract; classify nothing here.
   Rationale: `docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md`

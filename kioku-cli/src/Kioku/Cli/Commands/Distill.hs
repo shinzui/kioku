@@ -8,7 +8,7 @@ where
 
 import Data.Text qualified as Text
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
-import Kioku.Distill.L1 (L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
+import Kioku.Distill.L1 (L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
 import Kioku.Id (SessionId, idText, parseIdAnyPrefix)
 import Kioku.Memory.Embedding (resolveEmbeddingConfig, toEmbeddingModel)
@@ -23,7 +23,8 @@ data CandidateSource = CandidateScan | CandidateRecall
 data DistillOptions = DistillOptions
   { sessionId :: !SessionId,
     candidateSource :: !CandidateSource,
-    candidateLimit :: !Int
+    candidateLimit :: !Int,
+    force :: !Bool
   }
   deriving stock (Eq, Show)
 
@@ -57,6 +58,10 @@ sessionOptionsParser =
           <> value 5
           <> help "Maximum merge candidates per extracted atom"
       )
+    <*> switch
+      ( long "force"
+          <> help "Re-run even when the session has no turns newer than the last successful pass"
+      )
 
 runDistill :: DistillOptions -> IO ()
 runDistill opts = do
@@ -77,11 +82,18 @@ runDistill opts = do
             pure (recallCandidates (toEmbeddingModel config) capability opts.candidateLimit)
           _ ->
             pure (scopedScanCandidates opts.candidateLimit)
-      distillSessionL1 rt finder opts.sessionId
+      distillSessionL1 (runMode opts) rt finder opts.sessionId
     case result of
       Left storeErr -> ioError (userError ("kioku distill store error: " <> show storeErr))
       Right (Left l1Err) -> ioError (userError ("kioku distill error: " <> show l1Err))
-      Right (Right summary) -> printSummary opts.sessionId summary
+      Right (Right (L1Distilled summary)) -> printSummary opts.sessionId summary
+      Right (Right L1SkippedUpToDate) ->
+        putStrLn "Session already distilled (no new turns); use --force to re-run."
+
+runMode :: DistillOptions -> L1RunMode
+runMode opts
+  | opts.force = IgnoreWatermark
+  | otherwise = RespectWatermark
 
 parseSessionId :: String -> Either String SessionId
 parseSessionId raw =

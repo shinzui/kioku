@@ -16,7 +16,7 @@ import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Telemetry (KeiroMetrics)
 import Keiro.Timer (TimerId (..), TimerRow (..), runTimerWorker)
-import Kioku.Distill.L1 (FindMergeCandidates, L1Error (..), distillSessionL1)
+import Kioku.Distill.L1 (FindMergeCandidates, L1Error (..), L1RunMode (..), distillSessionL1)
 import Kioku.Distill.L2 (fireL2SceneTimer)
 import Kioku.Distill.L3 (fireL3PersonaTimer)
 import Kioku.Distill.Runtime (DistillRuntime)
@@ -41,10 +41,11 @@ fireL1Timer rt finder row
         Left _err ->
           pure (Just (timerMarkerEventId row.timerId))
         Right sid -> do
-          result <- distillSessionL1 rt finder sid
+          result <- distillSessionL1 RespectWatermark rt finder sid
           pure $
             case result of
-              Right _summary -> Just (timerMarkerEventId row.timerId)
+              -- Both a real pass and a watermark skip mean this timer is done.
+              Right _outcome -> Just (timerMarkerEventId row.timerId)
               Left (L1SessionNotFound _) -> Just (timerMarkerEventId row.timerId)
               Left _err -> Nothing
 
