@@ -58,10 +58,10 @@ This section must always reflect the actual current state of the work.
 - [x] Milestone 2: watermark read/skip/write in `distillSessionL1`, new `L1RunMode` and `L1Outcome` types, call sites updated (worker fire, CLI distill `--force`, tests). — 2026-07-10
 - [x] Milestone 2: single deterministic idle-timer id per session in `Kioku.Distill.Timer`; ramp/final ids keyed on stable inputs. — 2026-07-10
 - [x] Milestone 2: DistillSpec tests — watermark skip without any LLM call; timer-row collapse (one idle row after N turns). — 2026-07-10 (commit `c6c3677`; timer test verified to fail with 3 idle rows against the old `fireAt`-keyed ids)
-- [ ] Milestone 3: worker wires `recallCandidates` instead of `scopedScanCandidates 5`.
-- [ ] Milestone 3: DistillSpec candidate-truncation test (duplicate outside the first five rows is found and merged).
-- [ ] Milestone 4: real `Validatable` instances for `ExtractOutput` and `ConsolidationDecision` + unit tests.
-- [ ] Milestone 5: full-suite validation, optional live end-to-end transcript, retrospective written.
+- [x] Milestone 3: worker wires `recallCandidates` instead of `scopedScanCandidates 5`. — 2026-07-10 (commit `d63f93a`; `kioku-cli` gains an `effectful` dependency)
+- [x] Milestone 3: DistillSpec candidate-truncation test (duplicate outside the first five rows is found and merged). — 2026-07-10 (runs both finders over identical scopes; the scan half pins the defect)
+- [x] Milestone 4: real `Validatable` instances for `ExtractOutput` and `ConsolidationDecision` + unit tests. — 2026-07-10 (commit `de9360a`; 9 pure test cases)
+- [x] Milestone 5: full-suite validation, live end-to-end transcript, retrospective written. — 2026-07-10 (`cabal test all` → 31 passed; live scenario below, LLM leg not exercised — no `ANTHROPIC_API_KEY`)
 
 
 ## Surprises & Discoveries
@@ -131,6 +131,24 @@ implementation. Provide concise evidence.
   temporarily restoring the `fireAt`-keyed idle id makes it fail with
   `expected: 1 / but got: 3` (three distinct idle rows for a 3-turn session; the start
   event's idle collides with turn 1's because they share a timestamp).
+- (Milestone 4, 2026-07-10) The replay fixtures in `DistillSpec` exercise the new validators
+  for free: shikumi's adapters call `fromModelChecked` on every parse, so a fixture whose
+  `MergeAtom` carried an unparseable target would now fail the pass. All existing fixtures
+  were already valid, and `testMergeMissingTarget`'s ghost id is a real (parseable) TypeID,
+  which is exactly the belt-and-braces split intended: validation rejects *unparseable*
+  targets, L1 drops *nonexistent* ones.
+- (Milestone 4, 2026-07-10) Three latent warnings were surfaced by a `-Wall` pass that an
+  earlier `error:`-only grep had hidden: a redundant `Data.Text` import in `Consolidate.hs`,
+  `folded` in `L1.hs` shadowing `Control.Lens.Fold.folded` (re-exported by `Kioku.Prelude`),
+  and a redundant `IOE :> es` on `readWatermark`. All fixed; the tree now builds warning-free.
+- (Milestone 5, 2026-07-10) The live scenario in Validation and Acceptance cannot run its LLM
+  leg here: no `ANTHROPIC_API_KEY` is present, so a real first pass is impossible. The
+  watermark short-circuit was still demonstrated end-to-end against the dev database by
+  seeding the watermark row directly (see Outcomes & Retrospective for the transcript). The
+  discriminator is that `--force` reports `L1ExtractionFailed` — it reached the extraction
+  model and failed on credentials — while the unforced run prints the skip message and never
+  gets there. The `psql` commands in Validation and Acceptance also need
+  `kiroku.keiro_timers`, not `keiro.keiro_timers`, at the current keiro pin.
 - (Milestone 1, 2026-07-10) `DistillSpec` wrapped its single test in
   `withSystemTempDirectory` + `withCurrentDirectory`. `withCurrentDirectory` mutates the
   process-wide working directory, and tasty runs test cases concurrently by default — the
@@ -287,7 +305,91 @@ Record every decision made while working on the plan.
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original purpose.
 
-(To be filled during and after implementation.)
+All five milestones landed on 2026-07-10 across four commits: `159bbf3` (identity and
+failure semantics), `c6c3677` (watermark and debounce), `d63f93a` (recall candidates), and
+`de9360a` (output validation). The tree builds warning-free and `cabal test all` reports
+31 passing tests, up from 19 before this plan.
+
+### Against the original purpose
+
+Every claim in Purpose / Big Picture is now covered by a test that fails against the
+pre-plan code:
+
+| Promise | Test | Pre-plan behavior |
+|---|---|---|
+| Re-fire with no new turns is a cheap read | `watermark skips re-extraction until a new turn arrives` | full LLM extraction + consolidation, every fire |
+| Re-fire after partial failure converges | `re-running distillSessionL1 creates no new memories or audit rows` | fresh ids per pass, duplicate memories and audit rows |
+| Consolidation failures are failures | `consolidation failure stores nothing and fails the pass` | `fallbackStoreDecision` stored the candidate |
+| Consolidator sees the whole scope | `recall candidates find a duplicate outside the scan window` | first five rows of a `priority ASC` scan |
+| One idle timer per session | `a session accumulates one idle timer however many turns` | one row per turn (verified: 3 rows for a 3-turn session) |
+| Bad LLM output is rejected, not coerced | `extract and consolidate outputs are clamped and rejected` | `validate = Right` |
+
+The self-merge hazard the plan anticipated turned out to have a second, sharper form that
+the planned guard did not cover — a winner id that had already been *merged away*, so the
+retry would merge the scope's only active memory into a tombstone. Both guards are in
+place and the re-run test would fail without the second one. This is the one place where
+implementation found a defect the design pass missed, and it argues for writing the
+convergence test before the convergence code: the test found it on the first run.
+
+### Live evidence (dev database, 2026-07-10)
+
+The migration applies to a real database and the debounce holds there:
+
+```text
+$ just migrate
+Applying 2026-07-10-14-41-38-kioku-l1-watermarks.sql (8ms)
+Successfully applied all migrations to kioku
+
+$ cabal run kioku -- demo-session
+Recorded session kioku_session_01kx68pav2ey992ggrk5y5evjg with status completed
+
+$ psql -tAc "SELECT payload->>'kind', count(*), min(status) FROM kiroku.keiro_timers
+             WHERE correlation_id = 'kioku_session_01kx68pav2ey992ggrk5y5evjg'
+             GROUP BY 1 ORDER BY 1;"
+final|1|scheduled
+idle|1|scheduled          <- one idle row, not one per turn
+ramp|1|scheduled
+```
+
+The watermark short-circuit, shown to happen *before* the LLM call. No `ANTHROPIC_API_KEY`
+is available here, so a real first pass is impossible and the watermark row was seeded
+directly; the absence of credentials is what makes the observation sharp, because any run
+that reaches the extraction model fails loudly:
+
+```text
+$ cabal run kioku -- distill session <sid>            # no watermark row yet
+kioku distill error: L1ExtractionFailed ...           # reached the LLM
+
+$ psql -tAc "INSERT INTO kiroku.kioku_l1_watermarks (session_id, last_turn_index)
+             VALUES ('<sid>', 1);"
+
+$ cabal run kioku -- distill session <sid>            # watermark covers turn 1
+Session already distilled (no new turns); use --force to re-run.   # never reached the LLM
+
+$ cabal run kioku -- distill session <sid> --force
+kioku distill error: L1ExtractionFailed ...           # reached the LLM again
+```
+
+The hand-seeded row was deleted afterwards; the dev database holds no fabricated state.
+
+### Gaps and follow-ups
+
+- The full narrated scenario in Validation and Acceptance (`worker --timers-once` twice,
+  then a `--force` re-run showing `stored=0` against a live model) remains unrun. It needs
+  an `ANTHROPIC_API_KEY`. Everything it would demonstrate is covered by the replay tests,
+  which use the same code paths with a fixed LLM response.
+- `kioku distill` still defaults to `--candidates scan`; only the worker moved to recall.
+  That default is
+  `docs/plans/15-tighten-cli-and-api-surface-validation.md`'s to change if it wants to.
+- `fireL1Timer` still returns `Maybe EventId`, so `L1ExtractionFailed`,
+  `L1ConsolidationFailed`, and `L1MemoryReadFailed` are all retried indefinitely at keiro's
+  default ~300s cadence. That is safe (the whole point of this plan) but not bounded;
+  `docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md`
+  owns the bound. When it lands, classify those three as retry-later and `L1SessionNotFound`
+  as success.
+- Pre-existing scheduled timers written with the old `fireAt`-keyed ids will fire once each,
+  hit the watermark, and complete as cheap no-ops. No data migration is needed, but a
+  database with a long-running session may briefly show several idle rows for it.
 
 
 ## Context and Orientation
@@ -605,7 +707,8 @@ Tests:
   Then record one more turn, run again with the same failing runtime, and assert the
   result is now `Left (L1ExtractionFailed _)` — proving new turns re-enable extraction.
 - *Timer collapse*: after `writeFixtureSession` (3 turns + complete), query
-  `keiro.keiro_timers` for `process_manager_name = 'kioku-l1-extract'` and the session's
+  `kiroku.keiro_timers` (unqualified at the current keiro pin; see Surprises & Discoveries)
+  for `process_manager_name = 'kioku-l1-extract'` and the session's
   correlation id, grouping by payload kind. Expect exactly one `idle` row (with `fire_at`
   equal to the last turn's `recordedAt + 30min`), ramp rows for turns 1 and 2 only, and
   one `final` row. Against the old code this returns four idle rows — the test fails
@@ -774,7 +877,7 @@ cabal run kioku -- distill session <sid> --force
 # -> Distilled session <sid>: extracted=N stored=0 merged=M skipped=K
 psql "$PG_CONNECTION_STRING" -c "SELECT count(*) FROM kiroku.kioku_memories WHERE session_id = '<sid>';"
 # -> the same count before and after the --force re-run
-psql "$PG_CONNECTION_STRING" -c "SELECT count(*) FROM keiro.keiro_timers WHERE correlation_id = '<sid>' AND payload->>'kind' = 'idle';"
+psql "$PG_CONNECTION_STRING" -c "SELECT count(*) FROM kiroku.keiro_timers WHERE correlation_id = '<sid>' AND payload->>'kind' = 'idle';"
 # -> 1
 ```
 

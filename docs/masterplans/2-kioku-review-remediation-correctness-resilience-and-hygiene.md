@@ -76,7 +76,7 @@ bootstrap against both pinned and HEAD keiro) is entirely different from EP-5's
 
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
-| 1 | Make L1 distillation idempotent and debounce distillation timers | docs/plans/9-make-l1-distillation-idempotent-and-debounce-distillation-timers.md | None | None | In Progress |
+| 1 | Make L1 distillation idempotent and debounce distillation timers | docs/plans/9-make-l1-distillation-idempotent-and-debounce-distillation-timers.md | None | None | Complete |
 | 2 | Propagate memory forget operations to scenes, personas, and workspace mirrors | docs/plans/10-propagate-memory-forget-operations-to-scenes-personas-and-workspace-mirrors.md | None | EP-1 | Not Started |
 | 3 | Harden worker resilience with ack policy, bounded retries, and loop supervision | docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md | None | None | Not Started |
 | 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | Not Started |
@@ -168,11 +168,11 @@ conflict. EP-3 owns the file's structure; the other two make local edits and reb
 Track milestone-level progress across all child plans. Each entry names the child plan
 and the milestone. This section provides an at-a-glance view of the entire initiative.
 
-- [ ] EP-1 M1: deterministic identity and honest failure inside the L1 pass
-- [ ] EP-1 M2: per-session watermark and debounced timers (kioku_l1_watermarks migration)
-- [ ] EP-1 M3: recall-based merge candidates in the worker
-- [ ] EP-1 M4: real validation for distillation LLM outputs
-- [ ] EP-1 M5: end-to-end verification and evidence
+- [x] EP-1 M1: deterministic identity and honest failure inside the L1 pass — 2026-07-10 (`159bbf3`)
+- [x] EP-1 M2: per-session watermark and debounced timers (kioku_l1_watermarks migration) — 2026-07-10 (`c6c3677`)
+- [x] EP-1 M3: recall-based merge candidates in the worker — 2026-07-10 (`d63f93a`)
+- [x] EP-1 M4: real validation for distillation LLM outputs — 2026-07-10 (`de9360a`)
+- [x] EP-1 M5: end-to-end verification and evidence — 2026-07-10 (`cabal test all` → 31 passed, up from 19)
 - [ ] EP-2 M1: forget events schedule scene-regeneration timers
 - [ ] EP-2 M2: emptied scopes delete scene/persona rows and mirror files without the LLM
 - [ ] EP-2 M3: end-to-end — the timer worker propagates forgetting to every artifact
@@ -250,6 +250,39 @@ working tree or the pinned framework sources by the authoring pass:
   EP-7's renames/removals are safe; hosts calling `runKiokuMigrations` as a library must
   adopt EP-6's `reconcileReadModelRegistry` (documented in EP-6 M4).
 
+Discovered during EP-1 implementation (2026-07-10), affecting sibling plans:
+
+- **The keiro timer table is `kiroku.keiro_timers`, not `keiro.keiro_timers`, at the
+  current pin.** Verified against the pinned checkout (`f1d67a01`,
+  `dist-newstyle/src/keiro-*/keiro/src/Keiro/Timer/Schema.hs` reads
+  `INSERT INTO keiro_timers` unqualified, and `keiro-bootstrap.sql` opens with
+  `SET search_path TO kiroku, pg_catalog`). keiro HEAD *has* relocated the tables — that
+  relocation is exactly what EP-6 handles. Any plan writing SQL against keiro's tables
+  before EP-6 lands must use `kiroku.keiro_timers` or rely on search_path. EP-1's plan
+  text and this MasterPlan's original assumption both said `keiro.` and were wrong.
+- **`Kioku.Distill.L1` signature changed** in ways EP-3 and EP-7 will meet:
+  `distillSessionL1 :: L1RunMode -> DistillRuntime -> FindMergeCandidates es -> SessionId ->
+  Eff es (Either L1Error L1Outcome)`; `FindMergeCandidates` now returns
+  `Either ReadModelError [MemoryRecord]`; `L1Error` gained `L1ConsolidationFailed`.
+  EP-3's `FireOutcome` migration should map `L1ExtractionFailed`, `L1ConsolidationFailed`,
+  and `L1MemoryReadFailed` to retry-later, and both `L1Distilled`/`L1SkippedUpToDate` plus
+  `L1SessionNotFound` to completed.
+- **`kioku-cli` now depends on `effectful`** (EP-1 M3 needed the effect row in
+  `mergeCandidateFinder`'s signature). EP-7's dead-dependency sweep should not remove it.
+- **`Kioku.Distill.Timer` exports changed**: `l1TimerId` is gone, replaced by
+  `l1IdleTimerId`, `l1RampTimerId`, and `l1FinalTimerId`. `l1ExtractProcessManagerName` is
+  unchanged, as EP-3's dispatcher and EP-6's reconciliation both require.
+- **`DistillSpec` no longer chdirs.** Tasty runs cases concurrently, and the spec's
+  `withCurrentDirectory` raced as soon as a second database-backed case existed. Any
+  sibling plan adding concurrent database tests should not reintroduce a process-wide
+  chdir; `ephemeral-pg` keeps its cluster under `XDG_CACHE_HOME`, not the working directory.
+- **The design pass missed a destructive case that a test caught immediately.** EP-1's
+  planned self-merge guard (drop a target equal to the winner id) does not cover a winner
+  id that was *already merged away* on a prior pass: the retry would then merge the scope's
+  only active memory into a tombstone, leaving zero active rows. Plans that introduce
+  deterministic identity over mutable rows (none of the remaining six do today) need the
+  companion guard: a deterministic id found in a retired state means "already processed".
+
 
 ## Decision Log
 
@@ -323,6 +356,16 @@ Compare the result against the original vision.
 (To be filled during and after implementation.)
 
 ## Revision Notes
+
+- 2026-07-10: EP-1 implemented and marked Complete (commits `159bbf3`, `c6c3677`,
+  `d63f93a`, `de9360a`). Checked off EP-1's five Progress milestones. Recorded six
+  implementation discoveries in Surprises & Discoveries, three of which change sibling
+  plans' assumptions: keiro's timer table is `kiroku.keiro_timers` at the current pin (this
+  document previously said `keiro.`), `distillSessionL1`/`FindMergeCandidates`/`L1Error`
+  changed shape for EP-3 to migrate, and `kioku-cli` acquired an `effectful` dependency
+  that EP-7's dead-dependency sweep must not remove. The Integration Points section's
+  fire-outcome contract is unchanged: EP-1 kept `Maybe EventId` and is correct under
+  unbounded re-fires, as designed.
 
 - 2026-07-07: Post-authoring reconciliation pass after all seven child plans were written.
   Corrected the fire-outcome integration point to the real type (`Maybe EventId`, replaced
