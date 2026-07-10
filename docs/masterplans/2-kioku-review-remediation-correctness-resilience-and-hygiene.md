@@ -76,7 +76,7 @@ bootstrap against both pinned and HEAD keiro) is entirely different from EP-5's
 
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
-| 1 | Make L1 distillation idempotent and debounce distillation timers | docs/plans/9-make-l1-distillation-idempotent-and-debounce-distillation-timers.md | None | None | Not Started |
+| 1 | Make L1 distillation idempotent and debounce distillation timers | docs/plans/9-make-l1-distillation-idempotent-and-debounce-distillation-timers.md | None | None | In Progress |
 | 2 | Propagate memory forget operations to scenes, personas, and workspace mirrors | docs/plans/10-propagate-memory-forget-operations-to-scenes-personas-and-workspace-mirrors.md | None | EP-1 | Not Started |
 | 3 | Harden worker resilience with ack policy, bounded retries, and loop supervision | docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md | None | None | Not Started |
 | 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | Not Started |

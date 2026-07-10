@@ -12,6 +12,7 @@ import Data.ByteString.Lazy qualified as BL
 import Data.Foldable (traverse_)
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int64)
+import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
 import Data.Vector qualified as Vector
@@ -25,16 +26,19 @@ import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Stream qualified as Stream
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Distill.Consolidate (ConsolidateInput (..), ExistingMemory (..), consolidateProgram)
 import Kioku.Distill.Extract (extractProgram)
-import Kioku.Distill.L1 (L1Summary (..), distillSessionL1, scopedScanCandidates)
+import Kioku.Distill.L1 (L1Error (..), L1Summary (..), distillSessionL1, scopedScanCandidates)
 import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, regenerateScene)
 import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, regeneratePersona)
 import Kioku.Distill.Persona (personaProgram)
 import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
 import Kioku.Distill.Scene (sceneProgram)
-import Kioku.Id (MemoryId, SessionId, genSessionId, idText, parseIdAnyPrefix)
+import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText, parseIdAnyPrefix)
+import Kioku.Memory qualified as Memory
+import Kioku.Memory.Domain (RecordMemoryData (..))
 import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
@@ -47,15 +51,13 @@ import Kiroku.Store.Read (readStreamForward)
 import Kiroku.Store.Transaction (runTransaction)
 import Kiroku.Store.Types (EventType (..), RecordedEvent (..), StreamVersion (..))
 import Shikumi.Effect.Time (runTime)
-import Shikumi.Error (ShikumiError)
+import Shikumi.Error (ShikumiError (..))
 import Shikumi.LLM (LLM (..))
 import Shikumi.Program (Program, runProgram)
 import Shikumi.Schema.Types (unField)
 import Shikumi.Trace (runTrace, tracedLLM)
 import Shikumi.Trace.Replay (runLLMReplay)
 import Shikumi.Trace.Store (replayIndex)
-import System.Directory (withCurrentDirectory)
-import System.IO.Temp (withSystemTempDirectory)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 
@@ -63,7 +65,10 @@ tests :: TestTree
 tests =
   testGroup
     "Distillation pyramid"
-    [ testCase "replay distills duplicate turns into merged atom scene and persona" testReplayDistillation
+    [ testCase "replay distills duplicate turns into merged atom scene and persona" testReplayDistillation,
+      testCase "re-running distillSessionL1 creates no new memories or audit rows" testRerunIdempotent,
+      testCase "consolidation failure stores nothing and fails the pass" testConsolidationFailure,
+      testCase "merge with a missing target drops it and stays convergent" testMergeMissingTarget
     ]
 
 data MemoryStatus = MemoryStatus
@@ -80,6 +85,13 @@ data ScopeParams = ScopeParams
   }
   deriving stock (Generic, Eq, Show)
 
+data AuditRowView = AuditRowView
+  { decision :: !Text,
+    targetIds :: !Text,
+    resultMemoryId :: !(Maybe Text)
+  }
+  deriving stock (Generic, Eq, Show)
+
 data DistillResult = DistillResult
   { summary :: !L1Summary,
     memories :: ![MemoryStatus],
@@ -91,35 +103,172 @@ data DistillResult = DistillResult
   deriving stock (Generic, Show)
 
 testReplayDistillation :: Assertion
-testReplayDistillation =
-  withSystemTempDirectory "kioku-distill" \tmp ->
-    withCurrentDirectory tmp $
-      withKiokuMigratedDatabase \connStr ->
-        withStore (defaultConnectionSettings connStr) \st -> do
-          tracer <- noopTracer
-          runtime <- replayRuntime
-          sid <- genSessionId
-          now <- getCurrentTime
-          let scope = ScopeEntity (Namespace "rei") (ScopeKind "intention") "intention_distill_test"
-              env = AppEnv {store = st, tracer, metrics = Nothing}
-          result <-
-            runAppIO env do
-              writeFixtureSession sid scope now
-              distillResult <- distillSessionL1 runtime (scopedScanCandidates 5) sid
-              summary <- liftIO (expectRight "distillSessionL1" distillResult)
-              sceneResult <- regenerateScene runtime scope
-              _scene <- liftIO (expectRight "regenerateScene" sceneResult)
-              personaResult <- regeneratePersona runtime scope
-              _persona <- liftIO (expectRight "regeneratePersona" personaResult)
-              memories <- loadMemoryStatuses scope
-              mergeAuditCount <- loadMergeAuditCount scope
-              scenes <- getScenesByScope scope
-              persona <- getPersonaByScope scope
-              loserEvents <- loadLoserEvents memories
-              pure DistillResult {summary, memories, scenes, persona, mergeAuditCount, loserEvents}
-          case result of
-            Left storeErr -> assertFailure ("store error: " <> show storeErr)
-            Right distill -> assertDistillResult distill
+testReplayDistillation = withDistillEnv \env -> do
+  runtime <- replayRuntime
+  sid <- genSessionId
+  now <- getCurrentTime
+  let scope = fixtureScope
+  result <-
+    runAppIO env do
+      writeFixtureSession sid scope now
+      distillResult <- distillSessionL1 runtime (scopedScanCandidates 5) sid
+      summary <- liftIO (expectRight "distillSessionL1" distillResult)
+      sceneResult <- regenerateScene runtime scope
+      _scene <- liftIO (expectRight "regenerateScene" sceneResult)
+      personaResult <- regeneratePersona runtime scope
+      _persona <- liftIO (expectRight "regeneratePersona" personaResult)
+      memories <- loadMemoryStatuses scope
+      mergeAuditCount <- loadMergeAuditCount scope
+      scenes <- getScenesByScope scope
+      persona <- getPersonaByScope scope
+      loserEvents <- loadLoserEvents memories
+      pure DistillResult {summary, memories, scenes, persona, mergeAuditCount, loserEvents}
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right distill -> assertDistillResult distill
+
+-- | Run an action against a freshly migrated ephemeral database. Deliberately
+-- does not change the working directory: tasty runs test cases concurrently and
+-- the process-wide cwd would race. ephemeral-pg keeps its cluster under the XDG
+-- cache directory, so no chdir is needed.
+withDistillEnv :: (AppEnv -> IO a) -> IO a
+withDistillEnv action =
+  withKiokuMigratedDatabase \connStr ->
+    withStore (defaultConnectionSettings connStr) \st -> do
+      tracer <- noopTracer
+      action AppEnv {store = st, tracer, metrics = Nothing}
+
+fixtureScope :: MemoryScope
+fixtureScope =
+  ScopeEntity (Namespace "rei") (ScopeKind "intention") "intention_distill_test"
+
+-- | A second pass over an unchanged session must converge: the deterministic
+-- atom ids mean every write is a no-op and the deterministic audit key means
+-- @ON CONFLICT DO NOTHING@ suppresses duplicate audit rows.
+testRerunIdempotent :: Assertion
+testRerunIdempotent = withDistillEnv \env -> do
+  runtime <- replayRuntime
+  sid <- genSessionId
+  now <- getCurrentTime
+  result <-
+    runAppIO env do
+      writeFixtureSession sid fixtureScope now
+      first <- distillSessionL1 runtime (scopedScanCandidates 5) sid
+      summary1 <- liftIO (expectRight "first pass" first)
+      memories1 <- loadMemoryStatuses fixtureScope
+      audits1 <- loadAuditCount fixtureScope
+      second <- distillSessionL1 runtime (scopedScanCandidates 5) sid
+      summary2 <- liftIO (expectRight "second pass" second)
+      memories2 <- loadMemoryStatuses fixtureScope
+      audits2 <- loadAuditCount fixtureScope
+      pure (summary1, memories1, audits1, summary2, memories2, audits2)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (summary1, memories1, audits1, summary2, memories2, audits2) -> do
+      summary1.stored @?= 1
+      summary1.merged @?= 1
+      length memories1 @?= 2
+      audits1 @?= 2
+      summary2.extracted @?= 2
+      summary2.stored @?= 0
+      summary2.merged @?= 0
+      summary2.skipped @?= 2
+      memories2 @?= memories1
+      audits2 @?= audits1
+      length [() | row <- memories2, row.status == "active"] @?= 1
+
+-- | A consolidation LLM failure is a failed pass, not a silent store.
+testConsolidationFailure :: Assertion
+testConsolidationFailure = withDistillEnv \env -> do
+  base <- replayRuntime
+  let runtime = base {runConsolidate = \_ -> pure (Left (ValidationFailure "boom"))}
+  sid <- genSessionId
+  now <- getCurrentTime
+  result <-
+    runAppIO env do
+      writeFixtureSession sid fixtureScope now
+      distilled <- distillSessionL1 runtime (scopedScanCandidates 5) sid
+      memories <- loadMemoryStatuses fixtureScope
+      audits <- loadAuditCount fixtureScope
+      pure (distilled, memories, audits)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (distilled, memories, audits) -> do
+      case distilled of
+        Left (L1ConsolidationFailed _) -> pure ()
+        other -> assertFailure ("expected L1ConsolidationFailed, got " <> show other)
+      memories @?= []
+      audits @?= 0
+
+-- | A hallucinated-but-parseable merge target is dropped before the winner is
+-- recorded, the audit records only the surviving target, and a re-run converges.
+testMergeMissingTarget :: Assertion
+testMergeMissingTarget = withDistillEnv \env -> do
+  base <- replayRuntime
+  existingId <- genMemoryId
+  ghostId <- genMemoryId
+  let mergeResponse = mergeTargetsResponse [idText existingId, idText ghostId]
+      runtime =
+        base
+          { runExtract = replayProgram singleAtomExtractResponse extractProgram,
+            runConsolidate = replayProgram mergeResponse consolidateProgram
+          }
+  sid <- genSessionId
+  now <- getCurrentTime
+  result <-
+    runAppIO env do
+      writeFixtureSession sid fixtureScope now
+      seedMemory existingId sid fixtureScope "The user likes concise answers." now
+      first <- distillSessionL1 runtime (scopedScanCandidates 5) sid
+      summary1 <- liftIO (expectRight "first pass" first)
+      memories1 <- loadMemoryStatuses fixtureScope
+      audits1 <- loadAuditRows fixtureScope
+      second <- distillSessionL1 runtime (scopedScanCandidates 5) sid
+      void (liftIO (expectRight "second pass" second))
+      memories2 <- loadMemoryStatuses fixtureScope
+      audits2 <- loadAuditRows fixtureScope
+      pure (summary1, memories1, audits1, memories2, audits2)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (summary1, memories1, audits1, memories2, audits2) -> do
+      summary1.extracted @?= 1
+      summary1.merged @?= 1
+      assertBool "seeded memory is merged away" $
+        any (\row -> row.memoryId == idText existingId && row.status == "merged") memories1
+      length [() | row <- memories1, row.status == "active"] @?= 1
+      case audits1 of
+        [audit] -> do
+          audit.decision @?= "merge"
+          audit.targetIds @?= encodeJsonText [idText existingId]
+        other -> assertFailure ("expected exactly one audit row, got " <> show (length other))
+      memories2 @?= memories1
+      audits2 @?= audits1
+
+seedMemory ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  MemoryId ->
+  SessionId ->
+  MemoryScope ->
+  Text ->
+  UTCTime ->
+  Eff es ()
+seedMemory memoryId sid scope content now = do
+  recorded <-
+    Memory.record
+      RecordMemoryData
+        { memoryId,
+          agentId = "test-agent",
+          sessionId = Just sid,
+          scope,
+          memoryType = MemoryPreference,
+          content,
+          priority = 50,
+          confidence = HighConfidence,
+          tags = Set.fromList ["seed"],
+          supersedes = Nothing,
+          recordedAt = now
+        }
+  void (liftIO (expectRight "Memory.record" recorded))
 
 writeFixtureSession ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
@@ -256,6 +405,30 @@ consolidateResponse input =
           "[[ ## completed ## ]]"
         ]
 
+singleAtomExtractResponse :: Text
+singleAtomExtractResponse =
+  """
+  [[ ## atoms ## ]]
+  [
+    {"atomType":"preference","content":"The user prefers concise answers.","priority":50,"confidence":"high"}
+  ]
+  [[ ## completed ## ]]
+  """
+
+mergeTargetsResponse :: [Text] -> Text
+mergeTargetsResponse targets =
+  Text.unlines
+    [ "[[ ## action ## ]]",
+      "MergeAtom",
+      "[[ ## targetMemoryIds ## ]]",
+      encodeJsonText targets,
+      "[[ ## resultContent ## ]]",
+      "The user prefers concise answers.",
+      "[[ ## rationale ## ]]",
+      "The candidate restates the existing concise-answer preference.",
+      "[[ ## completed ## ]]"
+    ]
+
 sceneResponse :: Text
 sceneResponse =
   """
@@ -292,6 +465,22 @@ loadMergeAuditCount scope =
   runTransaction $
     Tx.statement (scopeParams scope) selectMergeAuditCountStmt
 
+loadAuditCount ::
+  (Store :> es) =>
+  MemoryScope ->
+  Eff es Int64
+loadAuditCount scope =
+  runTransaction $
+    Tx.statement (scopeParams scope) selectAuditCountStmt
+
+loadAuditRows ::
+  (Store :> es) =>
+  MemoryScope ->
+  Eff es [AuditRowView]
+loadAuditRows scope =
+  runTransaction $
+    Tx.statement (scopeParams scope) selectAuditRowsStmt
+
 loadLoserEvents ::
   (Store :> es) =>
   [MemoryStatus] ->
@@ -326,6 +515,40 @@ selectMemoryStatusesStmt =
     """
     scopeParamsEncoder
     (D.rowList memoryStatusDecoder)
+
+selectAuditCountStmt :: Statement ScopeParams Int64
+selectAuditCountStmt =
+  preparable
+    """
+    SELECT count(*)
+    FROM kioku_consolidation_decisions
+    WHERE namespace = $1
+      AND ((scope_kind = $2 AND scope_ref = $3)
+           OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL))
+    """
+    scopeParamsEncoder
+    (D.singleRow (D.column (D.nonNullable D.int8)))
+
+selectAuditRowsStmt :: Statement ScopeParams [AuditRowView]
+selectAuditRowsStmt =
+  preparable
+    """
+    SELECT decision, target_ids::text, result_memory_id
+    FROM kioku_consolidation_decisions
+    WHERE namespace = $1
+      AND ((scope_kind = $2 AND scope_ref = $3)
+           OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL))
+    ORDER BY decided_at ASC
+    """
+    scopeParamsEncoder
+    (D.rowList auditRowViewDecoder)
+
+auditRowViewDecoder :: D.Row AuditRowView
+auditRowViewDecoder =
+  AuditRowView
+    <$> D.column (D.nonNullable D.text)
+    <*> D.column (D.nonNullable D.text)
+    <*> D.column (D.nullable D.text)
 
 selectMergeAuditCountStmt :: Statement ScopeParams Int64
 selectMergeAuditCountStmt =
