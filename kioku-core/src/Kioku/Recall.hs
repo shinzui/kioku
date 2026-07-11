@@ -78,8 +78,15 @@ import Kiroku.Store.Transaction (runTransaction)
 data RecallStrategy = Keyword | Embedding | Hybrid
   deriving stock (Generic, Eq, Show)
 
+-- | A recall request.
+--
+-- __Global scope means "namespace-wide" here.__ Recall searches namespace-wide for a global
+-- scope; scoped reads are exact-scope. A 'ScopeGlobal' request returns every active memory in
+-- the namespace, entity-scoped rows included — the scope filter simply vanishes. That is the
+-- opposite of what 'getActiveByScope' does with the same value. See docs/user/recall.md.
 data RecallRequest = RecallRequest
-  { scope :: !MemoryScope,
+  { -- | 'ScopeGlobal' searches the whole namespace; an entity scope matches exactly.
+    scope :: !MemoryScope,
     query :: !Text,
     strategy :: !RecallStrategy,
     maxResults :: !Int
@@ -126,6 +133,10 @@ data FusedCandidate = FusedCandidate
   }
   deriving stock (Generic, Eq, Show)
 
+-- | Run a recall request: plan, optionally embed the query, select candidates from each
+-- active channel, fuse by reciprocal rank, score, and trim.
+--
+-- Recall searches namespace-wide for a global scope; scoped reads are exact-scope.
 recall ::
   (IOE :> es, Store :> es) =>
   EmbeddingModel ->
@@ -378,6 +389,14 @@ truncateText cap content
 clamp01 :: Double -> Double
 clamp01 = max 0 . min 1
 
+-- | Full-text candidates.
+--
+-- The scope predicate @(($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4))@
+-- is why recall searches namespace-wide for a global scope; scoped reads are exact-scope. For
+-- a global scope both parameters are NULL, the first disjunct is always true, and the filter
+-- vanishes. 'Kioku.Memory.ReadModel.selectActiveByScopeStmt' requires the columns to be NULL
+-- instead. The @ORDER BY@ here is free to carry a recency tiebreak: a GIN index provides no
+-- ordering, so there is no pathkey to preserve.
 selectFtsCandidatesStmt :: Statement RecallCandidateQuery [MemoryRecord]
 selectFtsCandidatesStmt =
   preparable
@@ -410,6 +429,9 @@ selectFtsCandidatesStmt =
 -- Recall that this is a *post-filtered* ANN scan: the namespace, scope and status predicates
 -- are applied to rows the index has already chosen by distance. See 'candidatePoolSize' for
 -- what that costs.
+--
+-- The scope predicate is the same one 'selectFtsCandidatesStmt' carries: recall searches
+-- namespace-wide for a global scope; scoped reads are exact-scope.
 selectVectorCandidatesStmt :: Statement VectorCandidateQuery [MemoryRecord]
 selectVectorCandidatesStmt =
   preparable
@@ -556,6 +578,12 @@ totalCharacterBudget = 12000
 ellipsis :: Text
 ellipsis = "..."
 
+-- | Active memories carrying __exactly__ this scope.
+--
+-- Recall searches namespace-wide for a global scope; scoped reads are exact-scope. So
+-- 'ScopeGlobal' here means "the rows recorded with no entity scope", /not/ "everything in the
+-- namespace" — a memory under @mori:repo:web@ is returned by 'recall' with scope @mori@ but
+-- not by this. For the read-side equivalent of recall's breadth, use 'getActiveInNamespace'.
 getActiveByScope ::
   (IOE :> es, Store :> es) =>
   MemoryScope ->
@@ -567,6 +595,8 @@ getActiveByScope scope =
     memoriesByScopeReadModel
     (MemoriesByScopeQuery (scopeNamespaceText scope) (scopeKindText scope) (scopeRefText scope))
 
+-- | Every active memory in the namespace, whatever its scope. This is the read-side
+-- equivalent of what 'recall' does with a global scope.
 getActiveInNamespace ::
   (IOE :> es, Store :> es) =>
   Namespace ->
@@ -574,6 +604,8 @@ getActiveInNamespace ::
 getActiveInNamespace (Namespace ns) =
   runQueryWith Nothing Eventual memoriesByNamespaceReadModel (MemoriesByNamespaceQuery ns)
 
+-- | The global bucket of a namespace: rows recorded with no entity scope. Not the same as a
+-- 'recall' scoped to the namespace, which also returns entity-scoped rows.
 getGlobal ::
   (IOE :> es, Store :> es) =>
   Namespace ->

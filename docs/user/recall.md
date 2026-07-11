@@ -43,6 +43,40 @@ embedding endpoint. `embedding` is pure semantic similarity.
    descending.
 6. **Trim.** The top `maxResults` are taken, then a character budget is applied.
 
+## Global scope: namespace-wide recall vs exact-scope reads
+
+The same `ScopeGlobal ns` value means **two different things** depending on which API you
+hand it to. This is intentional, and it is the single most surprising thing about scopes, so
+it is worth stating plainly:
+
+| You call | `ScopeGlobal ns` means | You get |
+|---|---|---|
+| **Recall** — `recall`, and the CLI's `kioku recall --scope ns` | *no scope filter* | every active memory in the namespace, **entity-scoped rows included** |
+| **Scoped reads** — `getActiveByScope`, `getGlobal`, scene and persona lookups | *the global bucket* | only rows recorded with **no** entity scope |
+
+In one line: **recall searches namespace-wide for a global scope; scoped reads are
+exact-scope.**
+
+So a memory recorded under `mori:repo:web` **is** returned by `recall` with scope `mori`,
+but is **not** returned by `getGlobal (Namespace "mori")`. Neither is a bug.
+
+The reason they differ is that they want opposite things. Search wants the largest plausible
+candidate surface — narrowing it to the global bucket would make a namespace-level query miss
+almost everything the namespace knows. Reads want exact buckets — a caller asking for "the
+global memories of `mori`" is asking for a specific set of rows, not for everything.
+
+If you want the read-side equivalent of recall's breadth, use **`getActiveInNamespace`**,
+which returns every active row in the namespace regardless of scope.
+
+Concretely, recall's scope predicate is
+
+```sql
+(($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4))
+```
+
+— for a global scope both parameters are NULL, so the first disjunct is always true and the
+scope filter vanishes. The scoped reads instead *require* the columns to be NULL.
+
 ## Scoring model
 
 The blended score for a memory combines its two reciprocal-rank-fusion (RRF) terms with three

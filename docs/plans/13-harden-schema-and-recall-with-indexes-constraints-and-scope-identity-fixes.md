@@ -62,8 +62,8 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [x] M5: add `mkNamespace`/`mkScopeKind` validators in `kioku-api` and use them in the CLI scope parser
 - [x] M5: mint the id-recompute migration for ambiguous scene/persona rows and touch `Migrations.hs` — `2026-07-11-18-18-36-kioku-scope-identity-recompute.sql`
 - [x] M5: add scope-identity collision and legacy-id-stability tests — 5 cases; SQL and Haskell verified to derive byte-identical ids
-- [ ] M6: document global-scope semantics in `docs/user/recall.md` and haddocks on both query paths
-- [ ] Final: full `cabal build all && cabal test all`, `just migrate`, retrospective written
+- [x] M6: document global-scope semantics in `docs/user/recall.md` and haddocks on both query paths
+- [x] Final: full `cabal build all && cabal test all` (106 passed, up from 88), `just migrate` clean and idempotent, retrospective written
 
 
 ## Surprises & Discoveries
@@ -469,10 +469,72 @@ Record every decision made while working on the plan.
 
 ## Outcomes & Retrospective
 
-Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
-Compare the result against the original purpose.
+All six milestones landed (commits `830a1d4`, `312769a`, `3a3f1e5`, `939cf8f`, `cdbd1f0`,
+plus this one). The suite went from 88 to 106 tests, and — for the first time — the
+vector-dependent ones actually execute rather than skipping vacuously.
 
-(To be filled during and after implementation.)
+Measured against the Purpose section's promises, one by one:
+
+- *"run `just migrate` and watch the dev database heal itself into full pgvector
+  capability"* — done, and it is the outcome I am most confident in because the degraded
+  state was real, not hypothetical: `kioku_memories.embedding` went from absent to
+  `kiroku.vector(1536)` with an HNSW index, and `kioku worker --backfill` now embeds
+  (3 memories on its first real run).
+- *"try to insert a second global-scope persona and get a unique violation"* — done
+  (23505 on `kioku_personas_scope_unique`), along with the half-populated-scope CHECK
+  (23514). Both are asserted by `SchemaSpec`, which fails against the pre-migration schema.
+- *"record memories under `ScopeGlobal (Namespace "a/b/c")` and
+  `ScopeEntity (Namespace "a") (ScopeKind "b") "c"` and get two distinct scenes and
+  personas"* — done, and the migration's SQL derivation was cross-checked against the
+  Haskell one on a real row: both produce `kioku_scene:a%2Fb%2Fc:default`.
+- *"start the worker with `KIOKU_EMBEDDING_DIMENSIONS=512` against a 1536-dimension column
+  and get one clear startup error"* — done, verified live in both directions: `--backfill`
+  exits 1 before touching an event; the continuous worker prints the mismatch and keeps
+  firing distillation timers.
+- *"read exactly why recall treats a global scope as 'search the whole namespace'"* — done
+  in `docs/user/recall.md` and in haddocks on all four query paths.
+- *"run `EXPLAIN` and see the HNSW index actually used"* — **done, but the finding is not
+  what the plan expected, and this is the milestone's real story.** See below.
+
+**What went wrong, and what it should teach the remaining plans.** M3's premise was wrong
+in both halves, and neither error would have survived a single `EXPLAIN ANALYZE` on seeded
+rows:
+
+1. The plan said the `created_at DESC` tiebreak *defeats* the HNSW index, forcing a seq
+   scan. On PostgreSQL 17 it does not — the planner supplies the second key with an
+   `Incremental Sort` over the index scan. The fix is still right, but its value is
+   robustness (index use becomes unconditional rather than contingent on incremental sort,
+   which does not exist before PostgreSQL 13), not rescue. Claiming otherwise in the commit
+   message would have been a lie.
+2. The plan prescribed `SET LOCAL hnsw.ef_search = 200`. **Shipping that would have been a
+   recall regression**, and it was not shipped. Its premise (the 40 default cannot fill a
+   50-row pool) is false — pgvector searches with `ef = max(ef_search, LIMIT)` — and the
+   change is not a neutral over-fetch: on seeded data it moved the planner off an exact
+   plan returning 50 correct rows onto an ANN scan that spent its budget on rows the scope
+   filter discarded, returning **zero**. A plan that reasons about a query planner from
+   first principles should be treated as a hypothesis, not an instruction.
+
+The gap this leaves: **filtered-ANN starvation is real, reproducible, and still unfixed.**
+It predates this work — the ORDER BY change neither causes nor cures it — and pgvector 0.8's
+`hnsw.iterative_scan` is *not* the drop-in remedy the plan assumed (`relaxed_order` returned
+zero rows on the same probe). It is documented at `candidatePoolSize` with the repro, and it
+deserves its own plan rather than a hopeful `SET`.
+
+Two smaller gaps worth naming rather than burying:
+
+- The suite's ephemeral-Postgres clusters now lose a 60-second startup race often enough to
+  matter: four full-suite runs during this plan failed on
+  `TimeoutError (ConnectionTimeout {durationSeconds = 60})` and passed on rerun (a failing
+  run takes ~65s, a healthy one ~15s). M1 added 5 database-backed cases and M3/M4 added 7
+  more, to a suite tasty already runs concurrently with `-N`. This is contention, not a
+  regression, but it makes "green" cost a rerun. Capping tasty's thread count would likely
+  fix it; that was left alone deliberately, since throttling concurrency can also mask real
+  races.
+- `nix/haskell.nix` is marked seihou-managed, and M2 edited it anyway. There was no
+  alternative: `extraDevPackages` is appended *after* `baseDevPackages`, so a
+  pgvector-enabled postgres added there would lose the PATH race to the plain one. If seihou
+  regenerates the file, the pgvector line and the `pkgs.postgresql.dev` line beside it must
+  be reapplied together, or the dev shell silently loses either pgvector or `libpq.pc`.
 
 
 ## Context and Orientation

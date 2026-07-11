@@ -355,6 +355,12 @@ selectActiveByNamespaceRowsStmt =
     (E.param (E.nonNullable E.text))
     (D.rowList memoryRowDecoder)
 
+-- | Active memories carrying __exactly__ the given scope.
+--
+-- Recall searches namespace-wide for a global scope; scoped reads are exact-scope. The
+-- predicate below /requires/ @scope_kind@ and @scope_ref@ to be NULL for a global scope,
+-- where 'Kioku.Recall.selectFtsCandidatesStmt' would drop the scope filter entirely and
+-- return the whole namespace. Both behaviours are intentional; see docs/user/recall.md.
 selectActiveByScopeStmt :: Statement (Text, Maybe Text, Maybe Text) [MemoryRecord]
 selectActiveByScopeStmt =
   preparable
