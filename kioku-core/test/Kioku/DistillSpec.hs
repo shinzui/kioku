@@ -50,7 +50,7 @@ import Kioku.Memory.Embedding (EmbeddingConfig (..), toEmbeddingModel)
 import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
-import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
+import Kioku.Recall.Capability (VectorCapability (..))
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), StartSessionData (..))
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
@@ -803,9 +803,14 @@ testRecallCandidateWindow = withDistillEnv \env -> do
                 then replayProgram (mergeTargetsResponse [idText duplicateId]) consolidateProgram input
                 else replayProgram storeAtomResponse consolidateProgram input
           }
+  -- Inject the capability rather than probing the cluster. This case is about the candidate
+  -- finder -- that recall reaches a duplicate the priority scan window hides -- and nothing
+  -- about vectors. Pinning it to the keyword plan is what makes dummyEmbeddingModel safe: it
+  -- guarantees no embedding endpoint is ever called, instead of relying on the test cluster
+  -- happening to lack pgvector, which it no longer does.
+  let capability = VectorExtensionUnavailable
   result <-
     runAppIO env do
-      capability <- detectVectorCapability
       writeRunningFixtureSession recallSid recallScope now
       seedCandidateWindow recallSid recallScope now recallDuplicateId
       recallOutcome <-
@@ -827,14 +832,10 @@ testRecallCandidateWindow = withDistillEnv \env -> do
           scanSid
       scanSummary <- liftIO (expectDistilled "scan pass" scanOutcome)
       scanMemories <- loadMemoryStatuses scanScope
-      pure (capability, recallSummary, recallMemories, scanSummary, scanMemories)
+      pure (recallSummary, recallMemories, scanSummary, scanMemories)
   case result of
     Left storeErr -> assertFailure ("store error: " <> show storeErr)
-    Right (capability, recallSummary, recallMemories, scanSummary, scanMemories) -> do
-      -- ephemeral-pg ships no pgvector, so recall runs FTS-only and never calls
-      -- the embedding endpoint. That is what makes dummyEmbeddingModel safe.
-      capability @?= VectorExtensionUnavailable
-
+    Right (recallSummary, recallMemories, scanSummary, scanMemories) -> do
       recallSummary.merged @?= 1
       recallSummary.stored @?= 0
       assertBool "recall found the duplicate behind the scan window and merged it" $

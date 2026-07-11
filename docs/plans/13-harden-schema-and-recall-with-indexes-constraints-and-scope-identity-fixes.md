@@ -49,10 +49,10 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [x] M1: mint the schema-hardening migration (indexes, NULLS NOT DISTINCT uniques, scope CHECKs, redundant-index drop) and touch `Migrations.hs` — `2026-07-11-17-35-11-kioku-schema-hardening.sql`
 - [x] M1: add DB-level constraint and index tests (`kioku-core/test/Kioku/SchemaSpec.hs`) — 5 cases, all 5 fail without the migration and pass with it
 - [x] M1: `cabal test all` green (93 passed, up from 88); `just migrate` applies cleanly on the dev DB and is a no-op on the second run
-- [ ] M2: add pgvector to the dev shell Postgres in `nix/haskell.nix`
-- [ ] M2: mint the embedding-schema self-healing migration and touch `Migrations.hs`
-- [ ] M2: verify the dev DB heals (embedding columns and HNSW index appear after `just migrate`)
-- [ ] M2: document the late-install remediation path in `docs/user/recall.md`
+- [x] M2: add pgvector to the dev shell Postgres in `nix/haskell.nix` (pgvector 0.8.2; `pkgs.postgresql.dev` kept alongside for `libpq.pc`)
+- [x] M2: mint the embedding-schema self-healing migration and touch `Migrations.hs` — `2026-07-11-17-45-43-kioku-embedding-schema-heal.sql`
+- [x] M2: verify the dev DB heals — `embedding kiroku.vector(1536)` + `kioku_memories_embedding_hnsw` now exist after `just migrate`
+- [x] M2: document the late-install remediation path in `docs/user/recall.md` (including the `public`-schema trap)
 - [ ] M3: fix the vector candidate ORDER BY and add the `SET LOCAL hnsw.ef_search` over-fetch
 - [ ] M3: export test seams (`selectFtsCandidates`, `selectVectorCandidates`, `vectorLiteral`) and add `RecallSqlSpec` DB tests
 - [ ] M3: capture before/after `EXPLAIN` transcripts proving HNSW index use
@@ -157,6 +157,63 @@ Discovered during M1 implementation (2026-07-11):
   which `just` rejects (it parses `name=...` as the positional value and fails the
   `[a-z0-9-]` check). The working form is `just new-migration <slug>`; the usage string is
   corrected in this milestone's commit.
+
+Discovered during M2 implementation (2026-07-11):
+
+- **`pkgs.postgresql.withPackages` has a single `out` output and therefore silently drops
+  the `dev` output**, which is what carries `lib/pkgconfig/libpq.pc`. Swapping
+  `pkgs.postgresql` for the wrapper — the exact one-line change this plan specified — makes
+  `cabal` fail to resolve *any* build plan:
+  `rejecting: postgresql-libpq-pkgconfig-0.11 (conflict: pkg-config package libpq>=14.12,
+  not found in the pkg-config database)`. The fix is to keep `pkgs.postgresql.dev` in
+  `baseDevPackages` alongside the wrapper. This is a trap for any project doing the same
+  swap, and it fails at dependency resolution, far from its cause.
+
+- **The `public`-schema abort EP-3 predicted is real, and the root cause is deeper than the
+  migration.** Reproduced on the dev DB: with pgvector in `public` and
+  `search_path = kiroku, pg_catalog`, `CREATE EXTENSION IF NOT EXISTS vector` is a no-op,
+  the `pg_extension` probe reports available, `to_regtype('vector')` is NULL, and
+  `ALTER TABLE ... ADD COLUMN embedding vector(1536)` dies with
+  `42704: type "vector" does not exist`. The heal migration schema-qualifies the type and
+  the operator class with the extension's *actual* schema, so the DDL now succeeds under
+  either layout.
+
+  But the deeper problem is a **runtime** one that no migration can fix: the application
+  connects with `search_path = kiroku, pg_catalog` (`Kiroku.Store.Connection` defaults
+  `schema = "kiroku"`, `extraSearchPath = []`), and recall casts with a bare `$1::vector`.
+  If pgvector lives anywhere but `kiroku`, that cast cannot resolve — so a database can have
+  perfectly healthy embedding columns and an HNSW index and *still* fail every vector query.
+  The migration raises a `WARNING` naming the schema and the two remedies (move the
+  extension, or add the schema to `extraSearchPath`); `docs/user/recall.md` documents both.
+  **This changes M4's design:** capability detection currently probes `pg_extension`, which
+  answers "does the extension exist *somewhere*" — the wrong question. It must ask
+  "can *this connection* name the type", i.e. `to_regtype('vector') IS NOT NULL`, so an
+  unreachable extension degrades to keyword recall instead of erroring on every query.
+
+- The fresh install lands in `kiroku` (verified: `CREATE EXTENSION IF NOT EXISTS vector`
+  under the migration's search_path puts it there, and `to_regtype('vector')` then
+  resolves), so the dev DB and every ephemeral test cluster get the good layout.
+
+- `atttypmod` on the healed column is exactly `1536` and `format_type` renders
+  `kiroku.vector(1536)` — M4's dimension-probe assumption verified on real data.
+
+- **EP-3's inherited landmine is disarmed.** `DistillSpec`'s `testRecallCandidateWindow`
+  asserted `capability @?= VectorExtensionUnavailable`, hard-coding the *absence* of
+  pgvector, which stops being true the moment the dev shell gains it. It now *injects*
+  `VectorExtensionUnavailable` instead of probing the cluster: the case is about the
+  candidate finder reaching a duplicate the priority-scan window hides, and nothing about
+  vectors. Pinning the keyword plan is what makes `dummyEmbeddingModel` safe — by
+  construction now, rather than by luck of the environment.
+
+- The dev shell's pgvector is **0.8.2**, so `hnsw.iterative_scan` *is* available. The plan's
+  decision not to adopt it (to avoid pinning a minimum pgvector version) still stands, but
+  the option is live in this environment rather than hypothetical.
+
+- **Tests only see pgvector inside the new dev shell.** `ephemeral-pg` takes `initdb`/
+  `postgres` from `PATH`, so a shell entered before this change still spins up clusters
+  without the extension. The suite is green either way (93/93 in both), which is the
+  designed degradation — but any vector-path assertion must be run under
+  `nix develop --command cabal test all`, or it will silently skip.
 
 
 ## Decision Log

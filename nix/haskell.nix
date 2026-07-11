@@ -22,11 +22,22 @@
       hsdev = inputs.haskell-nix-dev.lib.${system};
       haskellPackages = pkgs.haskell.packages."ghc9124";
 
+      # pgvector must come from the same postgresql package the dev server runs, or the
+      # extension's .so/.control files are simply not on the server's library path. Plain
+      # `pkgs.postgresql` leaves the dev database permanently degraded: the embedding
+      # migration's guarded DO block finds no `vector` extension, skips the columns, and
+      # codd records it applied anyway. `extraDevPackages` cannot fix this — it is appended
+      # after this list, so plain postgresql would still win the PATH.
+      #
+      # The `.withPackages` wrapper has a single `out` output, so it drops the `dev` output
+      # that carries `lib/pkgconfig/libpq.pc`; without that, postgresql-libpq fails to
+      # resolve and the whole build plan collapses. Keep `.dev` alongside it.
       baseDevPackages = [
         pkgs.zlib
         pkgs.just
         pkgs.pkg-config
-        pkgs.postgresql
+        (pkgs.postgresql.withPackages (ps: [ ps.pgvector ]))
+        pkgs.postgresql.dev
         pkgs.jq
         pkgs.process-compose
       ];

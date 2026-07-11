@@ -96,6 +96,51 @@ In the keyword fallback the `vec` rank shows as `-` in `--show-scores` output, a
 embedding/distillation workers skip vector work. Recall keeps working — it just loses the
 semantic channel.
 
+### Healing a degraded schema
+
+The embedding columns are added by a migration that only runs its DDL if `CREATE EXTENSION
+vector` succeeds. If your server had no pgvector at that moment, the migration was still
+**recorded as applied** — so installing pgvector afterwards does not, on its own, bring the
+columns back. The database stays keyword-only forever.
+
+`2026-07-11-17-45-43-kioku-embedding-schema-heal.sql` is the catch-up: it re-attempts the
+same DDL, so **any database that gains pgvector before its next migration run heals itself
+on `just migrate`.** It is idempotent — a no-op on a healthy database and on one that still
+has no pgvector.
+
+For a database that has *already applied* every migration and only then gained the
+extension, codd will not re-run anything. Apply the same file by hand; it is the identical
+SQL, so it cannot drift from the migration:
+
+```bash
+psql -d "$PGDATABASE" -f kioku-migrations/sql-migrations/2026-07-11-17-45-43-kioku-embedding-schema-heal.sql
+```
+
+Then confirm:
+
+```bash
+psql -tAc "SELECT format_type(atttypid, atttypmod) FROM pg_attribute a
+             JOIN pg_class c ON c.oid = a.attrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'kiroku' AND c.relname = 'kioku_memories'
+              AND attname = 'embedding'"
+# kiroku.vector(1536)
+```
+
+**Which schema pgvector lives in matters.** kioku connects with `search_path = kiroku,
+pg_catalog`, and recall casts query vectors with a bare `$1::vector`. If the extension was
+installed into `public` — the usual operator default — that cast cannot resolve the type,
+and recall degrades to keyword-only even though the columns look perfectly healthy. The heal
+migration creates the extension into `kiroku` when it is absent, and raises a `WARNING`
+naming the schema when it finds it elsewhere. To fix an existing `public` install, either
+move it:
+
+```sql
+ALTER EXTENSION vector SET SCHEMA kiroku;
+```
+
+or add `public` to the store's `extraSearchPath` when constructing the connection settings.
+
 ## CLI usage
 
 ```bash
