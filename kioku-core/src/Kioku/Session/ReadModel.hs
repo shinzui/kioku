@@ -560,10 +560,15 @@ updateSessionFailedStmt =
     )
     D.noResult
 
+-- | Park the session. @resume_input@ is cleared so a re-park does not leave the previous
+-- wait's answer visible on the row.
+--
+-- @awaiting_deadline@ is advisory only: it is stored for hosts, and kioku does not enforce
+-- it (no timer fires, nothing expires). See MasterPlan 2's Decision Log (2026-07-07).
 updateSessionAwaitingStmt :: Statement (Text, Text, Maybe Text, Maybe UTCTime) ()
 updateSessionAwaitingStmt =
   preparable
-    "UPDATE kioku_sessions SET status = 'awaiting', awaiting_reason = $2, awaiting_correlation_key = $3, awaiting_deadline = $4, updated_at = NOW() WHERE session_id = $1"
+    "UPDATE kioku_sessions SET status = 'awaiting', awaiting_reason = $2, awaiting_correlation_key = $3, awaiting_deadline = $4, resume_input = NULL, updated_at = NOW() WHERE session_id = $1"
     ( contrazip4
         (E.param (E.nonNullable E.text))
         (E.param (E.nonNullable E.text))

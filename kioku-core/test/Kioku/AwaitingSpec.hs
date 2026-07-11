@@ -116,6 +116,7 @@ testCorrelationMismatchRejected =
         ResumeSessionData
           { sessionId = sid,
             correlationKey = Just "k2",
+            force = False,
             input = "approved",
             resumedAt = now
           }
@@ -241,6 +242,7 @@ resumeFixture sid key input = do
       ResumeSessionData
         { sessionId = sid,
           correlationKey = key,
+          force = False,
           input,
           resumedAt = now
         }

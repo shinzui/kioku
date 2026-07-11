@@ -109,6 +109,7 @@ test-suite kioku-test
     Kioku.EmbeddingWorkerSpec
     Kioku.RecallSpec
     Kioku.ReiCompatSpec
+    Kioku.SessionInvariantsSpec
     Kioku.SessionLineageSpec
     Kioku.TimerWorkerSpec
 

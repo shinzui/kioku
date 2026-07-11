@@ -4,6 +4,7 @@ module Kioku.Session
     start,
     awaitInput,
     resume,
+    forceResume,
     complete,
     failSession,
     recordInteractive,
@@ -117,6 +118,15 @@ awaitInput cmdData = do
       | row.status /= "running" -> pure (Left SessionNotRunning)
       | otherwise -> runSessionCommand cmdData.sessionId (AwaitInput cmdData)
 
+-- | Resume a parked session with the key it parked on.
+--
+-- The correlation key must match exactly — a keyed resume of a keyless wait, or of a wait
+-- on a different key, is rejected. An omitted key no longer bypasses matching; use
+-- 'forceResume' for that, explicitly.
+--
+-- The precheck below only shapes a friendly early error. The real enforcement is the
+-- aggregate's own guard, which keiro re-evaluates after any optimistic-concurrency retry —
+-- so a stale caller cannot resume a wait that was already resumed and re-parked.
 resume ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   ResumeSessionData ->
@@ -129,13 +139,30 @@ resume cmdData = do
     Right (Just row)
       | row.status == "running" -> pure (Right cmdData.sessionId)
       | row.status /= "awaiting" -> pure (Left SessionNotAwaiting)
-      | not (correlationMatches row cmdData) -> pure (Left SessionCorrelationMismatch)
+      | not cmdData.force && row.awaitingCorrelationKey /= cmdData.correlationKey ->
+          pure (Left SessionCorrelationMismatch)
       | otherwise -> runSessionCommand cmdData.sessionId (ResumeSession cmdData)
-  where
-    correlationMatches row d =
-      case d.correlationKey of
-        Nothing -> True
-        Just key -> row.awaitingCorrelationKey == Just key
+
+-- | Resume a parked session regardless of which key it parked on.
+--
+-- An operator/host override for unsticking a session whose awaited key is lost or wrong.
+-- It is inherently last-writer-wins: if the session is concurrently re-parked on a new
+-- wait, a force resume may answer the wrong one. Prefer 'resume'.
+forceResume ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  SessionId ->
+  Text ->
+  UTCTime ->
+  Eff es (Either SessionWriteError SessionId)
+forceResume sid input resumedAt =
+  resume
+    ResumeSessionData
+      { sessionId = sid,
+        correlationKey = Nothing,
+        force = True,
+        input,
+        resumedAt
+      }
 
 recordInteractive ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>

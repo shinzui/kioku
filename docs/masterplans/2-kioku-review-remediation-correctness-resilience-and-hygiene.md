@@ -79,7 +79,7 @@ bootstrap against both pinned and HEAD keiro) is entirely different from EP-5's
 | 1 | Make L1 distillation idempotent and debounce distillation timers | docs/plans/9-make-l1-distillation-idempotent-and-debounce-distillation-timers.md | None | None | Complete |
 | 2 | Propagate memory forget operations to scenes, personas, and workspace mirrors | docs/plans/10-propagate-memory-forget-operations-to-scenes-personas-and-workspace-mirrors.md | None | EP-1 | Complete |
 | 3 | Harden worker resilience with ack policy, bounded retries, and loop supervision | docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md | None | None | Complete |
-| 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | Not Started |
+| 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | In Progress |
 | 5 | Harden schema and recall with indexes, constraints, and scope identity fixes | docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md | None | None | Not Started |
 | 6 | Align read-model reconciliation with keiro schema relocation and guard embedded migrations | docs/plans/14-align-read-model-reconciliation-with-keiro-schema-relocation-and-guard-embedded-migrations.md | None | None | Not Started |
 | 7 | Tighten CLI and API surface validation | docs/plans/15-tighten-cli-and-api-surface-validation.md | None | EP-3 | Not Started |

@@ -64,7 +64,7 @@ that event streams written before this change still rehydrate.
 Use a checklist to summarize granular steps. Every stopping point must be documented here,
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 
-- [ ] M1: Run the pre-implementation data audit for `SessionResumed` correlation keys (see Concrete Steps, step 0) and record the result here.
+- [x] M1: Run the pre-implementation data audit for `SessionResumed` correlation keys (see Concrete Steps, step 0) and record the result here. — 2026-07-11, **Audit A passed**: the `kioku` dev database holds 4 session streams (`SessionStarted` ×4, `SessionCompleted` ×4, `TurnRecorded` ×4) and **zero** `SessionAwaiting`/`SessionResumed` events, so no stream can carry a mismatched correlation key and the new guard cannot brick any existing stream. Guard is safe to ship.
 - [ ] M1: Add the `awaitedCorrelationKey` register to `SessionRegs` and initialize/set/clear it on the Start/AwaitInput/Resume edges in `kioku-core/src/Kioku/Session/Domain.hs`.
 - [ ] M1: Add `force :: Bool` to `ResumeSessionData` (command) and `SessionResumedData` (event) with the backward-compatible `FromJSON` default.
 - [ ] M1: Add the correlation guard to the `ResumeSession` edge.
@@ -78,7 +78,7 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [ ] M3: Payload-matching idempotent accepts for `Memory.record`, `supersede`, `archive`, `merge` with `MemoryConflict`.
 - [ ] M3: Post-rejection re-read fallback so a concurrent duplicate loser gets the idempotent success.
 - [ ] M3: Tests — duplicate-vs-conflict for every accept listed above.
-- [ ] M4: Run the turn-index monotonicity audit (Concrete Steps, step 0) and record the result here.
+- [x] M4: Run the turn-index monotonicity audit (Concrete Steps, step 0) and record the result here. — 2026-07-11, **Audit B passed**: zero rows returned (no session stream has a non-increasing `turnIndex` in stream order). The strict `lastTurnIndex` register guard ships as designed; no fallback to the command-layer-only contract is needed.
 - [ ] M4: `lastTurnIndex` register + strictly-increasing guard on the `RecordTurn` edge; command-layer turn dedup in `Session.recordTurn`; projection updates `turn_id` on `(session_id, turn_index)` conflict.
 - [ ] M4: Tests — idempotent re-record, conflicting re-record, turn-id reuse at a different index, aggregate rejection of a non-increasing index.
 - [ ] M5: ReiCompatSpec fixtures for `agent_session_completed`, `agent_session_failed`, `interactive_session_recorded`, plus native `SessionResumed`-without-`force` decoding.

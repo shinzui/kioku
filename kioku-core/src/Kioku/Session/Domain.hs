@@ -27,8 +27,9 @@ module Kioku.Session.Domain
 where
 
 import Data.Aeson.Types (withObject, (.!=), (.:), (.:?))
+import Keiki.Builder ((=:))
 import Keiki.Builder qualified as B
-import Keiki.Core (HsPred, SymTransducer)
+import Keiki.Core (HsPred, SymTransducer, lit, (.==), (.||))
 import Keiki.Generics (emptyRegFile)
 import Keiki.Generics.TH (deriveAggregate)
 import Kioku.Api.Scope (MemoryScope)
@@ -38,7 +39,12 @@ import Kioku.Prelude
 data SessionVertex = NotCreated | Running | Completed | Failed | Interactive | Awaiting
   deriving stock (Eq, Show, Enum, Bounded)
 
-type SessionRegs = '[]
+-- | Replayed aggregate state carried alongside the vertex.
+--
+-- @awaitedCorrelationKey@ is the key the session is currently parked on (set by
+-- @SessionAwaiting@, cleared by @SessionResumed@). It is what makes resume-correlation
+-- matching an aggregate invariant rather than a racy read-model precheck.
+type SessionRegs = '[ '("awaitedCorrelationKey", Maybe Text)]
 
 data StartSessionData = StartSessionData
   { sessionId :: !SessionId,
@@ -86,9 +92,15 @@ data AwaitInputData = AwaitInputData
   }
   deriving stock (Generic, Eq, Show)
 
+-- | Resume a parked session.
+--
+-- @correlationKey@ must equal the key the session parked on, or the aggregate rejects the
+-- command. @force@ waives that check; it is set only by 'Kioku.Session.forceResume' and is
+-- inherently last-writer-wins.
 data ResumeSessionData = ResumeSessionData
   { sessionId :: !SessionId,
     correlationKey :: !(Maybe Text),
+    force :: !Bool,
     input :: !Text,
     resumedAt :: !UTCTime
   }
@@ -195,11 +207,26 @@ data SessionAwaitingData = SessionAwaitingData
 data SessionResumedData = SessionResumedData
   { sessionId :: !SessionId,
     correlationKey :: !(Maybe Text),
+    force :: !Bool,
     input :: !Text,
     resumedAt :: !UTCTime
   }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (FromJSON, ToJSON)
+  deriving anyclass (ToJSON)
+
+-- | Events written before the resume-correlation guard landed carry no @force@ key. Under
+-- the old code an omitted correlation key bypassed matching entirely, so a keyless legacy
+-- resume decodes as a force-resume and a keyed one as a plain resume. That is what keeps
+-- every historical stream replayable through the guard the transducer now applies.
+instance FromJSON SessionResumedData where
+  parseJSON =
+    withObject "SessionResumedData" \o -> do
+      sessionId <- o .: "sessionId"
+      correlationKey <- o .:? "correlationKey"
+      force <- o .:? "force" .!= isNothing correlationKey
+      input <- o .: "input"
+      resumedAt <- o .: "resumedAt"
+      pure SessionResumedData {sessionId, correlationKey, force, input, resumedAt}
 
 data InteractiveSessionRecordedData = InteractiveSessionRecordedData
   { sessionId :: !SessionId,
@@ -265,6 +292,9 @@ sessionTransducer =
   B.buildTransducer NotCreated emptyRegFile isTerminal do
     B.from NotCreated do
       B.onCmd inCtorStartSession $ \d -> B.do
+        -- 'emptyRegFile' binds every slot to a deferred error, so the only path into
+        -- Awaiting (Running, via this edge) must initialize the register first.
+        B.slot @"awaitedCorrelationKey" =: lit Nothing
         B.emit
           wireSessionStarted
           SessionStartedTermFields
@@ -332,6 +362,7 @@ sessionTransducer =
         B.goto Running
 
       B.onCmd inCtorAwaitInput $ \d -> B.do
+        B.slot @"awaitedCorrelationKey" =: d.correlationKey
         B.emit
           wireSessionAwaiting
           SessionAwaitingTermFields
@@ -345,11 +376,20 @@ sessionTransducer =
 
     B.from Awaiting do
       B.onCmd inCtorResumeSession $ \d -> B.do
+        -- The resume must name the key this session actually parked on, unless it is an
+        -- explicit force. Enforcing it here rather than in a read-model precheck is what
+        -- closes the race: keiro re-runs this edge against the post-conflict state.
+        B.requireGuard
+          ((d.force .== lit True) .|| (d.correlationKey .== B.reg @"awaitedCorrelationKey"))
+        B.slot @"awaitedCorrelationKey" =: lit Nothing
         B.emit
           wireSessionResumed
           SessionResumedTermFields
             { sessionId = d.sessionId,
               correlationKey = d.correlationKey,
+              -- Mandatory for replay: the guard reads 'force', and hydration can only
+              -- recover command fields that the event payload carries.
+              force = d.force,
               input = d.input,
               resumedAt = d.resumedAt
             }
