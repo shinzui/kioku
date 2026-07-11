@@ -79,7 +79,7 @@ bootstrap against both pinned and HEAD keiro) is entirely different from EP-5's
 | 1 | Make L1 distillation idempotent and debounce distillation timers | docs/plans/9-make-l1-distillation-idempotent-and-debounce-distillation-timers.md | None | None | Complete |
 | 2 | Propagate memory forget operations to scenes, personas, and workspace mirrors | docs/plans/10-propagate-memory-forget-operations-to-scenes-personas-and-workspace-mirrors.md | None | EP-1 | Complete |
 | 3 | Harden worker resilience with ack policy, bounded retries, and loop supervision | docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md | None | None | Complete |
-| 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | In Progress |
+| 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | Complete |
 | 5 | Harden schema and recall with indexes, constraints, and scope identity fixes | docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md | None | None | Not Started |
 | 6 | Align read-model reconciliation with keiro schema relocation and guard embedded migrations | docs/plans/14-align-read-model-reconciliation-with-keiro-schema-relocation-and-guard-embedded-migrations.md | None | None | Not Started |
 | 7 | Tighten CLI and API surface validation | docs/plans/15-tighten-cli-and-api-surface-validation.md | None | EP-3 | Not Started |
@@ -179,11 +179,11 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-3 M1: embedding worker ack policy (retry/dead-letter/halt classification) — 2026-07-11 (`0400be1`)
 - [x] EP-3 M2: FireOutcome taxonomy for distillation timers, bounded attempts, unknown-PM handling — 2026-07-11 (`39e4474`)
 - [x] EP-3 M3: loop supervision, drain-before-sleep, startup backfill — 2026-07-11 (`7ba500f`, verified end-to-end against a real database)
-- [ ] EP-4 M1: resume correlation becomes an aggregate invariant (plus explicit forceResume)
-- [ ] EP-4 M2: lineage validation at start and a cycle-proof chain query
-- [ ] EP-4 M3: honest idempotent accepts for session and memory commands
-- [ ] EP-4 M4: turn identity contract
-- [ ] EP-4 M5: legacy decoder coverage and documentation truth
+- [x] EP-4 M1: resume correlation becomes an aggregate invariant (plus explicit forceResume) — 2026-07-11 (`77682c7`)
+- [x] EP-4 M2: lineage validation at start and a cycle-proof chain query — 2026-07-11 (`ed5b768`)
+- [x] EP-4 M3: honest idempotent accepts for session and memory commands — 2026-07-11 (`cd23156`)
+- [x] EP-4 M4: turn identity contract — 2026-07-11 (`b3436c7`)
+- [x] EP-4 M5: legacy decoder coverage and documentation truth — 2026-07-11 (`8ca34c1`, `cabal test all` → 88 passed, up from 43)
 - [ ] EP-5 M1: schema-hardening migration (indexes, NULLS NOT DISTINCT, scope CHECKs)
 - [ ] EP-5 M2: pgvector in the dev shell plus self-healing embedding-schema migration
 - [ ] EP-5 M3: vector recall query fix (ORDER BY, ef_search) with EXPLAIN evidence
@@ -358,6 +358,47 @@ Discovered during EP-2 implementation (2026-07-11), affecting sibling plans:
   deferred it (its timer id needs the update timestamp mixed in, because confidence — unlike
   the terminal forget events — can change repeatedly). It remains a candidate follow-up plan.
 
+Discovered during EP-4 implementation (2026-07-11), affecting sibling plans:
+
+- **A plan-level design decision was falsified by EP-1's code, and the failure mode generalizes.**
+  EP-4's Decision Log had caller-supplied timestamps participate in idempotency conflict
+  detection, on the premise that "a genuine retry re-delivers the identical record value". False:
+  `kioku-core/src/Kioku/Distill/L1.hs` `recordAtom` derives a **deterministic** memory id (EP-1's
+  entire idempotency mechanism) but stamps `recordedAt = now` on every pass, so an idle-timer
+  re-fire — the regime EP-1 exists to survive — re-records the same atom under a later clock.
+  Comparing the timestamp turned EP-1's design into a hard `MemoryConflict`; `DistillSpec`'s
+  "merge with a missing target drops it and stays convergent" caught it immediately.
+  **Resolution:** call-time timestamps (`recordedAt`, `startedAt`, `completedAt`, `failedAt`,
+  `resumedAt`) are excluded from conflict detection — the entity id is the identity, and a retry
+  that re-reads its clock is still a retry. Every semantic field is still compared. **Cross-plan
+  lesson: EP-4's plan had already carved out this exact exception for `merge`; the error was not
+  noticing the reason generalized to `record`. Any remaining plan that grants one operation an
+  exception should check whether the rationale applies more broadly before assuming it does not.**
+- **The unfixed `getChain` CTE does not time out — it hangs forever, uninterruptibly.** EP-4
+  predicted its cycle test would trip tasty's 10-second timeout without the fix. It does not:
+  the run hangs indefinitely (killed manually after 11 minutes) because the thread is blocked in
+  a non-interruptible foreign call to libpq, which tasty cannot cancel. **No client-side timeout
+  saves a caller from a runaway recursive CTE.** Any sibling plan that reasons about query
+  timeouts as a safety net (EP-5's recall work is the obvious one) should not assume an
+  application-level deadline can rescue a pathological query — the guard has to be in the SQL.
+- **Read pinned framework sources from `dist-newstyle/src/<pkg>-<hash>/`, not the sibling working
+  checkouts.** `/Users/shinzui/Keikaku/bokuno/keiro` is HEAD and its
+  `runCommandWithProjections` takes `ValidatedEventStream`; the pin (`f1d67a01`) takes a bare
+  `EventStream`. EP-4's plan called this out and was right, but the trap is easy to fall into and
+  costs a confusing type error. Same applies to keiki and kiroku.
+- **`Kioku.Session` gained `forceResume` and three error constructors** (`SessionInvalidLineage`,
+  `SessionConflict`; `Kioku.Memory` gained `MemoryConflict`). EP-7's API-surface sweep should
+  expect these in the public surface. `ResumeSessionData` gained `force :: Bool` — any sibling
+  plan constructing one needs the field.
+- **`SessionRegs` is no longer `'[]`.** It now carries `awaitedCorrelationKey` and
+  `lastTurnIndex`. A guard added to any session edge from here on runs during replay too, so it
+  must accept every event legitimate old code could have committed (EP-4's Surprises section
+  documents the mechanism).
+- **Deployment note, unchanged from the plan but now real:** new `SessionResumed` events carry a
+  `force` field. New code reads old events (the decoder defaults `force = isNothing
+  correlationKey`), but **old code cannot read new events** — do not roll the library back across
+  this boundary once new-format resume events exist.
+
 Record every decomposition or coordination decision made while working on the master
 plan.
 
@@ -472,3 +513,23 @@ Compare the result against the original vision.
   predicted). Loop supervision was verified end-to-end against a real database rather than by
   inspection: the process now survives a database outage and exits 1 with a reason when a
   pipeline genuinely dies.
+
+- 2026-07-11: EP-4 implemented and marked Complete (commits `77682c7`, `ed5b768`, `cd23156`,
+  `b3436c7`, `8ca34c1`). Checked off EP-4's five Progress milestones. The suite went from 43 to
+  88 passing tests. Both pre-implementation data audits passed against the dev database (zero
+  awaiting/resume events; zero non-monotonic turn indexes), so both new aggregate guards shipped
+  as designed with no contingency needed.
+
+  Two discoveries are load-bearing for the remaining plans. First, **EP-4's own Decision Log was
+  wrong about timestamps and EP-1's code proved it**: comparing caller-supplied timestamps in the
+  idempotency contract broke L1 distillation's re-fire path, because `recordAtom` pairs a
+  deterministic memory id with a fresh `recordedAt`. The contract now excludes call-time
+  timestamps and compares only semantic fields; the plan's Decision Log records the supersession
+  with evidence. The generalizable lesson — a plan that grants one operation an exception should
+  check whether the reason applies to its siblings — is recorded in Surprises for EP-5/6/7.
+  Second, **the unfixed chain query hangs uninterruptibly rather than timing out**, because the
+  thread blocks in libpq; EP-5 should not treat application-level timeouts as a backstop for
+  pathological SQL.
+
+  EP-4 added no migration and no read-model version bump, as its plan predicted, so it imposes no
+  migration-timestamp coordination on EP-5 or EP-6.

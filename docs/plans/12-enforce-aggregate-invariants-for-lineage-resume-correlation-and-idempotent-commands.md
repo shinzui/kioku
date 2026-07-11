@@ -81,9 +81,9 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [x] M4: Run the turn-index monotonicity audit (Concrete Steps, step 0) and record the result here. — 2026-07-11, **Audit B passed**: zero rows returned (no session stream has a non-increasing `turnIndex` in stream order). The strict `lastTurnIndex` register guard ships as designed; no fallback to the command-layer-only contract is needed.
 - [x] M4: `lastTurnIndex` register + strictly-increasing guard on the `RecordTurn` edge; command-layer turn dedup in `Session.recordTurn`; projection updates `turn_id` on `(session_id, turn_index)` conflict.
 - [x] M4: Tests — idempotent re-record, conflicting re-record, turn-id reuse at a different index, aggregate rejection of a non-increasing index. — 2026-07-11 (`b3436c7`), 4 new cases; suite 79 → 83 passing. Fail-before verified: without `requireGt` the aggregate accepts a stale index.
-- [ ] M5: ReiCompatSpec fixtures for `agent_session_completed`, `agent_session_failed`, `interactive_session_recorded`, plus native `SessionResumed`-without-`force` decoding.
-- [ ] M5: Documentation truth pass — `docs/user/concepts.md`, `docs/user/library-api.md`, advisory-deadline code comments.
-- [ ] Final: full `cabal build all` + `cabal test` green; update Outcomes & Retrospective.
+- [x] M5: ReiCompatSpec fixtures for `agent_session_completed`, `agent_session_failed`, `interactive_session_recorded`, plus native `SessionResumed`-without-`force` decoding. — 2026-07-11 (`8ca34c1`), 5 new cases.
+- [x] M5: Documentation truth pass — `docs/user/concepts.md`, `docs/user/library-api.md`, advisory-deadline code comments. — 2026-07-11 (`8ca34c1`).
+- [x] Final: full `cabal build all` + `cabal test` green; update Outcomes & Retrospective. — 2026-07-11, `cabal build all` clean and `cabal test all` green: **88 tests passing**, up from 43 when EP-4 began.
 
 
 ## Surprises & Discoveries
@@ -326,7 +326,55 @@ Record every decision made while working on the plan.
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original purpose.
 
-(To be filled during and after implementation.)
+**All five milestones landed; every defect named in Purpose is fixed and covered by a test that
+fails before the fix.** The suite went from 43 tests to 88. Commits: `77682c7` (M1), `ed5b768`
+(M2), `cd23156` (M3), `b3436c7` (M4), `8ca34c1` (M5).
+
+Against the three failure modes in Purpose:
+
+1. **Resume against the wrong wait — closed at the aggregate.** The awaited key is a keiki
+   register rebuilt from the `SessionAwaiting` events production streams already contain, so no
+   data migration was needed. A mismatched resume is now rejected by the transducer with every
+   read-model precheck bypassed (`testAggregateRejectsMismatchedKey` drives
+   `runCommandWithProjections` directly). Waiving the key is `Session.forceResume`, explicit and
+   documented as last-writer-wins. Historical streams still hydrate, proven both by raw-JSON
+   append tests and by ReiCompatSpec fixtures pinning the `force` upcast rule.
+2. **`getChain` hang — fixed, and it was worse than reviewed.** The plan expected the cycle test
+   to "time out" without the fix. It does not time out: it hangs forever, straight through
+   tasty's `mkTimeout`, because the thread blocks in a non-interruptible foreign call to libpq
+   (killed manually after 11 minutes). No client-side timeout rescues a caller from the runaway
+   CTE — which makes the path-array guard load-bearing rather than defensive. After the fix the
+   same query returns in milliseconds.
+3. **Lying idempotent accepts — fixed, with one design correction.** Completing a failed session
+   and superseding-by-Y-after-X now conflict instead of reporting success, and a concurrent
+   duplicate that loses the OCC race converges to the winner's success rather than a hard
+   rejection.
+
+**The one place the plan was wrong, and how it was caught.** The Decision Log had call-time
+timestamps participate in conflict detection, on the premise that "a genuine retry re-delivers the
+identical record value". That premise is false in kioku itself: `Distill.L1.recordAtom` derives a
+*deterministic* memory id (EP-1's entire idempotency mechanism) but stamps `recordedAt = now` on
+every pass, so an idle-timer re-fire — the exact regime EP-1 exists to survive — re-records the
+same atom under a later clock. Comparing the timestamp converted EP-1's design into a hard
+`MemoryConflict`, and `DistillSpec`'s "merge with a missing target drops it and stays convergent"
+failed within minutes of the change landing. Resolution: the id is the identity, so call-time
+timestamps are excluded and every *semantic* field is compared. The review's actual complaint (a
+reused id with different **content** reporting success) is still fixed; a regression test now pins
+the contract. Notably the plan had already carved out this exact exception for `merge` — the
+mistake was not seeing that `record` has the same shape. **Lesson: when a plan grants one
+operation an exception, check whether the reason generalizes before assuming it does not.**
+
+Gaps and follow-ups, none blocking:
+
+- Cross-session `turnId` reuse still surfaces as a raw `StoreFailed` rather than a typed
+  conflict. Accepted and documented (turn ids are host-generated; mapping that SQL error from
+  inside keiro's projection transaction is not worth the machinery).
+- `awaiting_deadline` remains advisory. Enforcement is a feature with real design questions (who
+  resumes, with what input), out of scope by MasterPlan decision; M5 corrected the docs and both
+  code sites to stop implying otherwise.
+- `Kioku.Session.recordTurn` now costs one extra read-model query (`getTurns`) per turn to
+  support the dedup contract. Fine at current turn volumes; if a host records very long sessions
+  this is the obvious thing to narrow to a single-index lookup.
 
 
 ## Context and Orientation
