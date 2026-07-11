@@ -64,12 +64,17 @@ docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identi
       Required an unplanned prerequisite (Decision 9: injectable workspace root), because
       the plan's assumption that `DistillSpec` runs under `withCurrentDirectory` was
       invalidated by EP-1. Full suite 45 passed.
-- [ ] Milestone 3: end-to-end tests that drive the real timer worker
+- [x] Milestone 3: end-to-end tests that drive the real timer worker
       (`runKiokuTimerWorkerOnce`) through record → distill → archive/supersede/merge →
       observe scene, persona, and mirror content change, including the archive-everything
-      case.
-- [ ] Final: full test suite green, plan's living sections updated, Outcomes &
-      Retrospective written.
+      case. — 2026-07-11. Strengthened beyond the plan: the canned scene body echoes the
+      atoms it was built from, so "the forgotten text is gone" is asserted against the
+      mirror file's real bytes on disk, not only against `atomIds`. Verified non-vacuous by
+      temporarily reverting the Milestone 1 scheduling arms — both cases then fail with
+      `forgotten content reached the scene LLM: ... The alpha secret is ...`.
+- [x] Final: full test suite green, plan's living sections updated, Outcomes &
+      Retrospective written. — 2026-07-11. `cabal build all` clean; `cabal test all` →
+      47 passed (43 before this plan), both suites PASS.
 
 
 ## Surprises & Discoveries
@@ -239,7 +244,54 @@ Discovered during implementation (2026-07-11):
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+Completed 2026-07-11 across three commits (`0ff7680`, `77c3c06`, and this milestone's).
+Forgetting is now real: archiving, superseding, or merging a memory schedules the same
+durable scene-regeneration timer that recording one does, the worker rebuilds the scene from
+the survivors, the persona re-derives, and both plaintext mirrors are rewritten. When the
+last memory in a scope is forgotten, the scene row, the persona row, and both mirror files
+are deleted outright — with no LLM call, since there is nothing left to summarize. The
+verbatim-content-in-`.kioku/scenes/*.md` privacy defect described in the Purpose section is
+closed, and the closing assertion is against the bytes of the real file on a real disk.
+
+Against the original vision, three things landed differently:
+
+- **An unplanned prerequisite.** The plan's Milestones 2 and 3 assumed `DistillSpec` runs
+  under `withCurrentDirectory tmp`. EP-1 had removed that (tasty runs cases concurrently and
+  the process-wide chdir raced), so there was no way to observe a mirror file from a test
+  without racing or writing into the repository. Decision 9 adds an injectable
+  `workspaceRoot` to `DistillRuntime`; production behavior is byte-identical (`Nothing` still
+  means `getCurrentDirectory`). This is the plan's one real design addition, and it was
+  forced by a sibling plan's discovery rather than by anything in the review.
+- **A hygiene fix fell out of it.** Because the suite had been mirroring into whatever
+  directory it ran in, EP-1 had accidentally committed two mirror files under
+  `kioku-core/.kioku/`. Decision 10 removes them and gitignores `.kioku/`; with the temp
+  workspace in place the suite now writes nothing into the repository at all.
+- **The end-to-end assertion is stronger than specified.** The plan's minimum was
+  input-capture plus `atomIds` plus file existence. Making the canned scene body echo its
+  input atoms cost about ten lines and upgrades the central claim from "the metadata no
+  longer references the forgotten memory" to "the forgotten sentence is not in the file."
+
+Everything else went as designed. The two facts the research pass identified as
+design-constraining — that the forget events carry no scope, and that keiro will not re-arm
+a timer id that has already fired — were both load-bearing and both correctly handled by
+Decisions 1 and 2; neither needed revisiting. The three fire handlers needed no changes at
+all, because EP-3 had already migrated them onto `FireOutcome` and `Right Nothing` from an
+empty regeneration was already treated as "done", so an emptied-scope timer completes rather
+than looping.
+
+Gaps deliberately left open:
+
+- `MemoryConfidenceUpdated` still never refreshes a scene (Decision 7). It is the same
+  one-arm-in-the-projection mechanism, but its timer id needs the update timestamp mixed in
+  because confidence, unlike the terminal forget events, can change repeatedly. Recorded in
+  the MasterPlan as a follow-up candidate.
+- Mirror removal is best-effort, exactly as mirror writing already was. A workspace whose
+  files cannot be unlinked keeps a stale mirror until the next regeneration in that
+  workspace. The database row — the durable artifact — is gone either way.
+- Nothing sweeps mirrors in *other* workspaces. A scene mirrored into two agent workspaces
+  and then forgotten is only removed from whichever workspace the worker runs in. This is
+  pre-existing (the same is true of writes) and out of scope, but it is the honest limit of
+  what "forgotten from disk" currently means.
 
 
 ## Context and Orientation

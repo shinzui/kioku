@@ -17,6 +17,7 @@ import Data.Int (Int64)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
+import Data.Text.IO qualified as TextIO
 import Data.Time (addUTCTime, diffUTCTime)
 import Data.Vector qualified as Vector
 import Effectful (Eff, IOE, runEff, (:>))
@@ -41,6 +42,7 @@ import Kioku.Distill.Persona (personaProgram)
 import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
 import Kioku.Distill.Scene (SceneInput (..), sceneProgram)
 import Kioku.Distill.Timer (idleFlushSeconds, l1ExtractProcessManagerName)
+import Kioku.Distill.Timer.Worker (runKiokuTimerWorkerOnce)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText, parseIdAnyPrefix)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (ArchiveMemoryData (..), RecordMemoryData (..), SupersedeMemoryData (..))
@@ -93,7 +95,9 @@ forgetPropagationTests =
   testGroup
     "Forget propagation"
     [ testCase "forget operations schedule scene timers" testForgetSchedulesSceneTimers,
-      testCase "an emptied scope deletes its scene, persona, and mirrors" testEmptyScopeDeletesArtifacts
+      testCase "an emptied scope deletes its scene, persona, and mirrors" testEmptyScopeDeletesArtifacts,
+      testCase "the timer worker propagates an archive to every artifact" testWorkerPropagatesArchive,
+      testCase "supersede and merge propagate like archive" testWorkerPropagatesSupersedeAndMerge
     ]
 
 alphaContent :: Text
@@ -104,6 +108,30 @@ alphaNeedle = "alpha secret"
 
 betaContent :: Text
 betaContent = "The beta fact is that the docs live in ops/README.md."
+
+betaNeedle :: Text
+betaNeedle = "beta fact"
+
+oldAddressContent :: Text
+oldAddressContent = "The user is at 12 Elm Street."
+
+oldAddressNeedle :: Text
+oldAddressNeedle = "12 Elm Street"
+
+newAddressContent :: Text
+newAddressContent = "The user is at 9 Oak Lane."
+
+newAddressNeedle :: Text
+newAddressNeedle = "9 Oak Lane"
+
+loserContent :: Text
+loserContent = "The user mentioned gamma trivia once."
+
+loserNeedle :: Text
+loserNeedle = "gamma trivia"
+
+winnerContent :: Text
+winnerContent = "The user relies on delta truth daily."
 
 -- | The privacy-shaped case. Forgetting the last memory in a scope must take the
 -- scene and persona with it — row and plaintext mirror alike — and must not pay
@@ -226,6 +254,174 @@ testForgetSchedulesSceneTimers = withDistillEnv \env -> do
       afterArchive @?= 6
       afterSupersede @?= 7
       afterMerge @?= 8
+
+-- | The whole pipeline, with nothing called by hand: a forget command schedules a
+-- timer through the inline projection, the worker claims and fires it exactly as
+-- @kioku worker@ does, and the scene, persona, and both plaintext mirrors follow.
+testWorkerPropagatesArchive :: Assertion
+testWorkerPropagatesArchive = withDistillWorkspaceEnv \env workspace -> do
+  calls <- newDistillCalls
+  runtime <- echoingRuntime calls <$> replayRuntimeIn workspace
+  alphaId <- genMemoryId
+  betaId <- genMemoryId
+  now <- getCurrentTime
+  let scope = forgetScope "intention_forget_worker"
+  result <-
+    runAppIO env do
+      recordForgetFixture alphaId scope alphaContent now
+      recordForgetFixture betaId scope betaContent now
+      void (drainTimers runtime)
+
+      builtScene <- getScenesByScope scope >>= liftIO . expectOneScene "the initial distillation"
+      builtPersona <-
+        getPersonaByScope scope >>= liftIO . expectJust "a persona after the initial distillation"
+      let scenePath = sceneMirrorPath workspace builtScene
+          personaPath = personaMirrorPath workspace builtPersona
+      builtMirrors <- liftIO ((&&) <$> doesFileExist scenePath <*> doesFileExist personaPath)
+
+      -- Forget alpha. The worker has to rebuild the scene from the survivor.
+      archivedAlpha <- Memory.archive ArchiveMemoryData {memoryId = alphaId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archive alpha" archivedAlpha))
+      void (drainTimers runtime)
+      survivorScene <- getScenesByScope scope >>= liftIO . expectOneScene "after forgetting alpha"
+      survivorMirror <- liftIO (TextIO.readFile scenePath)
+
+      -- Forget beta, the last one. Every artifact has to go with it.
+      archivedBeta <- Memory.archive ArchiveMemoryData {memoryId = betaId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archive beta" archivedBeta))
+      void (drainTimers runtime)
+      emptyScenes <- getScenesByScope scope
+      emptyPersona <- getPersonaByScope scope
+      survivingMirrors <- liftIO ((||) <$> doesFileExist scenePath <*> doesFileExist personaPath)
+
+      -- Timer firing is at-least-once, so another pass must change nothing.
+      refired <- drainTimers runtime
+      pure
+        ( builtMirrors,
+          survivorScene,
+          survivorMirror,
+          emptyScenes,
+          emptyPersona,
+          survivingMirrors,
+          refired
+        )
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (builtMirrors, survivorScene, survivorMirror, emptyScenes, emptyPersona, survivingMirrors, refired) -> do
+      assertBool "the worker wrote both mirrors to begin with" builtMirrors
+
+      -- The forgotten memory is gone from the scene's inputs and its metadata...
+      atoms <- latestSceneAtoms calls
+      assertBool
+        ("forgotten content reached the scene LLM: " <> Text.unpack atoms)
+        (not (alphaNeedle `Text.isInfixOf` atoms))
+      survivorScene.atomIds @?= [idText betaId]
+
+      -- ...and, the point of the whole plan, from the plaintext file on disk.
+      assertBool
+        ("the forgotten text is still in the scene mirror: " <> Text.unpack survivorMirror)
+        (not (alphaNeedle `Text.isInfixOf` survivorMirror))
+      assertBool
+        ("the surviving memory vanished from the scene mirror: " <> Text.unpack survivorMirror)
+        (betaNeedle `Text.isInfixOf` survivorMirror)
+
+      -- Forgetting the last memory empties the scope entirely.
+      emptyScenes @?= []
+      emptyPersona @?= Nothing
+      assertBool "a mirror file survived an emptied scope" (not survivingMirrors)
+
+      refired @?= 0
+
+-- | Archive is not a special case: superseding and merging retire a memory the
+-- same way, and must reach the scene the same way.
+testWorkerPropagatesSupersedeAndMerge :: Assertion
+testWorkerPropagatesSupersedeAndMerge = withDistillWorkspaceEnv \env workspace -> do
+  supersedeCalls <- newDistillCalls
+  mergeCalls <- newDistillCalls
+  supersedeRuntime <- echoingRuntime supersedeCalls <$> replayRuntimeIn workspace
+  mergeRuntime <- echoingRuntime mergeCalls <$> replayRuntimeIn workspace
+  oldId <- genMemoryId
+  newId <- genMemoryId
+  loserId <- genMemoryId
+  winnerId <- genMemoryId
+  now <- getCurrentTime
+  let supersedeScope = forgetScope "intention_forget_supersede"
+      mergeScope = forgetScope "intention_forget_merge"
+  result <-
+    runAppIO env do
+      -- Supersession, in its own scope. Drain between the two scopes so each
+      -- runtime only ever sees its own timers.
+      recordForgetFixture oldId supersedeScope oldAddressContent now
+      recordForgetFixture newId supersedeScope newAddressContent now
+      void (drainTimers supersedeRuntime)
+      superseded <-
+        Memory.supersede
+          SupersedeMemoryData {memoryId = oldId, supersededBy = newId, supersededAt = now}
+      void (liftIO (expectRight "Memory.supersede" superseded))
+      void (drainTimers supersedeRuntime)
+      supersedeScene <-
+        getScenesByScope supersedeScope >>= liftIO . expectOneScene "after superseding"
+
+      -- Merge, in a second scope.
+      recordForgetFixture loserId mergeScope loserContent now
+      recordForgetFixture winnerId mergeScope winnerContent now
+      void (drainTimers mergeRuntime)
+      merged <- Memory.merge loserId winnerId
+      void (liftIO (expectRight "Memory.merge" merged))
+      void (drainTimers mergeRuntime)
+      mergeScene <- getScenesByScope mergeScope >>= liftIO . expectOneScene "after merging"
+
+      pure (supersedeScene, mergeScene)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (supersedeScene, mergeScene) -> do
+      supersedeAtoms <- latestSceneAtoms supersedeCalls
+      assertBool
+        ("superseded content reached the scene LLM: " <> Text.unpack supersedeAtoms)
+        (not (oldAddressNeedle `Text.isInfixOf` supersedeAtoms))
+      assertBool
+        ("the superseding content is missing from the scene: " <> Text.unpack supersedeAtoms)
+        (newAddressNeedle `Text.isInfixOf` supersedeAtoms)
+      supersedeScene.atomIds @?= [idText newId]
+
+      mergeAtoms <- latestSceneAtoms mergeCalls
+      assertBool
+        ("merged-away content reached the scene LLM: " <> Text.unpack mergeAtoms)
+        (not (loserNeedle `Text.isInfixOf` mergeAtoms))
+      mergeScene.atomIds @?= [idText winnerId]
+
+-- | Fire due timers until none are claimable, looking an hour ahead so both the
+-- 5-second scene debounce and the persona timer chained off a scene write are
+-- due. Bounded on purpose: a timer that rescheduled itself would otherwise spin
+-- here forever, and a hung test is worse than a failed one.
+drainTimers ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  DistillRuntime ->
+  Eff es Int
+drainTimers rt = go (50 :: Int) 0
+  where
+    go fuel fired
+      | fuel <= 0 = liftIO (assertFailure "the timer drain did not converge within 50 fires")
+      | otherwise = do
+          realNow <- liftIO getCurrentTime
+          claimed <-
+            runKiokuTimerWorkerOnce
+              Nothing
+              rt
+              (scopedScanCandidates 5)
+              (addUTCTime 3600 realNow)
+          case claimed of
+            Nothing -> pure fired
+            Just _ -> go (fuel - 1) (fired + 1)
+
+expectOneScene :: String -> [SceneRow] -> IO SceneRow
+expectOneScene label = \case
+  [row] -> pure row
+  other -> assertFailure (label <> ": expected exactly one scene, got " <> show (length other))
+
+expectJust :: String -> Maybe a -> IO a
+expectJust label =
+  maybe (assertFailure (label <> ": expected a value, got none")) pure
 
 forgetScope :: Text -> MemoryScope
 forgetScope =
@@ -855,6 +1051,32 @@ countingRuntime calls rt =
         modifyIORef' calls.personaCalls (+ 1)
         rt.runPersona input
     }
+
+-- | 'countingRuntime', but the scene body echoes the atoms it was built from, so
+-- the mirror file's bytes on disk are a direct function of which memories
+-- survive. That is what lets the end-to-end tests assert "the forgotten text is
+-- gone from the file a host agent would read" against real content, rather than
+-- settling for the row metadata.
+echoingRuntime :: DistillCalls -> DistillRuntime -> DistillRuntime
+echoingRuntime calls rt =
+  (countingRuntime calls rt)
+    { runScene = \input -> do
+        modifyIORef' calls.sceneCalls (+ 1)
+        modifyIORef' calls.sceneAtoms (<> [unField input.atoms])
+        replayProgram (echoSceneResponse (unField input.atoms)) sceneProgram input
+    }
+
+-- | Newlines are flattened because the response format is line-oriented: the
+-- atoms are a bulleted list, and each bullet would otherwise look like a field.
+echoSceneResponse :: Text -> Text
+echoSceneResponse atoms =
+  Text.unlines
+    [ "[[ ## title ## ]]",
+      "Response style",
+      "[[ ## bodyMd ## ]]",
+      Text.replace "\n" " | " atoms,
+      "[[ ## completed ## ]]"
+    ]
 
 -- | The atom text handed to the most recent scene distillation.
 latestSceneAtoms :: DistillCalls -> IO Text
