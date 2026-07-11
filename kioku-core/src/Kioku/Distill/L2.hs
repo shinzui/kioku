@@ -22,7 +22,7 @@ import Crypto.Hash qualified as Hash
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
-import Data.Foldable (traverse_)
+import Data.Foldable (for_)
 import Data.Functor.Contravariant ((>$<))
 import Data.Maybe (catMaybes)
 import Data.Text qualified as Text
@@ -40,14 +40,20 @@ import Hasql.Transaction qualified as Tx
 import Keiro.Projection (InlineProjection (..))
 import Keiro.ReadModel (ReadModelError)
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
-import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Api.Scope (MemoryScope, scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Distill.L3 (scheduleL3PersonaTimerTx)
 import Kioku.Distill.Runtime (DistillRuntime, runSceneDistillation)
 import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..))
 import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
 import Kioku.Id (MemoryId, idText)
-import Kioku.Memory.Domain (MemoryEvent (..), MemoryRecordedData (..))
+import Kioku.Memory.Domain
+  ( MemoryArchivedData (..),
+    MemoryEvent (..),
+    MemoryMergedData (..),
+    MemoryRecordedData (..),
+    MemorySupersededData (..),
+  )
 import Kioku.Prelude
 import Kioku.Recall qualified as Recall
 import Kiroku.Store.Effect (Store)
@@ -96,18 +102,45 @@ l2SceneTimerScheduleProjection :: InlineProjection MemoryEvent
 l2SceneTimerScheduleProjection =
   InlineProjection
     { name = "kioku-l2-scene-timer-schedule",
-      apply = \event _recorded -> traverse_ scheduleTimerTx (timerRequestsForEvent event)
+      apply = \event _recorded -> scheduleSceneTimersForEvent event
     }
 
-timerRequestsForEvent :: MemoryEvent -> [TimerRequest]
-timerRequestsForEvent = \case
+-- | Every event that changes which memories a scope's scene is built from must
+-- schedule a regeneration. Forgetting is such a change: without this, archived,
+-- superseded, and merged content survives in the scene row and its plaintext
+-- mirror until some unrelated memory happens to be recorded in the same scope.
+scheduleSceneTimersForEvent :: MemoryEvent -> Tx.Transaction ()
+scheduleSceneTimersForEvent = \case
   MemoryRecorded d ->
-    [ l2SceneTimerRequest
+    scheduleTimerTx $
+      l2SceneTimerRequest
         d.scope
         (idText (d.memoryId :: MemoryId))
         (addUTCTime sceneDebounceSeconds d.recordedAt)
-    ]
-  _ -> []
+  MemoryArchived d -> scheduleForgetTimerTx d.memoryId "archived" d.archivedAt
+  MemorySuperseded d -> scheduleForgetTimerTx d.memoryId "superseded" d.supersededAt
+  MemoryMerged d -> scheduleForgetTimerTx d.memoryId "merged" d.mergedAt
+  MemoryTagsUpdated _ -> pure ()
+  MemoryConfidenceUpdated _ -> pure ()
+
+-- | The forget events carry no scope, so it is read back from the read-model row
+-- inside this same transaction. The row is guaranteed present: the aggregate only
+-- accepts a forget command from @Active@, which implies a committed
+-- @MemoryRecorded@ whose inline projection upserted the row.
+--
+-- The source id is suffixed with the event kind rather than reusing the record
+-- path's bare memory id, because keiro's 'scheduleTimerTx' re-arms a conflicting
+-- timer only while it is still @scheduled@ — reusing the record-time id would be
+-- silently dropped once that timer has fired, which by then it almost always has.
+scheduleForgetTimerTx :: MemoryId -> Text -> UTCTime -> Tx.Transaction ()
+scheduleForgetTimerTx memoryId kind occurredAt = do
+  scopeCols <- Tx.statement (idText memoryId) selectMemoryScopeColumnsStmt
+  for_ scopeCols \(ns, sk, sr) ->
+    scheduleTimerTx $
+      l2SceneTimerRequest
+        (scopeFromColumns ns sk sr)
+        (idText memoryId <> ":" <> kind)
+        (addUTCTime sceneDebounceSeconds occurredAt)
 
 l2SceneTimerRequest :: MemoryScope -> Text -> UTCTime -> TimerRequest
 l2SceneTimerRequest scope sourceId fireAt =
@@ -347,6 +380,19 @@ sceneRowEncoder =
     <> ((\row -> row.sourceHash) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.createdAt) >$< E.param (E.nonNullable E.timestamptz))
     <> ((\row -> row.updatedAt) >$< E.param (E.nonNullable E.timestamptz))
+
+selectMemoryScopeColumnsStmt :: Statement Text (Maybe (Text, Maybe Text, Maybe Text))
+selectMemoryScopeColumnsStmt =
+  preparable
+    "SELECT namespace, scope_kind, scope_ref FROM kioku_memories WHERE memory_id = $1"
+    (E.param (E.nonNullable E.text))
+    ( D.rowMaybe
+        ( (,,)
+            <$> D.column (D.nonNullable D.text)
+            <*> D.column (D.nullable D.text)
+            <*> D.column (D.nullable D.text)
+        )
+    )
 
 selectSceneByScopeKeyStmt :: Statement (Text, Maybe Text, Maybe Text, Text) (Maybe SceneRow)
 selectSceneByScopeKeyStmt =

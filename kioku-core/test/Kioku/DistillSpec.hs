@@ -27,6 +27,7 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Stream qualified as Stream
+import Keiro.Timer (countDueTimers)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
@@ -41,7 +42,7 @@ import Kioku.Distill.Scene (sceneProgram)
 import Kioku.Distill.Timer (idleFlushSeconds, l1ExtractProcessManagerName)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText, parseIdAnyPrefix)
 import Kioku.Memory qualified as Memory
-import Kioku.Memory.Domain (RecordMemoryData (..))
+import Kioku.Memory.Domain (ArchiveMemoryData (..), RecordMemoryData (..), SupersedeMemoryData (..))
 import Kioku.Memory.Embedding (EmbeddingConfig (..), toEmbeddingModel)
 import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
@@ -78,8 +79,95 @@ tests =
       testCase "watermark skips re-extraction until a new turn arrives" testWatermarkSkip,
       testCase "a session accumulates one idle timer however many turns" testIdleTimerCollapse,
       testCase "recall candidates find a duplicate outside the scan window" testRecallCandidateWindow,
+      forgetPropagationTests,
       validationTests
     ]
+
+-- | Forgetting a memory must reach every derived artifact: the scene row, the
+-- persona row, and the plaintext mirror files a host agent actually reads.
+forgetPropagationTests :: TestTree
+forgetPropagationTests =
+  testGroup
+    "Forget propagation"
+    [ testCase "forget operations schedule scene timers" testForgetSchedulesSceneTimers
+    ]
+
+-- | Archive, supersede, and merge each leave behind exactly one scene timer,
+-- just as recording does. No session is written, so every timer counted here is
+-- an L2 scene timer.
+testForgetSchedulesSceneTimers :: Assertion
+testForgetSchedulesSceneTimers = withDistillEnv \env -> do
+  now <- getCurrentTime
+  archivedId <- genMemoryId
+  supersededId <- genMemoryId
+  supersederId <- genMemoryId
+  loserId <- genMemoryId
+  winnerId <- genMemoryId
+  let scope = forgetScope "intention_forget_timers"
+      -- Timers are debounced 5 seconds past their event time; an hour out makes
+      -- every one of them due.
+      horizon = addUTCTime 3600 now
+  result <-
+    runAppIO env do
+      traverse_
+        (\mid -> recordForgetFixture mid scope ("Content for " <> idText mid) now)
+        [archivedId, supersededId, supersederId, loserId, winnerId]
+      afterRecords <- countDueTimers horizon
+
+      archived <- Memory.archive ArchiveMemoryData {memoryId = archivedId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archive" archived))
+      afterArchive <- countDueTimers horizon
+
+      superseded <-
+        Memory.supersede
+          SupersedeMemoryData
+            { memoryId = supersededId,
+              supersededBy = supersederId,
+              supersededAt = now
+            }
+      void (liftIO (expectRight "Memory.supersede" superseded))
+      afterSupersede <- countDueTimers horizon
+
+      merged <- Memory.merge loserId winnerId
+      void (liftIO (expectRight "Memory.merge" merged))
+      afterMerge <- countDueTimers horizon
+      pure (afterRecords, afterArchive, afterSupersede, afterMerge)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (afterRecords, afterArchive, afterSupersede, afterMerge) -> do
+      afterRecords @?= 5
+      afterArchive @?= 6
+      afterSupersede @?= 7
+      afterMerge @?= 8
+
+forgetScope :: Text -> MemoryScope
+forgetScope =
+  ScopeEntity (Namespace "rei") (ScopeKind "intention")
+
+recordForgetFixture ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  MemoryId ->
+  MemoryScope ->
+  Text ->
+  UTCTime ->
+  Eff es ()
+recordForgetFixture memoryId scope content now = do
+  recorded <-
+    Memory.record
+      RecordMemoryData
+        { memoryId,
+          agentId = "test-agent",
+          sessionId = Nothing,
+          scope,
+          memoryType = MemoryPreference,
+          content,
+          priority = 50,
+          confidence = HighConfidence,
+          tags = Set.fromList ["forget-test"],
+          supersedes = Nothing,
+          recordedAt = now
+        }
+  void (liftIO (expectRight "Memory.record" recorded))
 
 -- | Pure tests over the 'Validatable' instances; no database, no LLM.
 validationTests :: TestTree

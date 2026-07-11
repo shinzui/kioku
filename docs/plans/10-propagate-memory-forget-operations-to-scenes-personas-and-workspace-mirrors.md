@@ -51,9 +51,11 @@ docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identi
 
 ## Progress
 
-- [ ] Milestone 1: forget events (`MemoryArchived`, `MemorySuperseded`, `MemoryMerged`)
+- [x] Milestone 1: forget events (`MemoryArchived`, `MemorySuperseded`, `MemoryMerged`)
       schedule L2 scene timers from `l2SceneTimerScheduleProjection`, with a test that
-      counts due timers before and after each forget operation.
+      counts due timers before and after each forget operation. — 2026-07-11. Failed
+      before the fix with exactly the predicted `expected: 6, but got: 5`; passes after.
+      Full suite 44 passed (was 43).
 - [ ] Milestone 2: `regenerateScene` deletes the scene row and mirror file when the scope
       has no active memories (and schedules the L3 persona timer in the same transaction);
       `regeneratePersona` deletes the persona row and mirror file when the scope has no
