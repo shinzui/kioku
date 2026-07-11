@@ -30,8 +30,11 @@ embedding endpoint. `embedding` is pure semantic similarity.
    the request:
    - **FTS:** `content_tsv @@ websearch_to_tsquery('english', query)`, ordered by `ts_rank`
      then recency.
-   - **Vector:** ordered by cosine distance (`embedding <=> queryVector`) then recency, over
-     rows where `embedding IS NOT NULL`.
+   - **Vector:** ordered by cosine distance (`embedding <=> queryVector`) — and by nothing
+     else — over rows where `embedding IS NOT NULL`. An HNSW index can only produce the
+     distance ordering, so any second sort key leaves the planner to make up the difference,
+     and where it cannot (PostgreSQL before 13, or an incremental sort it declines) it
+     abandons the index for a sequential scan.
    Both queries filter `status = 'active'`, the request `namespace`, and — for entity scopes —
    the exact `scope_kind`/`scope_ref`.
 4. **Fuse.** The two candidate lists are merged by memory id; each memory keeps its FTS rank

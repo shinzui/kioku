@@ -5,6 +5,7 @@ import Kioku.DistillSpec qualified as DistillSpec
 import Kioku.EmbeddingWorkerSpec qualified as EmbeddingWorkerSpec
 import Kioku.IdempotencySpec qualified as IdempotencySpec
 import Kioku.RecallSpec qualified as RecallSpec
+import Kioku.RecallSqlSpec qualified as RecallSqlSpec
 import Kioku.ReiCompatSpec qualified as ReiCompatSpec
 import Kioku.SchemaSpec qualified as SchemaSpec
 import Kioku.SessionInvariantsSpec qualified as SessionInvariantsSpec
@@ -21,6 +22,7 @@ main =
         ReiCompatSpec.tests,
         IdempotencySpec.tests,
         RecallSpec.tests,
+        RecallSqlSpec.tests,
         SchemaSpec.tests,
         SessionInvariantsSpec.tests,
         SessionLineageSpec.tests,

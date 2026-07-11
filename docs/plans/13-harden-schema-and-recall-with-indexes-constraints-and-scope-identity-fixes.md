@@ -53,9 +53,9 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [x] M2: mint the embedding-schema self-healing migration and touch `Migrations.hs` — `2026-07-11-17-45-43-kioku-embedding-schema-heal.sql`
 - [x] M2: verify the dev DB heals — `embedding kiroku.vector(1536)` + `kioku_memories_embedding_hnsw` now exist after `just migrate`
 - [x] M2: document the late-install remediation path in `docs/user/recall.md` (including the `public`-schema trap)
-- [ ] M3: fix the vector candidate ORDER BY and add the `SET LOCAL hnsw.ef_search` over-fetch
-- [ ] M3: export test seams (`selectFtsCandidates`, `selectVectorCandidates`, `vectorLiteral`) and add `RecallSqlSpec` DB tests
-- [ ] M3: capture before/after `EXPLAIN` transcripts proving HNSW index use
+- [x] M3: fix the vector candidate ORDER BY — **and deliberately NOT add the `SET LOCAL hnsw.ef_search` over-fetch, which measurement showed is a recall regression** (see Decision Log supersession)
+- [x] M3: export test seams (`selectFtsCandidates`, `selectVectorCandidates`, `vectorLiteral`) and add `RecallSqlSpec` DB tests — 6 cases; the vector round-trip is proven to genuinely run under pgvector and to skip loudly without it
+- [x] M3: capture before/after `EXPLAIN` transcripts (below) — the real defect is narrower than the plan claimed
 - [ ] M4: extend the capability probe with dimension validation (`VectorDimensionMismatch`)
 - [ ] M4: fail fast in the worker CLI on mismatch; add capability tests
 - [ ] M5: add `Kioku.Distill.ScopeIdentity` (escaped identity, hash-suffixed slug) and rewire L2/L3
@@ -215,6 +215,98 @@ Discovered during M2 implementation (2026-07-11):
   designed degradation — but any vector-path assertion must be run under
   `nix develop --command cabal test all`, or it will silently skip.
 
+Discovered during M3 implementation (2026-07-11) — **the milestone's central premise was
+wrong, and the prescribed fix was half harmful:**
+
+- **The `created_at DESC` tiebreak does not defeat the HNSW index on PostgreSQL 17.** The
+  plan asserted a seq-scan-plus-sort; the real plan, on 2000 embedded rows, is:
+
+  ```text
+  ### BEFORE — the shipped query: ORDER BY distance, created_at DESC
+  Limit
+    ->  Incremental Sort
+          Sort Key: ((embedding <=> '[VEC]'::vector)), created_at DESC
+          Presorted Key: ((embedding <=> '[VEC]'::vector))
+          ->  Index Scan using kioku_memories_embedding_hnsw on kioku_memories
+                Order By: (embedding <=> '[VEC]'::vector)
+                Filter: ((status = 'active') AND (namespace = 'explain_ns'))
+  ```
+
+  PostgreSQL 13+ supplies the second key with an `Incremental Sort` on top of the index's
+  presorted leading key. The fix still lands the intended plan —
+
+  ```text
+  ### AFTER — ORDER BY distance only
+  Limit
+    ->  Index Scan using kioku_memories_embedding_hnsw on kioku_memories
+          Order By: (embedding <=> '[VEC]'::vector)
+          Filter: ((status = 'active') AND (namespace = 'explain_ns'))
+  ```
+
+  — and it is still worth making, because index use with the second key is *contingent* on
+  incremental sort. With `SET enable_incremental_sort = off` (i.e. PostgreSQL < 13, or a
+  planner that declines it) the BEFORE query collapses to precisely the disaster the plan
+  described, `Limit → Sort → Seq Scan`, while the AFTER query keeps its `Index Scan`. So the
+  change converts a conditional index scan into an unconditional one. That is the honest
+  scope of this fix: robustness, not a rescue.
+
+- **`SET LOCAL hnsw.ef_search = 200` is a recall regression and was not shipped.** Two
+  measurements killed it.
+
+  Its premise — "`ef_search` defaults to 40, below the 50-row pool, so the vector channel can
+  never fill it" — is false: pgvector searches with `ef = max(ef_search, LIMIT)`, and the
+  pool filled to exactly 50 at the default in every probe.
+
+  Worse, raising it changes the *plan*, not just the scan width. Seeded with 2000 rows in the
+  target namespace plus 2000 decoys in another namespace sitting almost exactly on the query
+  vector (the filtered-ANN worst case, since the scope filter is applied *after* the index
+  scan):
+
+  ```text
+  ### DEFAULT ef_search
+  Limit (actual rows=50)                         <- correct
+    ->  Sort (top-N heapsort)
+          ->  Bitmap Heap Scan on kioku_memories (actual rows=2000)
+                ->  Bitmap Index Scan on kioku_memories_scope_idx
+
+  ### ef_search = 200
+  Limit (actual rows=0)                          <- the vector channel returns NOTHING
+    ->  Index Scan using kioku_memories_embedding_hnsw (actual rows=0)
+          Rows Removed by Filter: 1648
+  ```
+
+  The default keeps an *exact* plan; the bump lures the planner onto an ANN scan that burns
+  its whole budget on rows the namespace filter then discards. Shipping this would have
+  silently emptied the vector channel precisely when the corpus is large and the scope is
+  selective. `hnsw.iterative_scan = relaxed_order` — the remedy the plan named as a future
+  option — **also returned 0 rows** on the same probe, so it is not a drop-in either. The
+  hazard is documented at `candidatePoolSize` and left to a follow-up with its own
+  investigation.
+
+  **Cross-plan lesson, and it rhymes with EP-4's:** this plan's Decision Log reasoned about
+  a query planner from first principles and got both the failure mode and the remedy wrong.
+  Neither error would have survived one `EXPLAIN ANALYZE` on seeded data. Any remaining plan
+  that prescribes a *performance* change should measure the plan before and after on real
+  rows, not reason about pathkeys.
+
+- **A partial index needs its predicate restated in the query.** `ORDER BY embedding <=> …
+  LIMIT 50` with no `embedding IS NOT NULL` gets a seq scan; the index is
+  `WHERE embedding IS NOT NULL`, so the planner must be able to prove the query implies it.
+  Recall's statement already carries that predicate, but it is load-bearing, not decoration.
+
+- **Rows inserted in an open transaction do not get an HNSW index scan**, even with
+  `enable_seqscan = off` and a fresh `ANALYZE`. Every EXPLAIN in this milestone therefore ran
+  against committed data. Anyone reproducing this in a `BEGIN … ROLLBACK` block will see a
+  seq scan and draw the wrong conclusion — as this milestone's first three attempts did.
+
+- **M2's pgvector gave several existing tests their first real run.** In the pgvector shell
+  the suite reports no skips at all; without it, `EmbeddingWorkerSpec` prints
+  `[skipped: provider failure]`, `[skipped: successful embedding]` and
+  `[skipped: dimension mismatch]`. Those cases have been passing vacuously. `RecallSqlSpec`'s
+  vector round-trip follows the same house convention and says so out loud rather than
+  skipping silently — verified in both directions by temporarily converting the skip into a
+  failure: it fires in the old shell and does not in the new one.
+
 
 ## Decision Log
 
@@ -252,6 +344,32 @@ Record every decision made while working on the plan.
   minimum pgvector version and changes result order guarantees; it is documented as a future
   option, not adopted.
   Date: 2026-07-07
+  **SUPERSEDED 2026-07-11 during M3, in its second half only — both stated premises were
+  measured and both are false.** See the evidence in Surprises & Discoveries (M3). In short:
+  (1) pgvector already searches with `ef = max(ef_search, LIMIT)`, so the 40 default does
+  *not* prevent the 50-row pool from filling — it filled to 50 in every measurement; and
+  (2) raising it is not a neutral over-fetch, it changes the *plan*: with 2000 target rows
+  and 2000 nearer decoys in another namespace, `SET hnsw.ef_search = 200` moved the planner
+  off an exact plan returning 50 correct rows onto an HNSW scan that spent its budget on
+  rows the namespace filter then discarded — 1648 removed, **zero returned**. Shipping it
+  would have silently emptied the vector channel exactly when the corpus is large and the
+  scope is selective, which is when recall matters most.
+
+- Decision (supersedes the `ef_search` half of the above): remove `created_at DESC`; do
+  **not** set `hnsw.ef_search`. Document the filtered-ANN starvation hazard where
+  `candidatePoolSize` is defined, and leave `hnsw.iterative_scan` to a follow-up.
+  Rationale: the ORDER BY fix survives scrutiny, though for a narrower reason than the plan
+  gave — the index is *not* defeated on PostgreSQL 17, which bolts an `Incremental Sort` onto
+  the index scan to supply the second key. It *is* defeated wherever incremental sort is
+  unavailable (PostgreSQL < 13) or not chosen, where the plan collapses to `Seq Scan` + full
+  `Sort` exactly as the plan predicted. Removing the second key makes index use unconditional
+  instead of contingent, costs nothing (the statement does not return distances, so no caller
+  could tiebreak on them), and measured neutral-to-better in every plan shape tried. The
+  starvation hazard is real but *pre-existing* and not something the ORDER BY fix introduces;
+  `hnsw.iterative_scan = relaxed_order` is the intended remedy but is not a drop-in — it also
+  returned zero rows on the same probe — so it needs its own investigation rather than a
+  hopeful `SET`.
+  Date: 2026-07-11
 
 - Decision: Scope-identity strings become collision-free by percent-escaping each component
   (`%` -> `%25`, `/` -> `%2F`, `:` -> `%3A`) before joining, instead of rejecting `/` in

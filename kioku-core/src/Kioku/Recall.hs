@@ -18,6 +18,12 @@ module Kioku.Recall
     getById,
     getBySession,
     getByType,
+
+    -- * Test seams
+    -- $testSeams
+    selectFtsCandidates,
+    selectVectorCandidates,
+    vectorLiteral,
   )
 where
 
@@ -63,6 +69,11 @@ import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..))
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
+
+-- $testSeams
+-- Exported so the candidate SQL can be exercised directly against a real database
+-- (@Kioku.RecallSqlSpec@) rather than only through 'recall', which would drag in an
+-- embedding endpoint. They are not part of the intended public API.
 
 data RecallStrategy = Keyword | Embedding | Hybrid
   deriving stock (Generic, Eq, Show)
@@ -380,6 +391,20 @@ selectFtsCandidatesStmt =
     recallCandidateQueryEncoder
     (D.rowList memoryRecordDecoder)
 
+-- | Vector candidates, ordered by cosine distance and nothing else.
+--
+-- The @ORDER BY@ is deliberately a single expression. An HNSW index can only produce the
+-- distance pathkey, so a second sort key (this query used to carry @created_at DESC@) leaves
+-- the planner to make up the difference: on PostgreSQL 13+ it bolts an @Incremental Sort@ on
+-- top of the index scan, and where incremental sort is unavailable or disabled it abandons
+-- the index entirely for a sequential scan plus a full sort. Ordering by distance alone makes
+-- the index scan unconditional. Nothing is lost: the statement does not return the distance,
+-- so a caller could not re-break ties anyway, and exact ties between 1536-dimension float
+-- vectors essentially do not occur.
+--
+-- Recall that this is a *post-filtered* ANN scan: the namespace, scope and status predicates
+-- are applied to rows the index has already chosen by distance. See 'candidatePoolSize' for
+-- what that costs.
 selectVectorCandidatesStmt :: Statement VectorCandidateQuery [MemoryRecord]
 selectVectorCandidatesStmt =
   preparable
@@ -391,7 +416,7 @@ selectVectorCandidatesStmt =
              AND namespace = $2
              AND (($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4))
              AND embedding IS NOT NULL
-           ORDER BY embedding <=> $1::vector, created_at DESC
+           ORDER BY embedding <=> $1::vector
            LIMIT $5
            """
     )
@@ -473,6 +498,23 @@ vectorLiteral :: Vector Double -> Text
 vectorLiteral values =
   "[" <> Text.intercalate "," (Text.pack . show <$> Vector.toList values) <> "]"
 
+-- | How many candidates each channel contributes to the RRF fusion.
+--
+-- Do not "fix" the vector channel by raising @hnsw.ef_search@ to cover this pool. That was
+-- tried, on the theory that the 40 default sits below this 50 and so could never fill it, and
+-- measurement refuted it twice over. First, pgvector already searches with
+-- @ef = max(ef_search, LIMIT)@, so the pool fills at the default. Second, raising it is
+-- actively harmful: with 1536-dimension vectors, 2000 rows in the target namespace and 2000
+-- nearer rows in another, @SET hnsw.ef_search = 200@ flipped the planner from an exact plan
+-- (bitmap scan on the scope index, top-N sort, 50 correct rows) onto an HNSW scan that spent
+-- its whole budget on rows the namespace filter then discarded — 1648 removed, __zero__
+-- returned. The default kept the exact plan.
+--
+-- The underlying hazard is real and predates this code: the HNSW scan is post-filtered, so a
+-- selective predicate that correlates with distance can starve the pool. pgvector 0.8's
+-- @hnsw.iterative_scan@ is the intended remedy, but it is not a drop-in — @relaxed_order@
+-- returned zero rows on the same probe — and it would pin a minimum pgvector version. It
+-- needs its own investigation rather than a hopeful @SET@.
 candidatePoolSize :: Int32
 candidatePoolSize = 50
 
