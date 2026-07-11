@@ -7,7 +7,7 @@ module Kioku.Id
     genSessionId,
     idText,
     parseId,
-    parseIdAnyPrefix,
+    parseIdLenient,
   )
 where
 
@@ -41,12 +41,24 @@ parseId t =
     Left err -> Left (Text.pack (show err))
     Right kid -> Right kid
 
-parseIdAnyPrefix ::
+-- | Lenient TypeID parsing: accepts /any/ prefix (or none), discards it, and rebrands the
+-- UUID into the target 'KindID' type.
+--
+-- This is deliberate in exactly three places, all of which trust the UUID but cannot trust the
+-- prefix: decoding legacy Rei event streams (whose ids carry @agent_memory_*@ \/
+-- @agent_session_*@ prefixes), parsing memory ids echoed back by an LLM during distillation,
+-- and parsing timer correlation ids.
+--
+-- Never use it to parse operator input. It will happily accept a @kioku_memory@ id where a
+-- 'SessionId' is expected and hand back a session id pointing at a session that does not
+-- exist. Use the strict 'parseId', which rejects a wrong prefix and names both prefixes in the
+-- error.
+parseIdLenient ::
   forall prefix.
   (ToPrefix prefix, ValidPrefix (PrefixSymbol prefix)) =>
   Text ->
   Either Text (KindID prefix)
-parseIdAnyPrefix t =
+parseIdLenient t =
   case TypeID.parseText t of
     Left err -> Left (Text.pack (show err))
     Right tid -> Right (KindID.decorateKindID (TypeID.getUUID tid))

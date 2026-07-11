@@ -12,7 +12,7 @@ module Kioku.Distill.Consolidate
 where
 
 import Kioku.Distill.Extract (ExtractedAtom)
-import Kioku.Id (MemoryId, parseIdAnyPrefix)
+import Kioku.Id (MemoryId, parseIdLenient)
 import Kioku.Prelude
 import Shikumi.Adapter (ToPrompt)
 import Shikumi.Module (predict)
@@ -79,7 +79,7 @@ requireTargets decision
   where
     parseTarget :: Text -> Either Text MemoryId
     parseTarget raw =
-      case parseIdAnyPrefix raw of
+      case parseIdLenient raw of
         Left err -> Left ("targetMemoryIds contains an unparseable id " <> raw <> ": " <> err)
         Right mid -> Right mid
 

@@ -17,7 +17,7 @@ import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
-import Kioku.Id (MemoryId, SessionId, idText, parseIdAnyPrefix)
+import Kioku.Id (MemoryId, SessionId, idText, parseIdLenient)
 import Kioku.Memory.Domain
 import Kioku.Prelude
 
@@ -148,10 +148,10 @@ parseLegacyAnchor =
       other -> fail ("Unknown Rei MemoryAnchor type: " <> Text.unpack other)
 
 parseLegacyMemoryId :: Text -> Parser MemoryId
-parseLegacyMemoryId = either (fail . Text.unpack) pure . parseIdAnyPrefix
+parseLegacyMemoryId = either (fail . Text.unpack) pure . parseIdLenient
 
 parseLegacySessionId :: Text -> Parser SessionId
-parseLegacySessionId = either (fail . Text.unpack) pure . parseIdAnyPrefix
+parseLegacySessionId = either (fail . Text.unpack) pure . parseIdLenient
 
 reiNamespace :: Namespace
 reiNamespace = Namespace "rei"

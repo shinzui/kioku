@@ -10,7 +10,7 @@ import Data.Text qualified as Text
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Distill.L1 (L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
-import Kioku.Id (SessionId, idText, parseIdAnyPrefix)
+import Kioku.Id (SessionId, idText, parseId)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Recall.Capability (detectVectorCapability)
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
@@ -95,9 +95,12 @@ runMode opts
   | opts.force = IgnoreWatermark
   | otherwise = RespectWatermark
 
+-- | Strict: only a @kioku_session@ id is accepted here. The lenient parser this used to call
+-- would take a @kioku_memory@ id, throw its prefix away, and rebrand the UUID — so the pass ran
+-- against a session that does not exist and reported nothing wrong.
 parseSessionId :: String -> Either String SessionId
 parseSessionId raw =
-  case parseIdAnyPrefix (Text.pack raw) of
+  case parseId (Text.pack raw) of
     Left err -> Left (Text.unpack err)
     Right sid -> Right sid
 

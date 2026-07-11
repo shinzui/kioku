@@ -17,7 +17,7 @@ import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
-import Kioku.Id (SessionId, idText, parseIdAnyPrefix)
+import Kioku.Id (SessionId, idText, parseIdLenient)
 import Kioku.Prelude
 import Kioku.Session.Domain
 
@@ -134,7 +134,7 @@ parseLegacyInteractiveSessionRecorded =
       <*> o .: "startedAt"
 
 parseLegacySessionId :: Text -> Parser SessionId
-parseLegacySessionId = either (fail . Text.unpack) pure . parseIdAnyPrefix
+parseLegacySessionId = either (fail . Text.unpack) pure . parseIdLenient
 
 sessionScope :: Maybe Text -> MemoryScope
 sessionScope = \case

@@ -35,7 +35,7 @@ import Kioku.Distill.Timer.Outcome
     timerMarkerEventId,
     unknownTimerRetryDelay,
   )
-import Kioku.Id (parseIdAnyPrefix)
+import Kioku.Id (parseIdLenient)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Error (StoreError)
@@ -64,7 +64,7 @@ fireL1Timer rt finder row
   | row.processManagerName /= l1ExtractProcessManagerName =
       pure FireNotMine
   | otherwise =
-      case parseIdAnyPrefix row.correlationId of
+      case parseIdLenient row.correlationId of
         -- A correlation id that is not a session id will never become one.
         -- This used to be marked fired, which looked like success.
         Left _err ->

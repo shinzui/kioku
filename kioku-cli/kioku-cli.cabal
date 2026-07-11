@@ -65,3 +65,20 @@ executable kioku
   build-depends:
     , base       >=4.21 && <5
     , kioku-cli
+
+test-suite kioku-cli-test
+  import:         warnings, shared
+  type:           exitcode-stdio-1.0
+  main-is:        Main.hs
+  hs-source-dirs: test
+  other-modules:  Kioku.Cli.ParserSpec
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , base                  >=4.21 && <5
+    , kioku-api
+    , kioku-cli
+    , kioku-core
+    , optparse-applicative  >=0.18
+    , tasty                 >=1.5
+    , tasty-hunit           >=0.10
+    , text                  >=2.1

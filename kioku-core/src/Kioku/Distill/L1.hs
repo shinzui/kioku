@@ -46,7 +46,7 @@ import Kioku.Distill.Consolidate
   )
 import Kioku.Distill.Extract (ExtractInput (..), ExtractOutput (..), ExtractedAtom (..))
 import Kioku.Distill.Runtime (DistillRuntime, runConsolidation, runExtraction)
-import Kioku.Id (MemoryId, SessionId, idText, parseIdAnyPrefix)
+import Kioku.Id (MemoryId, SessionId, idText, parseIdLenient)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
 import Kioku.Memory.ReadModel (MemoryRow (..))
@@ -535,7 +535,7 @@ parsedTargetIds decision =
 
 parseTargetId :: Text -> Maybe MemoryId
 parseTargetId =
-  either (const Nothing) Just . parseIdAnyPrefix
+  either (const Nothing) Just . parseIdLenient
 
 resolvedContent :: ExtractedAtom -> ConsolidationDecision -> Text
 resolvedContent atom decision =

@@ -43,7 +43,7 @@ import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
 import Kioku.Distill.Scene (SceneInput (..), sceneProgram)
 import Kioku.Distill.Timer (idleFlushSeconds, l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Worker (runKiokuTimerWorkerOnce)
-import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText, parseIdAnyPrefix)
+import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText, parseIdLenient)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (ArchiveMemoryData (..), RecordMemoryData (..), SupersedeMemoryData (..))
 import Kioku.Memory.Embedding (EmbeddingConfig (..), toEmbeddingModel)
@@ -1286,7 +1286,7 @@ loadLoserEvents ::
 loadLoserEvents memories =
   case [mid | MemoryStatus {memoryId = mid, status = "merged"} <- memories] of
     loser : _ ->
-      case (parseIdAnyPrefix loser :: Either Text MemoryId) of
+      case (parseIdLenient loser :: Either Text MemoryId) of
         Left _ -> pure []
         Right loserId ->
           Vector.toList <$> readStreamForward (Stream.streamName (memoryStream loserId)) (StreamVersion 0) 100

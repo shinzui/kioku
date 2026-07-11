@@ -52,11 +52,11 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] M1: Rename `parseIdAnyPrefix` to `parseIdLenient` in `kioku-api/src/Kioku/Id.hs` with a Haddock explaining its laxity and legitimate uses.
-- [ ] M1: Update the four lenient call sites in kioku-core (`Kioku/Memory/EventStream.hs`, `Kioku/Session/EventStream.hs`, `Kioku/Distill/L1.hs`, `Kioku/Distill/Timer/Worker.hs`) and the test use in `kioku-core/test/Kioku/DistillSpec.hs` to the new name (behavior unchanged).
-- [ ] M1: Switch `kioku-cli/src/Kioku/Cli/Commands/Distill.hs` `parseSessionId` to the strict `parseId`.
-- [ ] M1: Add the `kioku-cli-test` test suite scaffold (`kioku-cli/test/Main.hs`, `kioku-cli/test/Kioku/Cli/ParserSpec.hs`, cabal stanza) with strict-id tests.
-- [ ] M1: Update `docs/user/cli-reference.md` line 125 ("any id prefix is accepted").
+- [x] M1: Rename `parseIdAnyPrefix` to `parseIdLenient` in `kioku-api/src/Kioku/Id.hs` with a Haddock explaining its laxity and legitimate uses. — 2026-07-11
+- [x] M1: Update the lenient call sites in kioku-core (`Kioku/Memory/EventStream.hs`, `Kioku/Session/EventStream.hs`, `Kioku/Distill/L1.hs`, **`Kioku/Distill/Consolidate.hs`** — a fifth site EP-1 created, not in the plan's list — `Kioku/Distill/Timer/Worker.hs`) and the test use in `kioku-core/test/Kioku/DistillSpec.hs` to the new name (behavior unchanged). — 2026-07-11
+- [x] M1: Switch `kioku-cli/src/Kioku/Cli/Commands/Distill.hs` `parseSessionId` to the strict `parseId`. — 2026-07-11
+- [x] M1: Add the `kioku-cli-test` test suite scaffold (`kioku-cli/test/Main.hs`, `kioku-cli/test/Kioku/Cli/ParserSpec.hs`, cabal stanza) with strict-id tests. — 2026-07-11 (3 tests pass)
+- [x] M1: Update `docs/user/cli-reference.md` line 125 ("any id prefix is accepted"). — 2026-07-11
 - [ ] M2: Rewrite `parseScope` in `kioku-cli/src/Kioku/Cli/Scope.hs` to split on the first two colons only; add parser tests; update `--help` text and docs.
 - [ ] M3: Add `Kioku.Cli.Options` with `boundedIntReader`; bound `--limit` in Recall.hs (1–100) and Distill.hs (1–50); add tests; update docs.
 - [ ] M4: Demo guard: required `--yes-write-events` flag for `demo` and `demo-session`, `kioku_demo` namespace, preflight print with redacted connection string; add tests; update docs.
@@ -80,6 +80,15 @@ implementation. Provide concise evidence.
   `shinzui/shikigami` (/Users/shinzui/Keikaku/bokuno/shikigami). Grepping both trees found
   zero uses of `parseIdAnyPrefix` or `embedBatched`, so the rename and the removal break no
   registered consumer. Re-verify at implementation time (see Concrete Steps).
+
+- (M1, 2026-07-11.) **The lenient parser had six call sites, not the four the plan lists.**
+  EP-1 (docs/plans/9-…) extracted L1's consolidation step into a new module
+  `kioku-core/src/Kioku/Distill/Consolidate.hs`, which parses LLM-echoed memory ids at
+  `Consolidate.hs:82` — a legitimate lenient use of exactly the kind Decision 2 describes, but
+  one that did not exist when this plan was written. The rename is compile-checked, so the
+  extra site announced itself immediately; recorded because it is the concrete form of the
+  MasterPlan's warning that sibling plans reshape this plan's files under it. No behavior
+  changed at any site.
 
 
 ## Decision Log

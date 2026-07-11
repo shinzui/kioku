@@ -122,7 +122,7 @@ kioku distill session SESSION_ID [options]
 
 | Argument / flag      | Default | Description                                                       |
 |----------------------|---------|-------------------------------------------------------------------|
-| `SESSION_ID` (positional) | — | The session to distill (any id prefix is accepted).               |
+| `SESSION_ID` (positional) | — | The session to distill. Must carry the `kioku_session` prefix; any other prefix (a `kioku_memory` id, a bare UUID) is rejected with an error naming both the expected and the received prefix. |
 | `--candidates`       | `scan`  | How merge candidates are found: `scan` (scope SQL scan) or `recall` (hybrid recall). |
 | `--limit N`          | `5`     | Maximum merge candidates considered per extracted atom.           |
 
