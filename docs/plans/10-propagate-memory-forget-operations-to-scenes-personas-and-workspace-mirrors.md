@@ -56,11 +56,14 @@ docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identi
       counts due timers before and after each forget operation. — 2026-07-11. Failed
       before the fix with exactly the predicted `expected: 6, but got: 5`; passes after.
       Full suite 44 passed (was 43).
-- [ ] Milestone 2: `regenerateScene` deletes the scene row and mirror file when the scope
+- [x] Milestone 2: `regenerateScene` deletes the scene row and mirror file when the scope
       has no active memories (and schedules the L3 persona timer in the same transaction);
       `regeneratePersona` deletes the persona row and mirror file when the scope has no
       scenes. Neither empty path calls the LLM. Tests call the regeneration functions
-      directly and assert on rows, mirror files, and LLM invocation counts.
+      directly and assert on rows, mirror files, and LLM invocation counts. — 2026-07-11.
+      Required an unplanned prerequisite (Decision 9: injectable workspace root), because
+      the plan's assumption that `DistillSpec` runs under `withCurrentDirectory` was
+      invalidated by EP-1. Full suite 45 passed.
 - [ ] Milestone 3: end-to-end tests that drive the real timer worker
       (`runKiokuTimerWorkerOnce`) through record → distill → archive/supersede/merge →
       observe scene, persona, and mirror content change, including the archive-everything
@@ -102,7 +105,25 @@ tree at commit `b18da36` and the pinned keiro commit `f1d67a01b7457387a4861e7268
   timers through the keiro library API (`Keiro.Timer.countDueTimers`) and through worker
   behavior, which stays correct regardless of where the table lives.
 
-(Implementation-time discoveries go here as work proceeds.)
+Discovered during implementation (2026-07-11):
+
+- **The plan's test strategy rested on a `withCurrentDirectory` that no longer exists.**
+  Milestones 2 and 3 say "the test already runs under `withCurrentDirectory tmp`". It does
+  not: EP-1 removed `DistillSpec`'s chdir because tasty runs cases concurrently and the
+  process-wide working directory raced as soon as a second database-backed case existed
+  (the MasterPlan records this under EP-1's discoveries). Mirrors were therefore landing in
+  whatever directory the test process happened to run in — `kioku-core/` — which is how EP-1
+  came to commit two of them (`kioku-core/.kioku/{scenes,persona}/rei-intention-intention_distill_test.md`,
+  content identical to `DistillSpec`'s canned `sceneResponse`/`personaResponse`). Fixed by
+  Decision 9 (injectable `workspaceRoot`) and Decision 10 (delete + gitignore), which
+  together mean the suite now writes no files into the repository at all.
+- **The empty-scope delete makes test ordering load-bearing in a way worth naming.** The
+  first draft of the Milestone 2 test asserted "the mirror was written" *after* the whole
+  effectful block had run, and it failed — correctly, because by then the block had already
+  archived the last memory and removed the mirror. Assertions about an artifact that the
+  test is about to destroy have to be captured at the point in the sequence they describe,
+  not at the end. Milestone 3's end-to-end test has the same shape and is written the same
+  way.
 
 
 ## Decision Log
@@ -178,6 +199,32 @@ tree at commit `b18da36` and the pinned keiro commit `f1d67a01b7457387a4861e7268
   (confidence can change repeatedly, unlike the terminal forget events), and folding it in
   would grow this plan's test matrix. Flagged for the MasterPlan as a candidate follow-up.
   Date: 2026-07-07.
+
+- Decision 9 (implementation-time, unplanned): add `workspaceRoot :: Maybe FilePath` to
+  `DistillRuntime`, resolved by the new `distillWorkspaceRoot`; `Nothing` means
+  `getCurrentDirectory`, which is exactly today's behavior, so the CLI is unchanged.
+  `bestEffortMirrorScene`/`bestEffortMirrorPersona` and the two new removal functions all
+  take the runtime and resolve the workspace through it.
+  Rationale: this plan's Milestone 2 and 3 tests assert on mirror files, and the plan
+  assumed they could do so under `withCurrentDirectory tmp`. EP-1 removed that: tasty runs
+  cases concurrently and a process-wide chdir raced (recorded in the MasterPlan's Surprises
+  section). Without an injectable root there is no way to observe a mirror file from a test
+  without either racing or asserting against the repository working directory. The
+  alternative — making mirroring a swappable IO function like the LLM runners — was rejected
+  as more machinery than the question needs: the tests want to assert on real files on a
+  real disk, just not *these* files on *this* disk.
+  Date: 2026-07-11.
+
+- Decision 10 (implementation-time, unplanned): delete the committed mirror files at
+  `kioku-core/.kioku/` and add `.kioku/` to `.gitignore`.
+  Rationale: they were test output, not fixtures — their content is verbatim
+  `sceneResponse`/`personaResponse` from `DistillSpec`, and `git log` shows EP-1's commit
+  `159bbf3` added them accidentally when the suite ran with the repository as its working
+  directory. Decision 9 stops the suite from writing them at all (the pre-existing
+  `testReplayDistillation` was moved onto the temp workspace too), so removing them is
+  final rather than cosmetic. The gitignore entry is the belt to that braces: `.kioku/` is
+  agent-workspace output anywhere it appears, never source.
+  Date: 2026-07-11.
 
 - Decision 8: Rows and mirror paths touched by the delete paths are always computed by
   calling the existing functions — the fetched row's primary key (which was itself written

@@ -12,6 +12,7 @@ import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy qualified as BL
 import Data.Foldable (traverse_)
 import Data.Functor.Contravariant ((>$<))
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Int (Int64)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
@@ -34,11 +35,11 @@ import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Distill.Consolidate (ConsolidateInput (..), ConsolidationAction (..), ConsolidationDecision (..), ExistingMemory (..), consolidateProgram)
 import Kioku.Distill.Extract (ExtractOutput (..), ExtractedAtom (..), extractProgram)
 import Kioku.Distill.L1 (L1Error (..), L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
-import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, regenerateScene)
-import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, regeneratePersona)
+import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, regenerateScene, sceneMirrorPath)
+import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, personaMirrorPath, regeneratePersona)
 import Kioku.Distill.Persona (personaProgram)
 import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
-import Kioku.Distill.Scene (sceneProgram)
+import Kioku.Distill.Scene (SceneInput (..), sceneProgram)
 import Kioku.Distill.Timer (idleFlushSeconds, l1ExtractProcessManagerName)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText, parseIdAnyPrefix)
 import Kioku.Memory qualified as Memory
@@ -65,6 +66,8 @@ import Shikumi.Schema.Types (field, unField)
 import Shikumi.Trace (runTrace, tracedLLM)
 import Shikumi.Trace.Replay (runLLMReplay)
 import Shikumi.Trace.Store (replayIndex)
+import System.Directory (doesFileExist)
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 
@@ -89,8 +92,92 @@ forgetPropagationTests :: TestTree
 forgetPropagationTests =
   testGroup
     "Forget propagation"
-    [ testCase "forget operations schedule scene timers" testForgetSchedulesSceneTimers
+    [ testCase "forget operations schedule scene timers" testForgetSchedulesSceneTimers,
+      testCase "an emptied scope deletes its scene, persona, and mirrors" testEmptyScopeDeletesArtifacts
     ]
+
+alphaContent :: Text
+alphaContent = "The alpha secret is that the launch slipped to March."
+
+alphaNeedle :: Text
+alphaNeedle = "alpha secret"
+
+betaContent :: Text
+betaContent = "The beta fact is that the docs live in ops/README.md."
+
+-- | The privacy-shaped case. Forgetting the last memory in a scope must take the
+-- scene and persona with it — row and plaintext mirror alike — and must not pay
+-- an LLM to summarize what is no longer there.
+testEmptyScopeDeletesArtifacts :: Assertion
+testEmptyScopeDeletesArtifacts = withDistillWorkspaceEnv \env workspace -> do
+  calls <- newDistillCalls
+  runtime <- countingRuntime calls <$> replayRuntimeIn workspace
+  alphaId <- genMemoryId
+  betaId <- genMemoryId
+  now <- getCurrentTime
+  let scope = forgetScope "intention_forget_empty"
+  result <-
+    runAppIO env do
+      recordForgetFixture alphaId scope alphaContent now
+      recordForgetFixture betaId scope betaContent now
+
+      firstScene <- regenerateScene runtime scope
+      sceneRow <- liftIO (expectJustRow "the first regeneration writes a scene" firstScene)
+      firstPersona <- regeneratePersona runtime scope
+      personaRow <- liftIO (expectJustRow "the first regeneration writes a persona" firstPersona)
+
+      -- Both mirrors have to be observed here, while they still exist: the whole
+      -- point of what follows is that they stop existing.
+      let scenePath = sceneMirrorPath workspace sceneRow
+          personaPath = personaMirrorPath workspace personaRow
+      mirrorsWritten <-
+        liftIO ((&&) <$> doesFileExist scenePath <*> doesFileExist personaPath)
+
+      -- Forget one of the two: the scene must rebuild from the survivor alone.
+      archivedAlpha <- Memory.archive ArchiveMemoryData {memoryId = alphaId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archive alpha" archivedAlpha))
+      afterOne <- regenerateScene runtime scope
+      survivorScene <- liftIO (expectJustRow "the scene survives one forget" afterOne)
+
+      -- Forget the last one: nothing may be left to regenerate from.
+      archivedBeta <- Memory.archive ArchiveMemoryData {memoryId = betaId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archive beta" archivedBeta))
+      emptyScene <- regenerateScene runtime scope
+      emptyPersona <- regeneratePersona runtime scope
+
+      scenes <- getScenesByScope scope
+      persona <- getPersonaByScope scope
+      pure (mirrorsWritten, scenePath, personaPath, survivorScene, emptyScene, emptyPersona, scenes, persona)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (mirrorsWritten, scenePath, personaPath, survivorScene, emptyScene, emptyPersona, scenes, persona) -> do
+      assertBool "the scene and persona mirrors were written to begin with" mirrorsWritten
+
+      -- The forgotten memory is gone from what the scene is built from.
+      atoms <- latestSceneAtoms calls
+      assertBool
+        ("forgotten content reached the scene LLM: " <> Text.unpack atoms)
+        (not (alphaNeedle `Text.isInfixOf` atoms))
+      survivorScene.atomIds @?= [idText betaId]
+
+      -- The emptied scope keeps no artifact anywhere.
+      case emptyScene of
+        Right Nothing -> pure ()
+        other -> assertFailure ("expected no scene for an emptied scope, got " <> show other)
+      case emptyPersona of
+        Right Nothing -> pure ()
+        other -> assertFailure ("expected no persona for an emptied scope, got " <> show other)
+      scenes @?= []
+      persona @?= Nothing
+      doesFileExist scenePath
+        >>= \exists -> assertBool "the scene mirror was removed" (not exists)
+      doesFileExist personaPath
+        >>= \exists -> assertBool "the persona mirror was removed" (not exists)
+
+      -- Neither empty regeneration paid for an LLM call: two scene runs (the
+      -- initial build and the rebuild from the survivor) and one persona run.
+      readIORef calls.sceneCalls >>= \runs -> runs @?= 2
+      readIORef calls.personaCalls >>= \runs -> runs @?= 1
 
 -- | Archive, supersede, and merge each leave behind exactly one scene timer,
 -- just as recording does. No session is written, so every timer counted here is
@@ -290,8 +377,8 @@ data DistillResult = DistillResult
   deriving stock (Generic, Show)
 
 testReplayDistillation :: Assertion
-testReplayDistillation = withDistillEnv \env -> do
-  runtime <- replayRuntime
+testReplayDistillation = withDistillWorkspaceEnv \env workspace -> do
+  runtime <- replayRuntimeIn workspace
   sid <- genSessionId
   now <- getCurrentTime
   let scope = fixtureScope
@@ -730,6 +817,53 @@ replayRuntime = do
         runPersona = replayProgram personaResponse personaProgram
       }
 
+-- | A replay runtime whose plaintext mirrors go to a private directory rather
+-- than the process's working directory. Any test that asserts on mirror files —
+-- or merely regenerates a scene, which writes one as a side effect — must use
+-- this: tasty runs cases concurrently, so a process-wide @chdir@ would race.
+replayRuntimeIn :: FilePath -> IO DistillRuntime
+replayRuntimeIn workspace = do
+  rt <- replayRuntime
+  pure rt {workspaceRoot = Just workspace}
+
+-- | An 'AppEnv' plus the private workspace its mirrors are written into.
+withDistillWorkspaceEnv :: (AppEnv -> FilePath -> IO a) -> IO a
+withDistillWorkspaceEnv action =
+  withSystemTempDirectory "kioku-distill" \workspace ->
+    withDistillEnv \env -> action env workspace
+
+-- | Counters and captures over the two distillation runners the forget paths
+-- must not invoke, plus the atom text each scene distillation was actually shown.
+data DistillCalls = DistillCalls
+  { sceneCalls :: !(IORef Int),
+    personaCalls :: !(IORef Int),
+    sceneAtoms :: !(IORef [Text])
+  }
+
+newDistillCalls :: IO DistillCalls
+newDistillCalls =
+  DistillCalls <$> newIORef 0 <*> newIORef 0 <*> newIORef []
+
+countingRuntime :: DistillCalls -> DistillRuntime -> DistillRuntime
+countingRuntime calls rt =
+  rt
+    { runScene = \input -> do
+        modifyIORef' calls.sceneCalls (+ 1)
+        modifyIORef' calls.sceneAtoms (<> [unField input.atoms])
+        rt.runScene input,
+      runPersona = \input -> do
+        modifyIORef' calls.personaCalls (+ 1)
+        rt.runPersona input
+    }
+
+-- | The atom text handed to the most recent scene distillation.
+latestSceneAtoms :: DistillCalls -> IO Text
+latestSceneAtoms calls = do
+  captured <- readIORef calls.sceneAtoms
+  case reverse captured of
+    latest : _ -> pure latest
+    [] -> assertFailure "the scene distiller was never called"
+
 replayProgram :: Text -> Program i o -> i -> IO (Either ShikumiError o)
 replayProgram response prog input = do
   (live, tree) <-
@@ -1041,6 +1175,14 @@ expectRight :: (Show e) => String -> Either e a -> IO a
 expectRight label = \case
   Left err -> assertFailure (label <> " failed: " <> show err)
   Right value -> pure value
+
+-- | Unwrap a regeneration that was expected to produce an artifact, not to find
+-- the scope empty.
+expectJustRow :: (Show e) => String -> Either e (Maybe a) -> IO a
+expectJustRow label outcome =
+  expectRight label outcome >>= \case
+    Just row -> pure row
+    Nothing -> assertFailure (label <> ": expected a row, got none")
 
 -- | Unwrap a pass that was expected to actually run, not skip on the watermark.
 expectDistilled :: String -> Either L1Error L1Outcome -> IO L1Summary

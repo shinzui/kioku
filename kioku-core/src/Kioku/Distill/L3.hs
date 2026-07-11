@@ -40,13 +40,13 @@ import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..))
-import Kioku.Distill.Runtime (DistillRuntime, runPersonaDistillation)
+import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runPersonaDistillation)
 import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
 import Shikumi.Schema.Types (field, unField)
-import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
+import System.Directory (createDirectoryIfMissing, doesFileExist, getCurrentDirectory, removeFile)
 import System.FilePath ((</>))
 
 data L3Error
@@ -122,7 +122,18 @@ regeneratePersona ::
 regeneratePersona rt scope = do
   scenes <- getPersonaScenesByScope scope
   case scenes of
-    [] -> pure (Right Nothing)
+    -- Every scene in this scope is gone, so the persona distilled from them has
+    -- no source left. Delete it and its mirror, symmetrically with the scene
+    -- delete in "Kioku.Distill.L2", and without an LLM call: there is nothing
+    -- to summarize. The persona is the top of the pyramid, so nothing chains on.
+    [] -> do
+      existing <- getPersonaByScope scope
+      case existing of
+        Nothing -> pure (Right Nothing)
+        Just row -> do
+          runTransaction (Tx.statement row.personaId deletePersonaStmt)
+          liftIO (bestEffortRemovePersonaMirror rt row)
+          pure (Right Nothing)
     _ -> do
       let sourceHash = personaSourceHash scenes
           personaId = personaRowId scope
@@ -130,7 +141,7 @@ regeneratePersona rt scope = do
       case existing of
         Just row
           | row.sourceHash == sourceHash -> do
-              liftIO (bestEffortMirrorPersona row)
+              liftIO (bestEffortMirrorPersona rt row)
               pure (Right (Just row))
         _ -> do
           outputResult <-
@@ -158,7 +169,7 @@ regeneratePersona rt scope = do
                         updatedAt = now
                       }
               runTransaction (Tx.statement row upsertPersonaStmt)
-              liftIO (bestEffortMirrorPersona row)
+              liftIO (bestEffortMirrorPersona rt row)
               pure (Right (Just row))
 
 fireL3PersonaTimer ::
@@ -218,9 +229,24 @@ personaMirrorPath :: FilePath -> PersonaRow -> FilePath
 personaMirrorPath workspace row =
   workspace </> ".kioku" </> "persona" </> Text.unpack (personaScopeSlug row <> ".md")
 
-bestEffortMirrorPersona :: PersonaRow -> IO ()
-bestEffortMirrorPersona row = do
-  _ <- try (mirrorPersonaToCurrentWorkspace row) :: IO (Either IOException FilePath)
+bestEffortMirrorPersona :: DistillRuntime -> PersonaRow -> IO ()
+bestEffortMirrorPersona rt row = do
+  let write = do
+        workspace <- distillWorkspaceRoot rt
+        mirrorPersonaToWorkspace workspace row
+  _ <- try write :: IO (Either IOException FilePath)
+  pure ()
+
+-- | Remove a persona's mirror file. Best-effort for the same reason writing it
+-- is: the database row is the durable artifact and is already deleted.
+bestEffortRemovePersonaMirror :: DistillRuntime -> PersonaRow -> IO ()
+bestEffortRemovePersonaMirror rt row = do
+  let remove = do
+        workspace <- distillWorkspaceRoot rt
+        let path = personaMirrorPath workspace row
+        exists <- doesFileExist path
+        when exists (removeFile path)
+  _ <- try remove :: IO (Either IOException ())
   pure ()
 
 personaScopeSlug :: PersonaRow -> Text
@@ -340,6 +366,15 @@ selectScenesForPersonaStmt =
         (E.param (E.nullable E.text))
     )
     (D.rowList personaSceneRowDecoder)
+
+-- | Delete by the row's own primary key, for the same reason 'deleteSceneStmt'
+-- does: the scope-identity string format is not re-implemented here.
+deletePersonaStmt :: Statement Text ()
+deletePersonaStmt =
+  preparable
+    "DELETE FROM kioku_personas WHERE persona_id = $1"
+    (E.param (E.nonNullable E.text))
+    D.noResult
 
 upsertPersonaStmt :: Statement PersonaRow ()
 upsertPersonaStmt =

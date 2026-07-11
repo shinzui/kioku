@@ -43,7 +43,7 @@ import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTime
 import Kioku.Api.Scope (MemoryScope, scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Distill.L3 (scheduleL3PersonaTimerTx)
-import Kioku.Distill.Runtime (DistillRuntime, runSceneDistillation)
+import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runSceneDistillation)
 import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..))
 import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
 import Kioku.Id (MemoryId, idText)
@@ -59,7 +59,7 @@ import Kioku.Recall qualified as Recall
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
 import Shikumi.Schema.Types (field, unField)
-import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
+import System.Directory (createDirectoryIfMissing, doesFileExist, getCurrentDirectory, removeFile)
 import System.FilePath ((</>))
 
 data L2Error
@@ -175,7 +175,23 @@ regenerateScene rt scope = do
   memoryResult <- Recall.getActiveByScope scope
   case memoryResult of
     Left err -> pure (Left (L2MemoryReadFailed err))
-    Right [] -> pure (Right Nothing)
+    -- Every memory in this scope has been forgotten. Delete the scene outright
+    -- rather than leaving it or blanking it: a surviving row keeps feeding
+    -- persona regeneration and keeps stale atom_ids pointing at forgotten
+    -- memories, and a blank mirror file is just a confusing way to still be
+    -- there. No LLM runs on this path -- there is nothing left to summarize.
+    Right [] -> do
+      existing <- lookupScene scope defaultSceneKey
+      case existing of
+        Left err -> pure (Left err)
+        Right Nothing -> pure (Right Nothing)
+        Right (Just row) -> do
+          now <- liftIO getCurrentTime
+          runTransaction do
+            Tx.statement row.sceneId deleteSceneStmt
+            scheduleL3PersonaTimerTx scope now
+          liftIO (bestEffortRemoveSceneMirror rt row)
+          pure (Right Nothing)
     Right atoms -> do
       let sourceHash = sceneSourceHash atoms
           sceneId = sceneRowId scope
@@ -184,7 +200,7 @@ regenerateScene rt scope = do
         Left err -> pure (Left err)
         Right (Just row)
           | row.sourceHash == sourceHash -> do
-              liftIO (bestEffortMirrorScene row)
+              liftIO (bestEffortMirrorScene rt row)
               pure (Right (Just row))
         _ -> do
           outputResult <-
@@ -216,7 +232,7 @@ regenerateScene rt scope = do
               runTransaction do
                 Tx.statement row upsertSceneStmt
                 scheduleL3PersonaTimerTx scope now
-              liftIO (bestEffortMirrorScene row)
+              liftIO (bestEffortMirrorScene rt row)
               pure (Right (Just row))
 
 fireL2SceneTimer ::
@@ -279,9 +295,26 @@ sceneMirrorPath :: FilePath -> SceneRow -> FilePath
 sceneMirrorPath workspace row =
   workspace </> ".kioku" </> "scenes" </> Text.unpack (sceneScopeSlug row <> ".md")
 
-bestEffortMirrorScene :: SceneRow -> IO ()
-bestEffortMirrorScene row = do
-  _ <- try (mirrorSceneToCurrentWorkspace row) :: IO (Either IOException FilePath)
+bestEffortMirrorScene :: DistillRuntime -> SceneRow -> IO ()
+bestEffortMirrorScene rt row = do
+  let write = do
+        workspace <- distillWorkspaceRoot rt
+        mirrorSceneToWorkspace workspace row
+  _ <- try write :: IO (Either IOException FilePath)
+  pure ()
+
+-- | Remove a scene's mirror file, best-effort in exactly the way writing it is.
+-- The durable artifact is the database row, and it is already gone by the time
+-- this runs; a failure to unlink the file must not fail the timer, and the next
+-- regeneration in this workspace rewrites or removes it anyway.
+bestEffortRemoveSceneMirror :: DistillRuntime -> SceneRow -> IO ()
+bestEffortRemoveSceneMirror rt row = do
+  let remove = do
+        workspace <- distillWorkspaceRoot rt
+        let path = sceneMirrorPath workspace row
+        exists <- doesFileExist path
+        when exists (removeFile path)
+  _ <- try remove :: IO (Either IOException ())
   pure ()
 
 renderSceneFile :: SceneRow -> Text
@@ -432,6 +465,16 @@ selectScenesByScopeStmt =
         (E.param (E.nullable E.text))
     )
     (D.rowList sceneRowDecoder)
+
+-- | Delete by the row's own primary key, which was written from @sceneRowId@.
+-- Deriving the key here instead would re-implement the scope-identity format
+-- that docs/plans/13-... owns changing.
+deleteSceneStmt :: Statement Text ()
+deleteSceneStmt =
+  preparable
+    "DELETE FROM kioku_scenes WHERE scene_id = $1"
+    (E.param (E.nonNullable E.text))
+    D.noResult
 
 upsertSceneStmt :: Statement SceneRow ()
 upsertSceneStmt =

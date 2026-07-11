@@ -4,6 +4,7 @@ module Kioku.Distill.Runtime
   ( DistillRuntime (..),
     RuntimeSmokeInput (..),
     RuntimeSmokeOutput (..),
+    distillWorkspaceRoot,
     newDistillRuntime,
     runConsolidation,
     runDistillProgram,
@@ -35,15 +36,26 @@ import Shikumi.Routing (routeLLM, runRouting)
 import Shikumi.Schema (FromModel, ToSchema, Validatable)
 import Shikumi.Schema.Types (Field)
 import Shikumi.Signature (mkSignature)
+import System.Directory (getCurrentDirectory)
 
 data DistillRuntime = DistillRuntime
   { config :: !LLMConfig,
     defaultModel :: !Model,
+    -- | Where the plaintext scene and persona mirrors are written and removed.
+    -- 'Nothing' means the process's working directory, which is what the CLI
+    -- wants: an agent's workspace is wherever it was invoked. Tests pin it to a
+    -- temp directory instead, because tasty runs cases concurrently and a
+    -- process-wide @chdir@ would race between them.
+    workspaceRoot :: !(Maybe FilePath),
     runExtract :: !(ExtractInput -> IO (Either ShikumiError ExtractOutput)),
     runConsolidate :: !(ConsolidateInput -> IO (Either ShikumiError ConsolidationDecision)),
     runScene :: !(SceneInput -> IO (Either ShikumiError SceneOutput)),
     runPersona :: !(PersonaInput -> IO (Either ShikumiError PersonaOutput))
   }
+
+distillWorkspaceRoot :: DistillRuntime -> IO FilePath
+distillWorkspaceRoot rt =
+  maybe getCurrentDirectory pure rt.workspaceRoot
 
 newtype RuntimeSmokeInput = RuntimeSmokeInput
   { prompt :: Field "short input text to echo" Text
@@ -67,6 +79,7 @@ newDistillRuntime = do
     DistillRuntime
       { config,
         defaultModel,
+        workspaceRoot = Nothing,
         runExtract = liveRun extractProgram,
         runConsolidate = liveRun consolidateProgram,
         runScene = liveRun sceneProgram,

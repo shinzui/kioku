@@ -13,3 +13,6 @@ result
 result-*
 .pre-commit-config.yaml
 .mina/
+
+# Plaintext scene/persona mirrors kioku writes into an agent workspace.
+.kioku/
