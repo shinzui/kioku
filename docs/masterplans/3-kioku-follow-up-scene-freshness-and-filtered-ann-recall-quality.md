@@ -110,7 +110,7 @@ in neither the scene's source hash nor its prompt, so scheduling nothing is corr
 
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
-| 1 | Refresh scenes and personas when a memory's confidence changes | docs/plans/17-refresh-scenes-and-personas-when-a-memory-s-confidence-changes.md | None | None | Not Started |
+| 1 | Refresh scenes and personas when a memory's confidence changes | docs/plans/17-refresh-scenes-and-personas-when-a-memory-s-confidence-changes.md | None | None | Complete |
 | 2 | Build a recall-quality harness that reproduces filtered-ANN starvation | docs/plans/18-build-a-recall-quality-harness-that-reproduces-filtered-ann-starvation.md | None | None | Not Started |
 | 3 | Fix filtered-ANN starvation in vector recall | docs/plans/19-fix-filtered-ann-starvation-in-vector-recall.md | EP-2 | None | Not Started |
 
@@ -190,8 +190,8 @@ recreates, or creates an additional, index.
 Track milestone-level progress across all child plans. Each entry names the child plan
 and the milestone. This section provides an at-a-glance view of the entire initiative.
 
-- [ ] EP-1 M1: confidence changes schedule a scene-regeneration timer with a per-event timer id
-- [ ] EP-1 M2: end-to-end — a confidence change refreshes the scene row, the persona, and the mirror files
+- [x] EP-1 M1: confidence changes schedule a scene-regeneration timer with a per-event timer id (2026-07-11, commit `c22b7b5`)
+- [x] EP-1 M2: end-to-end — a confidence change refreshes the scene row, the persona, and the mirror files (2026-07-11, commit `c22b7b5`)
 - [ ] EP-2 M1: a seedable corpus generator with a deterministic fake embedder and a tunable decoy distance
 - [ ] EP-2 M2: query-plan capture and a recall@k quality metric over the seeded ground truth
 - [ ] EP-2 M3: a starvation regression case that fails loudly when the vector channel returns nothing
@@ -290,6 +290,44 @@ Discovered while authoring this MasterPlan (2026-07-11), each verified against t
   wrong conclusion from exactly that. The existing `RecallSqlSpec` seeding helpers commit (each
   `runTransaction` is its own transaction), so they are safe — but a harness that batches seeding
   into one transaction to go faster would silently invalidate every measurement built on it.
+
+
+Discovered while implementing EP-1 (2026-07-11), and relevant beyond it:
+
+- **The MasterPlan's central methodological claim was itself tested, and it held.** This
+  initiative's decomposition rests on the premise that a plan's confident claim about an unrun
+  system is a hypothesis. EP-1 was the cheap case where the hypothesis could be checked directly:
+  it *predicted* that the naive one-line fix (a fixed `<memoryId>:confidence` timer source id)
+  would be silently swallowed by keiro's `ON CONFLICT … WHERE status = 'scheduled'` upsert on
+  every confidence change after the first. Rather than trusting that, the implementation injected
+  the naive fix and measured it — the due-timer count after two confidence changes stops at 2
+  instead of 3:
+
+  ```text
+  two confidence changes schedule two distinct scene timers: FAIL
+    test/Kioku/DistillSpec.hs:168:
+    expected: 3
+     but got: 2
+  ```
+
+  This matters for EP-3 in a way that is easy to miss. EP-1 is the *favourable* case for
+  reasoning-without-running: a single case arm, in a mechanism (keiro's timer upsert) whose
+  source we had read and quoted. Even there, the fix that "looks obviously right" is wrong, and
+  only a differential test distinguishes it. EP-3 faces a query planner, which is a far less
+  legible mechanism than a fifteen-line SQL upsert. The bar for "measure it" should be *higher*
+  there, not lower — which is exactly why EP-2 exists.
+
+- **`MemoryTagsUpdated` scheduling nothing is now pinned by a test, so the MasterPlan's
+  out-of-scope claim is enforced rather than merely asserted.** The case "a tag change schedules
+  nothing, because tags are not in the scene" passes both before and after EP-1's fix, which is
+  correct and deliberate: it guards a non-behavior. It fails only if a future contributor "completes"
+  the confidence fix by adding a tags arm, which would spend an LLM call rewriting a
+  byte-identical scene row.
+
+- **EP-1 touched no file EP-2 or EP-3 will touch, as the Dependency Graph predicted.** The commit
+  is confined to `kioku-core/src/Kioku/Distill/L2.hs` and
+  `kioku-core/test/Kioku/DistillSpec.hs`. No migration, no new dependency, and no change to
+  `kioku-core/src/Kioku/Recall.hs`. The ANN work starts from an unchanged base.
 
 
 ## Decision Log

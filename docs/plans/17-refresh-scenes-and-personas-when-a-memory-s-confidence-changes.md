@@ -52,12 +52,13 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] M1: Add a `MemoryConfidenceUpdated` arm to `scheduleSceneTimersForEvent` in `kioku-core/src/Kioku/Distill/L2.hs`, deriving the timer's source id from the recorded event's id so repeated confidence changes each get their own timer.
-- [ ] M1: Thread the `RecordedEvent` (currently ignored as `_recorded`) into `scheduleSceneTimersForEvent`.
-- [ ] M1: Unit test — a confidence change schedules exactly one scene timer, and two successive confidence changes on the same memory schedule two distinct timers (the regression the naive fix would introduce).
-- [ ] M2: End-to-end test — lowering a memory's confidence refreshes the scene row, the persona row, and both mirror files.
-- [ ] M2: Confirm `MemoryTagsUpdated` still schedules nothing, with a test that pins the reason.
-- [ ] M2: Full suite green; update this plan's Outcomes and the MasterPlan's Progress/Registry.
+- [x] M1: Add a `MemoryConfidenceUpdated` arm to `scheduleSceneTimersForEvent` in `kioku-core/src/Kioku/Distill/L2.hs`, deriving the timer's source id from the recorded event's id so repeated confidence changes each get their own timer. (2026-07-11)
+- [x] M1: Thread the `RecordedEvent` (currently ignored as `_recorded`) into `scheduleSceneTimersForEvent`. (2026-07-11)
+- [x] M1: Unit test — a confidence change schedules exactly one scene timer, and two successive confidence changes on the same memory schedule two distinct timers (the regression the naive fix would introduce). Landed as one case, "two confidence changes schedule two distinct scene timers", asserting the count walks 1 → 2 → 3; see Decision 6. (2026-07-11)
+- [x] M2: End-to-end test — lowering a memory's confidence refreshes the scene row, the persona row, and both mirror files. (2026-07-11)
+- [x] M2: Confirm `MemoryTagsUpdated` still schedules nothing, with a test that pins the reason. (2026-07-11)
+- [x] M2: Full suite green (`cabal test all`, exit 0, all four suites PASS); both failure-injection proofs recorded in Surprises. (2026-07-11)
+- [x] M2: Update this plan's Outcomes and the MasterPlan's Progress/Registry. (2026-07-11)
 
 
 ## Surprises & Discoveries
@@ -155,6 +156,50 @@ implementation. Provide concise evidence.
   for it. So this plan is writing the first test of that command as well as fixing the scheduling
   gap, and there is no caller whose behavior could change underneath it.
 
+- (Implementation, 2026-07-11.) **The trap is real, and the test catches it — measured, not
+  argued.** The plan asserted that a naive fixed `<memoryId>:confidence` source id would refresh
+  the scene on the first confidence change and be silently dropped on every one after. That claim
+  was verified by injecting the naive fix and running the case: with the event id removed from
+  the source id, the due-timer count after two confidence changes stops at 2 instead of 3 — the
+  second change derives the same UUIDv5 timer id, and keiro's `ON CONFLICT … WHERE status =
+  'scheduled'` upsert re-arms the still-scheduled first timer instead of inserting a second.
+
+  ```text
+  two confidence changes schedule two distinct scene timers: FAIL
+    test/Kioku/DistillSpec.hs:168:
+    expected: 3
+     but got: 2
+  ```
+
+  The delta-count assertion is therefore load-bearing exactly as designed, and it is the only
+  thing standing between that mistake and production.
+
+- (Implementation, 2026-07-11.) **The new cases fail without the fix, as required.** With
+  `kioku-core/src/Kioku/Distill/L2.hs` stashed (`MemoryConfidenceUpdated -> pure ()` restored),
+  two of the three new cases fail and the third correctly still passes:
+
+  ```text
+  two confidence changes schedule two distinct scene timers: FAIL
+    test/Kioku/DistillSpec.hs:167:
+    expected: 2
+     but got: 1
+  a tag change schedules nothing, because tags are not in the scene: OK
+  a confidence change refreshes the scene, the persona, and the mirrors: FAIL
+    test/Kioku/DistillSpec.hs:251:
+    the scene kept its stale source hash: v1:70549b474084a3d971ae2dc326d1bb7e0999ddccf1b9ebe48bb9c605c699d74b
+  ```
+
+  The tags case passing in *both* states is correct and worth stating plainly: it is a pin on a
+  deliberate non-behavior, not a regression test for this fix. It asserts that nothing is
+  scheduled, which was true before the change and must stay true after it. A future arm added for
+  `MemoryTagsUpdated` is what it exists to fail.
+
+- (Implementation, 2026-07-11.) **No new dependency was needed.** The plan flagged rendering the
+  event id as text as a possible reason to add `uuid` to `kioku-core`'s `build-depends`. It is
+  already there (`kioku-core/kioku-core.cabal:100`), and `Data.UUID qualified as UUID` is already
+  imported by `L2.hs` for the UUIDv5 timer-id derivation, so `eventIdText` is three lines and
+  costs nothing. See Decision 5.
+
 - (Pre-implementation research, 2026-07-11.) **The existing source-hash guard is what keeps this
   fix from amplifying LLM cost, and it means a redundant timer is nearly free.**
   `regenerateScene` computes `sceneSourceHash` over the scope's atoms and skips the LLM call
@@ -213,13 +258,64 @@ Record every decision made while working on the plan.
   different in kind. No new tunable is introduced.
   Date: 2026-07-11
 
+- Decision 5: Render the event id with `Data.UUID.toText` rather than `Text.pack (show uuid)`.
+  Rationale: The plan left this open, contingent on whether `uuid` was already a dependency. It
+  is (`kioku-core/kioku-core.cabal:100`), and `L2.hs` already imports `Data.UUID qualified as
+  UUID` for the UUIDv5 timer-id derivation, so `toText` adds nothing and is the honest rendering
+  — `show` on a `UUID` happens to produce the same string today, but that is an incidental
+  property of its `Show` instance rather than a contract.
+  Date: 2026-07-11
+
+- Decision 6: Land the two M1 timer assertions as a single test case ("two confidence changes
+  schedule two distinct scene timers", asserting the due-timer count walks 1 → 2 → 3) rather than
+  the two separate cases the plan sketched.
+  Rationale: `Keiro.Timer.countDueTimers` counts timers *globally*, not per scope, so two cases
+  sharing one database would race under tasty's concurrent runner and each would have to spin up
+  its own ephemeral Postgres cluster. The single-change assertion is a strict prefix of the
+  two-change one, so folding them loses no coverage: the `1 → 2` step *is* "a confidence change
+  schedules a scene timer", and the `2 → 3` step is the trap. This costs one ephemeral cluster
+  instead of two and keeps the sequential state the second assertion needs. The case names in
+  Validation and Acceptance were updated to match.
+  Date: 2026-07-11
+
 
 ## Outcomes & Retrospective
 
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original purpose.
 
-(To be filled during and after implementation.)
+**Complete, 2026-07-11.** Both milestones landed in one commit, `c22b7b5`.
+
+The stated purpose was that an agent should no longer be able to downgrade a belief to `low`
+confidence and then read a scene file still presenting it as `high`. That is now true, and the
+proof is the end-to-end case "a confidence change refreshes the scene, the persona, and the
+mirrors", which asserts on the real bytes of the mirror file on disk — not on an in-memory row.
+The full suite is green (`cabal test all`, exit 0: kioku-test 111 passed, kioku-cli-test 36,
+kioku-migrations-test 6, codd-extras-test PASS).
+
+What was built. `scheduleSceneTimersForEvent` in `kioku-core/src/Kioku/Distill/L2.hs` now takes
+the `RecordedEvent` it previously discarded and has a `MemoryConfidenceUpdated` arm whose timer
+source id is `<memoryId>:confidence:<eventId>`. `scheduleForgetTimerTx` was generalised into
+`scheduleScopedSceneTimerTx`, which takes a source id rather than an event kind, so the forget
+arms and the confidence arm share one scope-lookup path; the forget arms now build their source
+id through a small `kindSourceId` helper. Three test cases were added to
+`kioku-core/test/Kioku/DistillSpec.hs` under a new "Confidence propagation" group.
+
+What was *not* needed, and this is the pleasant surprise: nothing in `Kioku/Distill/L3.hs`, no
+new dependency, no migration, and no change to any of `l2SceneTimerRequest`, `l2SceneTimerId`,
+`regenerateScene`, `sceneSourceHash`, `atomSource`, or `renderAtom`. The persona cascade was
+already there (`regenerateScene` calls `scheduleL3PersonaTimerTx` after upserting the scene row),
+so the work was to *test* the cascade rather than to build it. The plan predicted all of this
+and it held.
+
+The lesson worth carrying forward. The plan's central claim — that the *naive* version of this
+one-line fix would be worse than the bug, because keiro silently drops a re-scheduled timer id
+whose timer has already fired — was not taken on faith. It was injected and measured: with a
+fixed `<memoryId>:confidence` source id, the second confidence change schedules nothing and the
+due-timer count stops at 2 instead of 3 (transcript in Surprises). That is a bug that would have
+*looked* fixed, passed a naive single-change test, and shipped. The delta-count assertion is the
+only thing that distinguishes it from the real fix, which is precisely why the case carries a
+comment explaining itself. A test that would pass against the wrong implementation is not a test.
 
 
 ## Context and Orientation
@@ -716,20 +812,26 @@ after:
 nix develop --command cabal test kioku-core:test:kioku-test
 ```
 
-Expect a line in the output like:
+Expect these lines in the output (the three cases live in their own "Confidence propagation"
+group, a sibling of "Forget propagation"):
 
 ```text
-    Forget propagation
-      …
-      a confidence change refreshes the scene, the persona, and the mirrors:  OK
-      two confidence changes schedule two distinct timers:                    OK
+    Confidence propagation
+      two confidence changes schedule two distinct scene timers:              OK
       a tag change schedules nothing, because tags are not in the scene:      OK
+      a confidence change refreshes the scene, the persona, and the mirrors:  OK
 ```
 
-The proof that the test is *load-bearing* rather than vacuous is the `git stash` step in M2 step
-4: with `L2.hs` reverted, "a confidence change refreshes the scene…" must fail on the source-hash
-assertion (the scene keeps the stale hash), and "two confidence changes schedule two distinct
-timers" must fail if you weaken the source id to a fixed `<memoryId>:confidence`.
+The proof that the tests are *load-bearing* rather than vacuous is failure injection, and both
+halves were run (transcripts in Surprises & Discoveries). With `L2.hs` reverted via `git stash`,
+"a confidence change refreshes the scene…" fails on the source-hash assertion (the scene keeps
+the stale hash) and "two confidence changes…" fails at 1 instead of 2. With the source id
+weakened to a fixed `<memoryId>:confidence` — the naive fix — "two confidence changes…" fails at
+2 instead of 3, which is the trap this whole plan exists to avoid.
+
+Note that "a tag change schedules nothing" passes in *all* of those states, and that is correct:
+it pins a deliberate non-behavior rather than testing this fix. It fails only if someone adds a
+`MemoryTagsUpdated` arm.
 
 A full-suite regression run must also be green:
 
