@@ -12,6 +12,7 @@ module Kioku.Distill.L2
     mirrorSceneToWorkspace,
     regenerateScene,
     sceneMirrorPath,
+    sceneRowId,
   )
 where
 
@@ -45,6 +46,7 @@ import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Distill.L3 (scheduleL3PersonaTimerTx)
 import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runSceneDistillation)
 import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..))
+import Kioku.Distill.ScopeIdentity (escapeScopeComponent, scopeIdentity, scopeSlugFromColumns)
 import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
 import Kioku.Id (MemoryId, idText)
 import Kioku.Memory.Domain
@@ -147,7 +149,7 @@ l2SceneTimerRequest scope sourceId fireAt =
   TimerRequest
     { timerId = l2SceneTimerId scope sourceId,
       processManagerName = l2SceneProcessManagerName,
-      correlationId = renderScope scope,
+      correlationId = scopeIdentity scope,
       fireAt,
       payload = Aeson.toJSON (SceneTimerPayload scope)
     }
@@ -162,7 +164,7 @@ l2SceneTimerId scope sourceId =
     raw =
       l2SceneProcessManagerName
         <> ":"
-        <> renderScope scope
+        <> scopeIdentity scope
         <> ":"
         <> sourceId
 
@@ -323,26 +325,14 @@ renderSceneFile row =
 
 sceneScopeSlug :: SceneRow -> Text
 sceneScopeSlug row =
-  sanitizeSlug $
-    Text.intercalate "-" $
-      row.namespace : catMaybes [row.scopeKind, row.scopeRef]
+  scopeSlugFromColumns row.namespace row.scopeKind row.scopeRef
 
-sanitizeSlug :: Text -> Text
-sanitizeSlug =
-  Text.map \ch ->
-    if isSafeSlugChar ch then ch else '-'
-
-isSafeSlugChar :: Char -> Bool
-isSafeSlugChar ch =
-  (ch >= 'a' && ch <= 'z')
-    || (ch >= 'A' && ch <= 'Z')
-    || (ch >= '0' && ch <= '9')
-    || ch == '-'
-    || ch == '_'
-
+-- | The persistent primary key of a scene row. Escaped, so two distinct scopes can never
+-- derive the same id; the scene key is escaped too, purely to future-proof the format
+-- (today's only key, @default@, is unchanged by escaping).
 sceneRowId :: MemoryScope -> Text
 sceneRowId scope =
-  "kioku_scene:" <> renderScope scope <> ":" <> defaultSceneKey
+  "kioku_scene:" <> scopeIdentity scope <> ":" <> escapeScopeComponent defaultSceneKey
 
 sceneSourceHash :: [MemoryRecord] -> Text
 sceneSourceHash atoms =
@@ -367,6 +357,9 @@ renderAtom atom =
     <> "): "
     <> atom.content
 
+-- | A human-readable scope label for the LLM prompt. Deliberately *not* escaped and
+-- deliberately not used for identity: a collision here is cosmetic. Identity comes from
+-- 'scopeIdentity'.
 renderScope :: MemoryScope -> Text
 renderScope scope =
   Text.intercalate "/" $

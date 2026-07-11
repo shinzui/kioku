@@ -10,6 +10,7 @@ module Kioku.Distill.L3
     mirrorPersonaToCurrentWorkspace,
     mirrorPersonaToWorkspace,
     personaMirrorPath,
+    personaRowId,
     regeneratePersona,
     scheduleL3PersonaTimerTx,
   )
@@ -41,6 +42,7 @@ import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTime
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..))
 import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runPersonaDistillation)
+import Kioku.Distill.ScopeIdentity (scopeIdentity, scopeSlugFromColumns)
 import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
@@ -93,7 +95,7 @@ scheduleL3PersonaTimerTx scope now =
     TimerRequest
       { timerId = l3PersonaTimerId scope fireAt,
         processManagerName = l3PersonaProcessManagerName,
-        correlationId = renderScope scope,
+        correlationId = scopeIdentity scope,
         fireAt,
         payload = Aeson.toJSON (PersonaTimerPayload scope)
       }
@@ -110,7 +112,7 @@ l3PersonaTimerId scope fireAt =
     raw =
       l3PersonaProcessManagerName
         <> ":"
-        <> renderScope scope
+        <> scopeIdentity scope
         <> ":"
         <> Text.pack (show fireAt)
 
@@ -251,26 +253,13 @@ bestEffortRemovePersonaMirror rt row = do
 
 personaScopeSlug :: PersonaRow -> Text
 personaScopeSlug row =
-  sanitizeSlug $
-    Text.intercalate "-" $
-      row.namespace : catMaybes [row.scopeKind, row.scopeRef]
+  scopeSlugFromColumns row.namespace row.scopeKind row.scopeRef
 
-sanitizeSlug :: Text -> Text
-sanitizeSlug =
-  Text.map \ch ->
-    if isSafeSlugChar ch then ch else '-'
-
-isSafeSlugChar :: Char -> Bool
-isSafeSlugChar ch =
-  (ch >= 'a' && ch <= 'z')
-    || (ch >= 'A' && ch <= 'Z')
-    || (ch >= '0' && ch <= '9')
-    || ch == '-'
-    || ch == '_'
-
+-- | The persistent primary key of a persona row. Escaped, so two distinct scopes can never
+-- derive the same id.
 personaRowId :: MemoryScope -> Text
 personaRowId scope =
-  "kioku_persona:" <> renderScope scope
+  "kioku_persona:" <> scopeIdentity scope
 
 personaSourceHash :: [PersonaSceneRow] -> Text
 personaSourceHash scenes =
@@ -288,6 +277,9 @@ renderScene :: PersonaSceneRow -> Text
 renderScene scene =
   "# " <> scene.title <> "\n\n" <> scene.bodyMd
 
+-- | A human-readable scope label for the LLM prompt. Deliberately *not* escaped and
+-- deliberately not used for identity: a collision here is cosmetic. Identity comes from
+-- 'scopeIdentity'.
 renderScope :: MemoryScope -> Text
 renderScope scope =
   Text.intercalate "/" $

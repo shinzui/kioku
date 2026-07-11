@@ -8,6 +8,7 @@ import Kioku.RecallSpec qualified as RecallSpec
 import Kioku.RecallSqlSpec qualified as RecallSqlSpec
 import Kioku.ReiCompatSpec qualified as ReiCompatSpec
 import Kioku.SchemaSpec qualified as SchemaSpec
+import Kioku.ScopeIdentitySpec qualified as ScopeIdentitySpec
 import Kioku.SessionInvariantsSpec qualified as SessionInvariantsSpec
 import Kioku.SessionLineageSpec qualified as SessionLineageSpec
 import Kioku.TimerWorkerSpec qualified as TimerWorkerSpec
@@ -24,6 +25,7 @@ main =
         RecallSpec.tests,
         RecallSqlSpec.tests,
         SchemaSpec.tests,
+        ScopeIdentitySpec.tests,
         SessionInvariantsSpec.tests,
         SessionLineageSpec.tests,
         EmbeddingWorkerSpec.tests,

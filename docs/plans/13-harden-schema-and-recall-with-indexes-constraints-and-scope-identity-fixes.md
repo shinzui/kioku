@@ -58,10 +58,10 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [x] M3: capture before/after `EXPLAIN` transcripts (below) — the real defect is narrower than the plan claimed
 - [x] M4: extend the capability probe with dimension validation (`VectorDimensionMismatch`) — **and change the extension probe from `pg_extension` to `to_regtype('vector')`**, the search-path-aware question recall actually asks
 - [x] M4: fail fast in the worker CLI on mismatch; add capability tests — verified live: `--backfill` exits 1 before touching an event, the continuous worker stays up and keeps firing timers
-- [ ] M5: add `Kioku.Distill.ScopeIdentity` (escaped identity, hash-suffixed slug) and rewire L2/L3
-- [ ] M5: add `mkNamespace`/`mkScopeKind` validators in `kioku-api` and use them in the CLI scope parser
-- [ ] M5: mint the id-recompute migration for ambiguous scene/persona rows and touch `Migrations.hs`
-- [ ] M5: add scope-identity collision and legacy-id-stability tests
+- [x] M5: add `Kioku.Distill.ScopeIdentity` (escaped identity, hash-suffixed slug) and rewire L2/L3 — `renderScope` survives only as the LLM prompt label, where collisions are cosmetic
+- [x] M5: add `mkNamespace`/`mkScopeKind` validators in `kioku-api` and use them in the CLI scope parser
+- [x] M5: mint the id-recompute migration for ambiguous scene/persona rows and touch `Migrations.hs` — `2026-07-11-18-18-36-kioku-scope-identity-recompute.sql`
+- [x] M5: add scope-identity collision and legacy-id-stability tests — 5 cases; SQL and Haskell verified to derive byte-identical ids
 - [ ] M6: document global-scope semantics in `docs/user/recall.md` and haddocks on both query paths
 - [ ] Final: full `cabal build all && cabal test all`, `just migrate`, retrospective written
 

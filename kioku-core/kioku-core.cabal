@@ -45,6 +45,7 @@ library
     Kioku.Distill.Persona
     Kioku.Distill.Runtime
     Kioku.Distill.Scene
+    Kioku.Distill.ScopeIdentity
     Kioku.Distill.Timer
     Kioku.Distill.Timer.Outcome
     Kioku.Distill.Timer.Worker
@@ -112,6 +113,7 @@ test-suite kioku-test
     Kioku.RecallSqlSpec
     Kioku.ReiCompatSpec
     Kioku.SchemaSpec
+    Kioku.ScopeIdentitySpec
     Kioku.SessionInvariantsSpec
     Kioku.SessionLineageSpec
     Kioku.TimerWorkerSpec

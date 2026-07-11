@@ -39,5 +39,5 @@ runKiokuMigrationsNoCheck settings connectTimeout =
 
 embeddedKiokuFiles :: [(FilePath, ByteString)]
 -- Keep this binding source-touched when adding SQL files; Template Haskell embeds
--- the directory contents at compile time. Last touched: 2026-07-11 kioku-embedding-schema-heal.
+-- the directory contents at compile time. Last touched: 2026-07-11 kioku-scope-identity-recompute.
 embeddedKiokuFiles = sortOn fst $(embedDir "sql-migrations")
