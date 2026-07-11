@@ -21,10 +21,11 @@ module Kioku.Session
   )
 where
 
+import Data.List (find)
 import Data.Text qualified as Text
 import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
-import Keiro.Command (CommandError, defaultRunCommandOptions)
+import Keiro.Command (CommandError (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
 import Kioku.Api.Scope (MemoryScope, Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
@@ -67,6 +68,7 @@ data SessionWriteError
   | SessionNotAwaiting
   | SessionCorrelationMismatch
   | SessionInvalidLineage !Text
+  | SessionConflict !Text
   deriving stock (Generic, Show)
 
 -- | The deepest delegation chain a session may declare. Far above any legitimate agent
@@ -85,8 +87,12 @@ start cmdData =
       existing <- getById cmdData.sessionId
       case existing of
         Left err -> pure (Left (SessionReadFailed err))
-        Right (Just _) -> pure (Right cmdData.sessionId)
-        Right Nothing -> runSessionCommand cmdData.sessionId (StartSession cmdData)
+        Right (Just row) -> pure (idempotentOr "start" startMismatch row cmdData.sessionId)
+        Right Nothing ->
+          runSessionCommand cmdData.sessionId (StartSession cmdData)
+            >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . startMismatch)
+  where
+    startMismatch = mismatchOf sessionStartFields cmdData
 
 -- | Pure, command-time lineage checks: 'Just' a reason means reject.
 --
@@ -114,45 +120,195 @@ validateLineage d
       Just "a root session (no parentSessionId) must have delegationDepth 0"
   | otherwise = Nothing
 
+-- * Idempotent accepts
+
+-- | The five statuses the projection writes. Parsing at the point of decision keeps
+-- 'SessionRow.status' a 'Text' (it is part of the read-model shape hosts consume) while
+-- removing stringly-typed comparisons from the decision logic.
+data SessionStatus
+  = StatusRunning
+  | StatusAwaiting
+  | StatusCompleted
+  | StatusFailed
+  | StatusInteractive
+  deriving stock (Eq, Show)
+
+parseSessionStatus :: Text -> Maybe SessionStatus
+parseSessionStatus = \case
+  "running" -> Just StatusRunning
+  "awaiting" -> Just StatusAwaiting
+  "completed" -> Just StatusCompleted
+  "failed" -> Just StatusFailed
+  "interactive" -> Just StatusInteractive
+  _ -> Nothing
+
+-- | Look up the session and hand its row plus parsed status to the caller.
+withExistingSession ::
+  (IOE :> es, Store :> es) =>
+  SessionId ->
+  (SessionRow -> SessionStatus -> Eff es (Either SessionWriteError SessionId)) ->
+  Eff es (Either SessionWriteError SessionId)
+withExistingSession sid k = do
+  existing <- getById sid
+  case existing of
+    Left err -> pure (Left (SessionReadFailed err))
+    Right Nothing -> pure (Left SessionNotFound)
+    Right (Just row) ->
+      case parseSessionStatus row.status of
+        Nothing -> pure (Left (SessionConflict ("unrecognized session status: " <> row.status)))
+        Just status -> k row status
+
+-- | A named comparison between one request field and the row that already exists.
+type FieldCheck cmd = (Text, cmd -> SessionRow -> Bool)
+
+-- | The first request field that disagrees with the recorded row, if any.
+--
+-- Call-time timestamps (@startedAt@, @completedAt@, @failedAt@, @resumedAt@) are
+-- deliberately /not/ compared. The session id is the identity, so a second write against it
+-- carrying the same semantic payload is a retry — and a retry that re-reads the clock is
+-- the normal shape of one. Comparing the timestamp would turn every such retry into a hard
+-- conflict; kioku's own distillation pass does exactly this on the memory side (see
+-- 'Kioku.Memory.mismatchOf'), which is what proved the point.
+--
+-- Semantic payload is compared, including 'awaitingDeadline' — a deadline is something the
+-- caller /asked for/, not a record of when it called.
+mismatchOf :: [FieldCheck cmd] -> cmd -> SessionRow -> Maybe Text
+mismatchOf checks cmd row =
+  fst <$> find (\(_, matches) -> not (matches cmd row)) checks
+
+-- | A duplicate request that matches what already happened succeeds; one that conflicts
+-- with it gets a conflict error naming the field that differs.
+idempotentOr ::
+  Text ->
+  (SessionRow -> Maybe Text) ->
+  SessionRow ->
+  SessionId ->
+  Either SessionWriteError SessionId
+idempotentOr operation mismatch row sid =
+  case mismatch row of
+    Nothing -> Right sid
+    Just field ->
+      Left (SessionConflict (operation <> ": " <> field <> " differs from the recorded session"))
+
+-- | Translate a losing race into the success the winner got.
+--
+-- Two identical requests can be in flight at once; keiro's optimistic-concurrency retry
+-- lets one win and rejects the other. Re-reading the row after a rejection tells us which
+-- kind of loser this is: if the observed state now matches what we asked for, the write we
+-- wanted happened (someone else did it) and the caller gets the idempotent success. A
+-- genuinely conflicting loser still gets its rejection.
+acceptRejectedIfMatches ::
+  (IOE :> es, Store :> es) =>
+  SessionId ->
+  (SessionRow -> Bool) ->
+  Either SessionWriteError SessionId ->
+  Eff es (Either SessionWriteError SessionId)
+acceptRejectedIfMatches sid matches = \case
+  Left err@(SessionCommandRejected CommandRejected) -> do
+    reread <- getById sid
+    pure case reread of
+      Right (Just row) | matches row -> Right sid
+      _ -> Left err
+  other -> pure other
+
+sessionStartFields :: [FieldCheck StartSessionData]
+sessionStartFields =
+  [ ("agentId", \d row -> row.agentId == d.agentId),
+    ("focus", \d row -> row.focus == d.focus),
+    ("namespace", \d row -> row.namespace == scopeNamespaceText d.scope),
+    ("scopeKind", \d row -> row.scopeKind == scopeKindText d.scope),
+    ("scopeRef", \d row -> row.scopeRef == scopeRefText d.scope),
+    ("subjectRef", \d row -> row.subjectRef == d.subjectRef),
+    ("previousSessionId", \d row -> row.previousSessionId == (idText <$> d.previousSessionId)),
+    ("parentSessionId", \d row -> row.parentSessionId == (idText <$> d.parentSessionId)),
+    ("delegationDepth", \d row -> row.delegationDepth == d.delegationDepth)
+  ]
+
+sessionInteractiveFields :: [FieldCheck RecordInteractiveSessionData]
+sessionInteractiveFields =
+  [ ("status", \_ row -> parseSessionStatus row.status == Just StatusInteractive),
+    ("agentId", \d row -> row.agentId == d.agentId),
+    ("focus", \d row -> row.focus == d.focus),
+    ("namespace", \d row -> row.namespace == scopeNamespaceText d.scope),
+    ("scopeKind", \d row -> row.scopeKind == scopeKindText d.scope),
+    ("scopeRef", \d row -> row.scopeRef == scopeRefText d.scope),
+    ("subjectRef", \d row -> row.subjectRef == d.subjectRef)
+  ]
+
+sessionAwaitFields :: [FieldCheck AwaitInputData]
+sessionAwaitFields =
+  [ ("awaitingReason", \d row -> row.awaitingReason == Just d.reason),
+    ("awaitingCorrelationKey", \d row -> row.awaitingCorrelationKey == d.correlationKey),
+    ("awaitingDeadline", \d row -> row.awaitingDeadline == d.deadline)
+  ]
+
+sessionResumeFields :: [FieldCheck ResumeSessionData]
+sessionResumeFields =
+  [("resumeInput", \d row -> row.resumeInput == Just d.input)]
+
+sessionCompleteFields :: [FieldCheck CompleteSessionData]
+sessionCompleteFields =
+  [ ("modelUsed", \d row -> row.modelUsed == d.modelUsed),
+    ("summary", \d row -> row.summary == d.summary)
+  ]
+
+sessionFailFields :: [FieldCheck FailSessionData]
+sessionFailFields =
+  [("errorMessage", \d row -> row.errorMessage == Just d.errorMessage)]
+
 complete ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   CompleteSessionData ->
   Eff es (Either SessionWriteError SessionId)
-complete cmdData = do
-  existing <- getById cmdData.sessionId
-  case existing of
-    Left err -> pure (Left (SessionReadFailed err))
-    Right Nothing -> pure (Left SessionNotFound)
-    Right (Just row)
-      | row.status == "running" || row.status == "awaiting" -> runSessionCommand cmdData.sessionId (CompleteSession cmdData)
-      | otherwise -> pure (Right cmdData.sessionId)
+complete cmdData =
+  withExistingSession cmdData.sessionId \row status ->
+    case status of
+      StatusRunning -> runComplete
+      StatusAwaiting -> runComplete
+      StatusCompleted -> pure (idempotentOr "complete" completeMismatch row cmdData.sessionId)
+      StatusFailed -> pure (Left (SessionConflict "complete: the session already failed"))
+      StatusInteractive ->
+        pure (Left (SessionConflict "complete: an interactive session has no lifecycle to complete"))
+  where
+    completeMismatch = mismatchOf sessionCompleteFields cmdData
+    runComplete =
+      runSessionCommand cmdData.sessionId (CompleteSession cmdData)
+        >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . completeMismatch)
 
 failSession ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   FailSessionData ->
   Eff es (Either SessionWriteError SessionId)
-failSession cmdData = do
-  existing <- getById cmdData.sessionId
-  case existing of
-    Left err -> pure (Left (SessionReadFailed err))
-    Right Nothing -> pure (Left SessionNotFound)
-    Right (Just row)
-      | row.status == "running" || row.status == "awaiting" -> runSessionCommand cmdData.sessionId (FailSession cmdData)
-      | otherwise -> pure (Right cmdData.sessionId)
+failSession cmdData =
+  withExistingSession cmdData.sessionId \row status ->
+    case status of
+      StatusRunning -> runFail
+      StatusAwaiting -> runFail
+      StatusFailed -> pure (idempotentOr "failSession" failMismatch row cmdData.sessionId)
+      StatusCompleted ->
+        pure (Left (SessionConflict "failSession: the session already completed successfully"))
+      StatusInteractive ->
+        pure (Left (SessionConflict "failSession: an interactive session has no lifecycle to fail"))
+  where
+    failMismatch = mismatchOf sessionFailFields cmdData
+    runFail =
+      runSessionCommand cmdData.sessionId (FailSession cmdData)
+        >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . failMismatch)
 
 awaitInput ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   AwaitInputData ->
   Eff es (Either SessionWriteError SessionId)
-awaitInput cmdData = do
-  existing <- getById cmdData.sessionId
-  case existing of
-    Left err -> pure (Left (SessionReadFailed err))
-    Right Nothing -> pure (Left SessionNotFound)
-    Right (Just row)
-      | row.status == "awaiting" -> pure (Right cmdData.sessionId)
-      | row.status /= "running" -> pure (Left SessionNotRunning)
-      | otherwise -> runSessionCommand cmdData.sessionId (AwaitInput cmdData)
+awaitInput cmdData =
+  withExistingSession cmdData.sessionId \row status ->
+    case status of
+      StatusAwaiting -> pure (idempotentOr "awaitInput" awaitMismatch row cmdData.sessionId)
+      StatusRunning ->
+        runSessionCommand cmdData.sessionId (AwaitInput cmdData)
+          >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . awaitMismatch)
+      _ -> pure (Left SessionNotRunning)
+  where
+    awaitMismatch = mismatchOf sessionAwaitFields cmdData
 
 -- | Resume a parked session with the key it parked on.
 --
@@ -167,17 +323,21 @@ resume ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   ResumeSessionData ->
   Eff es (Either SessionWriteError SessionId)
-resume cmdData = do
-  existing <- getById cmdData.sessionId
-  case existing of
-    Left err -> pure (Left (SessionReadFailed err))
-    Right Nothing -> pure (Left SessionNotFound)
-    Right (Just row)
-      | row.status == "running" -> pure (Right cmdData.sessionId)
-      | row.status /= "awaiting" -> pure (Left SessionNotAwaiting)
-      | not cmdData.force && row.awaitingCorrelationKey /= cmdData.correlationKey ->
-          pure (Left SessionCorrelationMismatch)
-      | otherwise -> runSessionCommand cmdData.sessionId (ResumeSession cmdData)
+resume cmdData =
+  withExistingSession cmdData.sessionId \row status ->
+    case status of
+      -- Already running: a re-delivery of *this* resume is a success; a different input
+      -- means someone else answered the wait, which is a conflict, not an idempotent hit.
+      StatusRunning -> pure (idempotentOr "resume" resumeMismatch row cmdData.sessionId)
+      StatusAwaiting
+        | not cmdData.force && row.awaitingCorrelationKey /= cmdData.correlationKey ->
+            pure (Left SessionCorrelationMismatch)
+        | otherwise ->
+            runSessionCommand cmdData.sessionId (ResumeSession cmdData)
+              >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . resumeMismatch)
+      _ -> pure (Left SessionNotAwaiting)
+  where
+    resumeMismatch = mismatchOf sessionResumeFields cmdData
 
 -- | Resume a parked session regardless of which key it parked on.
 --
@@ -208,8 +368,12 @@ recordInteractive cmdData = do
   existing <- getById cmdData.sessionId
   case existing of
     Left err -> pure (Left (SessionReadFailed err))
-    Right (Just _) -> pure (Right cmdData.sessionId)
-    Right Nothing -> runSessionCommand cmdData.sessionId (RecordInteractiveSession cmdData)
+    Right (Just row) -> pure (idempotentOr "recordInteractive" interactiveMismatch row cmdData.sessionId)
+    Right Nothing ->
+      runSessionCommand cmdData.sessionId (RecordInteractiveSession cmdData)
+        >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . interactiveMismatch)
+  where
+    interactiveMismatch = mismatchOf sessionInteractiveFields cmdData
 
 recordTurn ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>

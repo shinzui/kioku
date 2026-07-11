@@ -71,9 +71,9 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [x] M1: Update `Kioku.Session.resume` (drop the omitted-key bypass) and add `Kioku.Session.forceResume`.
 - [x] M1: Null `resume_input` in `updateSessionAwaitingStmt` (re-park fix).
 - [x] M1: Tests — aggregate-level mismatch rejection, force resume, keyless wait resume, re-park clears `resume_input`, replay of a pre-`force` event stream (raw JSON append). — 2026-07-11 (`77682c7`), 8 new cases in `kioku-core/test/Kioku/SessionInvariantsSpec.hs`; suite 47 → 55 passing.
-- [ ] M2: Lineage validation in `Session.start` (self-reference, negative/inconsistent/capped delegation depth) with `SessionInvalidLineage`.
-- [ ] M2: Cycle-proof `selectSessionChainStmt` (path-array guard + depth cap).
-- [ ] M2: Tests — validation rejections, raw-SQL cycle proof under a tasty timeout.
+- [x] M2: Lineage validation in `Session.start` (self-reference, negative/inconsistent/capped delegation depth) with `SessionInvalidLineage`.
+- [x] M2: Cycle-proof `selectSessionChainStmt` (path-array guard + depth cap).
+- [x] M2: Tests — validation rejections, raw-SQL cycle proof under a tasty timeout. — 2026-07-11 (`ed5b768`), 7 new cases; suite 55 → 62 passing.
 - [ ] M3: `SessionStatus` sum type and payload-matching idempotent accepts for `start`, `recordInteractive`, `awaitInput`, `resume`, `complete`, `failSession` with `SessionConflict`.
 - [ ] M3: Payload-matching idempotent accepts for `Memory.record`, `supersede`, `archive`, `merge` with `MemoryConflict`.
 - [ ] M3: Post-rejection re-read fallback so a concurrent duplicate loser gets the idempotent success.
@@ -132,7 +132,26 @@ front because they are non-obvious:
   turns out to be moot for `getChain` (recorded as a cross-plan note; see Interfaces and
   Dependencies).
 
-(Nothing yet from implementation.)
+Discovered during implementation:
+
+- **The tasty timeout does not rescue the unfixed chain query — it hangs the whole suite.**
+  The plan predicted the cycle test would "time out" against the unfixed
+  `selectSessionChainStmt`. It does not: the run reaches
+  `getChain terminates on a cyclic chain:` and then hangs *indefinitely*, straight through
+  `mkTimeout 10_000_000` (observed: killed manually after 11 minutes). tasty's timeout
+  cancels a Haskell thread, but this thread is blocked in a foreign call to libpq, which is
+  not interruptible. This makes the defect more severe than reviewed, not less: **no
+  client-side timeout saves a caller from the runaway CTE** — not tasty's, and not an
+  application's. With the path-array guard the same test returns in milliseconds. Evidence:
+  the fail-before run was killed at exit 144 with no OK/FAIL line ever printed; the
+  pass-after suite completes in 9.63s.
+- **`mkTimeout` is exported from `Test.Tasty`**, not `Test.Tasty.Runners` (which the plan's
+  Concrete Steps implied) and not `Test.Tasty.Options`.
+- **The pinned keiro really does take a bare `EventStream`**, as the plan's Interfaces
+  section says — but the working checkout at `/Users/shinzui/Keikaku/bokuno/keiro` is HEAD
+  and takes `ValidatedEventStream`. Read pinned framework sources from
+  `dist-newstyle/src/<pkg>-<hash>/`, not from the sibling working checkouts, or you will
+  write against the wrong signature.
 
 
 ## Decision Log
