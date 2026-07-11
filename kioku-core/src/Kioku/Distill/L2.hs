@@ -45,13 +45,13 @@ import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Distill.L3 (scheduleL3PersonaTimerTx)
 import Kioku.Distill.Runtime (DistillRuntime, runSceneDistillation)
 import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..))
+import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
 import Kioku.Id (MemoryId, idText)
 import Kioku.Memory.Domain (MemoryEvent (..), MemoryRecordedData (..))
 import Kioku.Prelude
 import Kioku.Recall qualified as Recall
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
-import Kiroku.Store.Types (EventId (..))
 import Shikumi.Schema.Types (field, unField)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.FilePath ((</>))
@@ -190,20 +190,22 @@ fireL2SceneTimer ::
   (IOE :> es, Store :> es) =>
   DistillRuntime ->
   TimerRow ->
-  Eff es (Maybe EventId)
+  Eff es FireOutcome
 fireL2SceneTimer rt row
   | row.processManagerName /= l2SceneProcessManagerName =
-      pure Nothing
+      pure FireNotMine
   | otherwise =
       case Aeson.fromJSON @SceneTimerPayload row.payload of
-        Aeson.Error _err ->
-          pure (Just (timerMarkerEventId row.timerId))
+        -- A payload this handler cannot parse will not parse on the next attempt
+        -- either. It used to be marked fired, which quietly lost the scene.
+        Aeson.Error err ->
+          pure (FireFailedPermanently ("L2 scene timer payload is malformed: " <> Text.pack err))
         Aeson.Success payload -> do
           result <- regenerateScene rt payload.scope
           pure $
             case result of
-              Right _ -> Just (timerMarkerEventId row.timerId)
-              Left _ -> Nothing
+              Right _ -> FireCompleted (timerMarkerEventId row.timerId)
+              Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
 
 lookupScene ::
   (Store :> es) =>
@@ -303,9 +305,6 @@ renderScope :: MemoryScope -> Text
 renderScope scope =
   Text.intercalate "/" $
     scopeNamespaceText scope : catMaybes [scopeKindText scope, scopeRefText scope]
-
-timerMarkerEventId :: TimerId -> EventId
-timerMarkerEventId (TimerId uuid) = EventId uuid
 
 l2SceneTimerNamespace :: UUID
 l2SceneTimerNamespace =

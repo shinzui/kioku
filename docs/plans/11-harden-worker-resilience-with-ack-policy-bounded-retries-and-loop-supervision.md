@@ -47,10 +47,10 @@ backfill pass, the drain behavior, and the loud non-zero exit when a pipeline di
 - [x] M1: add `Kioku.Worker.Failure` (transient/permanent `StoreError` classification, embedding retry-delay schedule). — 2026-07-11
 - [x] M1: refactor `kioku-core/src/Kioku/Memory/Embedding/Worker.hs` — injectable embed function (`EmbeddingWorkerEnv`), `EmbedOutcome`, ack-decision mapping (retry / dead-letter / halt), `guardKirokuHandler` wrap, stderr logging. — 2026-07-11
 - [x] M1: extend `kioku-core/test/Kioku/EmbeddingWorkerSpec.hs` with pure classification tests and Postgres-backed ack-decision tests (provider failure → `AckRetry`; decode failure → `AckDeadLetter`; dimension mismatch → `AckHalt`; success → `AckOk` and stored embedding). — 2026-07-11 (7 cases, all green under pgvector; 3 skip without it)
-- [ ] M2: add `kioku-core/src/Kioku/Distill/Timer/Outcome.hs` with `FireOutcome` and delay schedules; register in `kioku-core.cabal`.
-- [ ] M2: convert `fireL1Timer` (Timer/Worker.hs), `fireL2SceneTimer` (L2.hs), `fireL3PersonaTimer` (L3.hs) to return `FireOutcome`.
-- [ ] M2: add `applyFireOutcome`, switch to keiro `runTimerWorkerWith` with `maxAttempts = Just 8`, handle unknown process-manager timers, delete unused `runL1TimerWorkerLoop`/`runL1TimerWorkerOnce`.
-- [ ] M2: new test module `kioku-core/test/Kioku/TimerWorkerSpec.hs` (outcome mapping, unknown-PM requeue, attempt-ceiling dead-letter, drain); register in cabal and `test/Main.hs`.
+- [x] M2: add `kioku-core/src/Kioku/Distill/Timer/Outcome.hs` with `FireOutcome` and delay schedules; register in `kioku-core.cabal`. — 2026-07-11
+- [x] M2: convert `fireL1Timer` (Timer/Worker.hs), `fireL2SceneTimer` (L2.hs), `fireL3PersonaTimer` (L3.hs) to return `FireOutcome`. — 2026-07-11
+- [x] M2: add `applyFireOutcome`, switch to keiro `runTimerWorkerWith` with `maxAttempts = Just 8`, handle unknown process-manager timers, delete unused `runL1TimerWorkerLoop`/`runL1TimerWorkerOnce`. — 2026-07-11
+- [x] M2: new test module `kioku-core/test/Kioku/TimerWorkerSpec.hs` (outcome mapping, unknown-PM requeue, attempt-ceiling dead-letter, drain); register in cabal and `test/Main.hs`. — 2026-07-11 (6 cases green)
 - [ ] M3: add `drainKiokuTimers` to Timer/Worker.hs; drain-before-sleep test.
 - [ ] M3: restructure `kioku-cli/src/Kioku/Cli/Commands/Worker.hs` — per-iteration `runAppIO` with capped-backoff retry on store errors, `Control.Concurrent.Async.race` supervision, startup backfill pass, non-zero exit on pipeline death; add `async` to `kioku-cli.cabal`.
 - [ ] Final: full build + test sweep, manual CLI verification, update all living sections, write Outcomes & Retrospective.

@@ -41,10 +41,10 @@ import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTime
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..))
 import Kioku.Distill.Runtime (DistillRuntime, runPersonaDistillation)
+import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
-import Kiroku.Store.Types (EventId (..))
 import Shikumi.Schema.Types (field, unField)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.FilePath ((</>))
@@ -165,20 +165,22 @@ fireL3PersonaTimer ::
   (IOE :> es, Store :> es) =>
   DistillRuntime ->
   TimerRow ->
-  Eff es (Maybe EventId)
+  Eff es FireOutcome
 fireL3PersonaTimer rt row
   | row.processManagerName /= l3PersonaProcessManagerName =
-      pure Nothing
+      pure FireNotMine
   | otherwise =
       case Aeson.fromJSON @PersonaTimerPayload row.payload of
-        Aeson.Error _err ->
-          pure (Just (timerMarkerEventId row.timerId))
+        -- Unparseable now, unparseable on every retry: dead-letter rather than
+        -- mark it fired and lose the persona silently.
+        Aeson.Error err ->
+          pure (FireFailedPermanently ("L3 persona timer payload is malformed: " <> Text.pack err))
         Aeson.Success payload -> do
           result <- regeneratePersona rt payload.scope
           pure $
             case result of
-              Right _ -> Just (timerMarkerEventId row.timerId)
-              Left _ -> Nothing
+              Right _ -> FireCompleted (timerMarkerEventId row.timerId)
+              Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
 
 getPersonaByScope ::
   (Store :> es) =>
@@ -264,9 +266,6 @@ renderScope :: MemoryScope -> Text
 renderScope scope =
   Text.intercalate "/" $
     scopeNamespaceText scope : catMaybes [scopeKindText scope, scopeRefText scope]
-
-timerMarkerEventId :: TimerId -> EventId
-timerMarkerEventId (TimerId uuid) = EventId uuid
 
 l3PersonaTimerNamespace :: UUID
 l3PersonaTimerNamespace =
