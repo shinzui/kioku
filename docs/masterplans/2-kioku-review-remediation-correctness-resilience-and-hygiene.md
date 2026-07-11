@@ -82,7 +82,7 @@ bootstrap against both pinned and HEAD keiro) is entirely different from EP-5's
 | 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | Complete |
 | 5 | Harden schema and recall with indexes, constraints, and scope identity fixes | docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md | None | None | Complete |
 | 6 | Align read-model reconciliation with keiro schema relocation and guard embedded migrations | docs/plans/14-align-read-model-reconciliation-with-keiro-schema-relocation-and-guard-embedded-migrations.md | None | None | Complete |
-| 7 | Tighten CLI and API surface validation | docs/plans/15-tighten-cli-and-api-surface-validation.md | None | EP-3 | In Progress |
+| 7 | Tighten CLI and API surface validation | docs/plans/15-tighten-cli-and-api-surface-validation.md | None | EP-3 | Complete |
 
 
 ## Dependency Graph
@@ -194,12 +194,12 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-6 M2: code-side read-model registry reconciler wired into kioku-migrate — 2026-07-11 (`68efc7b`, **the executable moved to a new `kioku-migrate` package**)
 - [x] EP-6 M3: embed-staleness guard and just new-migration convention — 2026-07-11 (`cfe3623`)
 - [x] EP-6 M4: end-to-end sweep and library-api docs update — 2026-07-11 (`cabal test all` → 108 + 6 passed, up from 106)
-- [ ] EP-7 M1: strict ids at the CLI boundary, explicit lenient parser in the API
-- [ ] EP-7 M2: scope grammar that can express colons
-- [ ] EP-7 M3: bounded --limit options
-- [ ] EP-7 M4: demo guard (--yes-write-events, demo-only scope, preflight print)
-- [ ] EP-7 M5: worker --backfill/--timers-once mutual exclusion
-- [ ] EP-7 M6: remove embedBatched and dead kioku-api dependencies, docs sweep
+- [x] EP-7 M1: strict ids at the CLI boundary, explicit lenient parser in the API — 2026-07-11 (`a5ee38d`, plus the new `kioku-cli-test` suite: kioku-cli had none)
+- [x] EP-7 M2: scope grammar that can express colons — 2026-07-11 (`ba4b97e`)
+- [x] EP-7 M3: bounded --limit options — 2026-07-11 (`483eee2`)
+- [x] EP-7 M4: demo guard (--yes-write-events, demo-only scope, preflight print) — 2026-07-11 (`c43c9d4`, verified against the dev database)
+- [x] EP-7 M5: worker --backfill/--timers-once mutual exclusion — 2026-07-11 (`2813a54`)
+- [x] EP-7 M6: remove embedBatched and dead kioku-api dependencies, docs sweep — 2026-07-11 (`a844a29`, `cabal test all` → 108 + 36 + 6 passed)
 
 
 ## Surprises & Discoveries
@@ -514,6 +514,30 @@ Discovered during EP-6 implementation (2026-07-11), affecting sibling plans:
   `ConnectionTimeout` at 60s in an unrelated `IdempotencySpec` case, green on rerun), as
   predicted. EP-7 should expect the same.
 
+Discovered during EP-7 implementation (2026-07-11), closing the initiative:
+
+- **The "unverified claim" pattern has a sharper form than three data points suggested.** EP-4,
+  EP-5, and EP-6 each had a Decision Log falsified by execution, and Surprises told EP-7 to
+  treat its own claims as hypotheses. Every one of EP-7's claims held. The difference is not
+  luck: EP-7's claims are about **static properties of the source tree** (no module imports
+  `generic-lens`; `embedBatched` has no call sites; mmzk-typeid's `Show` instance already names
+  both prefixes; optparse's alternative composition rejects the second flag), all confirmable by
+  grep or by reading a dependency's source. The three that were falsified were about the
+  **dynamic behavior of a running system** — a query planner, cabal's solver, a retry path under
+  a live clock. **The rule for future plans: a claim is a hypothesis exactly when confirming it
+  would require running something.** Static claims can be checked while authoring; dynamic ones
+  cannot, and must carry a contingency.
+- **The soft dependencies were real and both paid off exactly as predicted.** EP-3 landed before
+  EP-7 M5 and had deliberately left `WorkerOptions`/`workerOptionsParser` byte-identical, so the
+  flag-conflict fix applied with no rebase. EP-1's and EP-5's changes to files EP-7 touches
+  (`Consolidate.hs`, `Kioku.Api.Scope`) composed the same way. The one place the plan was stale
+  cost nothing: the lenient parser had **six** call sites, not the four EP-7 listed, because EP-1
+  extracted L1's consolidation into a new module — and the rename is compile-checked, so the
+  extra site announced itself.
+- **kioku-cli had no test suite at all** before EP-7; it now has 36 pure parser tests that need
+  no database and run in milliseconds. Every CLI footgun in the review was, in effect, untested
+  by construction.
+
 Record every decomposition or coordination decision made while working on the master
 plan.
 
@@ -581,7 +605,53 @@ plan.
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original vision.
 
-(To be filled during and after implementation.)
+**Complete, 2026-07-11.** All seven child plans landed; all 32 milestones are checked. The test
+suite went from **19 passing tests** at the start of EP-1 to **150** (108 kioku-core + 36
+kioku-cli + 6 kioku-migrations), and kioku-cli, which had no test suite at all, now has one.
+
+Measured against the Vision: distillation re-fires no longer duplicate memories or amplify LLM
+cost (EP-1); archiving a memory now removes its content from scenes, personas, and mirror files
+(EP-2); every worker retries transient failures with bounded backoff or dead-letters permanent
+ones, and no worker thread can die silently (EP-3); lineage and resume invariants live in the
+aggregate rather than in racy prechecks (EP-4); the schema and recall SQL are hardened and the
+scope-identity collision is closed (EP-5); the reconciliation migration survives the keiro
+relocation and a stale embedded-migration list is now a test failure (EP-6); and the CLI rejects
+wrong-type ids, unbounded limits, conflicting flags, and unconsented demo writes at the parser
+(EP-7). Every fix carries tests that fail before it and pass after.
+
+**What the initiative got wrong, and it is the most valuable output.** Four of the seven plans
+recorded a confident claim in their Decision Log that execution falsified — EP-4's timestamp
+comparison (which would have broken EP-1's re-fire path), EP-5's `ef_search = 200` (which
+measurement showed would have silently emptied the vector channel), EP-6's "zero cycle risk"
+cabal claim (which the solver rejected outright, forcing a new package), and EP-1's self-merge
+guard (incomplete against an already-merged winner). EP-7's claims all held. The pattern that
+explains both, recorded in Surprises, is that **a plan's claim is a hypothesis exactly when
+confirming it would require running something**: EP-7's claims were static properties of the
+source tree, checkable by grep while authoring; the four that failed were about running systems
+— a query planner, a build solver, a live retry path. Two of the four were caught *only* because
+a test or a measurement was demanded before shipping. The most consequential thing this
+initiative produced may be the habit of demanding it.
+
+**Known gaps, deliberately left open** (each has evidence recorded in a child plan, and none is
+an oversight):
+
+- `MemoryConfidenceUpdated` changes a scene's source content without triggering regeneration —
+  the same mechanism EP-2 fixed for the forget events, deferred because its timer id needs the
+  update timestamp mixed in. The clearest candidate for a follow-up plan.
+- Filtered-ANN starvation in vector recall is real and reproducible (recorded at
+  `candidatePoolSize` in EP-5). It predates this work, pgvector 0.8's `iterative_scan` is not
+  the drop-in remedy the plan assumed, and it deserves its own plan.
+- Awaiting deadlines are stored and never enforced. EP-4 corrected the documentation that
+  implied otherwise; building enforcement is a feature, not a remediation (Decision, 2026-07-07).
+- The next keiro pin bump is a full cohort-migrate event. `Justfile`'s `CODD_SCHEMAS=kiroku`
+  needs `keiro` added when it happens; EP-6 found the other half already done.
+- Ephemeral-Postgres startup contention produces an occasional spurious red in the now
+  much larger concurrent suite. Left alone deliberately: throttling tasty's concurrency would
+  also mask real races.
+
+**Deployment note that outlives this document:** new `SessionResumed` events carry a `force`
+field. New code reads old events; **old code cannot read new events.** Do not roll the library
+back across that boundary once new-format resume events exist.
 
 ## Revision Notes
 
@@ -705,3 +775,28 @@ Compare the result against the original vision.
   migration-timestamp coordination on EP-7. It did retire `just migrate`'s
   `touch kioku-migrations.cabal`, which EP-5 had already shown to be a no-op — leaving it
   would have kept implying a guarantee that never existed.
+
+- 2026-07-11: EP-7 implemented and marked Complete (commits `a5ee38d`, `ba4b97e`, `483eee2`,
+  `c43c9d4`, `2813a54`, `a844a29`). Checked off EP-7's six Progress milestones. **This
+  completes the MasterPlan**: all seven child plans are Complete, all 32 milestones checked,
+  and the Outcomes & Retrospective section is filled in. The suite finished at 150 passing
+  tests (108 kioku-core + 36 kioku-cli + 6 kioku-migrations), up from 19 when EP-1 began;
+  kioku-cli went from no test suite at all to 36 pure parser tests.
+
+  Every CLI footgun the review named now fails at the parser — before the environment is read,
+  before a connection opens, before an event is written. The demo commands, which used to
+  append permanent undeletable events to whatever `PG_CONNECTION_STRING` pointed at under a
+  production-looking `rei` scope with no confirmation, now require `--yes-write-events`, print
+  their target with the password redacted, and write into `kioku_demo`.
+
+  Both soft dependencies this MasterPlan recorded paid off exactly as designed: EP-3 had left
+  `WorkerOptions` byte-identical for EP-7's flag fix, and EP-1's and EP-5's reshaping of
+  `Consolidate.hs` and `Kioku.Api.Scope` composed without conflict. The one stale assumption in
+  EP-7's text (four lenient call sites, not six) was caught by the compiler at zero cost.
+
+  **EP-7 is also the control case for this initiative's recurring failure mode.** Four sibling
+  plans had a Decision Log falsified by execution; EP-7's claims all held. The reason is
+  recorded in Surprises and generalizes: EP-7's claims were static properties of the source
+  tree, checkable by grep while authoring, whereas the falsified ones were about the behavior of
+  running systems. A plan's claim is a hypothesis exactly when confirming it would require
+  running something.

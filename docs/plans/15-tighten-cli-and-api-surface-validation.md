@@ -61,7 +61,7 @@ This section must always reflect the actual current state of the work.
 - [x] M3: Add `Kioku.Cli.Options` with `boundedIntReader`; bound `--limit` in Recall.hs (1–100) and Distill.hs (1–50); add tests; update docs. — 2026-07-11 (22 tests pass; `recall --limit -1` is now `LIMIT must be between 1 and 100 (got -1)`)
 - [x] M4: Demo guard: required `--yes-write-events` flag for `demo` and `demo-session`, `kioku_demo` namespace, preflight print with redacted connection string; add tests; update docs. — 2026-07-11 (31 tests pass; both bare invocations exit 1 with `Missing: --yes-write-events`, and the guarded path wrote to `kioku_demo/demo/demo` in the dev database — confirmed by recalling it back)
 - [x] M5: Make `worker --backfill` / `--timers-once` mutually exclusive (`WorkerOptions` becomes a three-way sum); add tests; update docs. Check whether docs/plans/11 has landed first (soft dependency). — 2026-07-11 (docs/plans/11 had landed; 36 tests pass; `worker --backfill --timers-once` exits 1 with ``Invalid option `--timers-once'``)
-- [ ] M6: Remove `embedBatched` (and its private helper `chunksOf`) from `kioku-core/src/Kioku/Memory/Embedding.hs`; remove `generic-lens` and `uuid` from `kioku-api/kioku-api.cabal` after re-verifying they are still unused; final docs sweep; full build and test.
+- [x] M6: Remove `embedBatched` (and its private helper `chunksOf`) from `kioku-core/src/Kioku/Memory/Embedding.hs`; remove `generic-lens` and `uuid` from `kioku-api/kioku-api.cabal` after re-verifying they are still unused; final docs sweep; full build and test. — 2026-07-11 (both removals survived the re-check; `cabal test all` → 108 + 36 + 6 passed)
 
 
 ## Surprises & Discoveries
@@ -105,6 +105,26 @@ implementation. Provide concise evidence.
   options type, the parser, and the top-level dispatch, adding only a `withCapability` helper
   to keep the capability-detection block shared between the two capability-needing modes; none
   of EP-3's loop bodies were touched.
+
+- (M6, 2026-07-11.) **Every claim this plan made about a system it had not run turned out to
+  be true**, which is worth recording precisely because the MasterPlan's Surprises section
+  warned it probably would not be (EP-4's timestamps, EP-5's `ef_search`, and EP-6's cabal
+  cycle were each a plan asserting something confident about an unrun system, and each was
+  false). The difference is *what kind* of claim: EP-7's are all claims about **static
+  properties of the source tree** — "no module imports generic-lens", "`embedBatched` has no
+  call sites", "mmzk-typeid's error names both prefixes", "optparse-applicative's alternative
+  composition rejects the second flag" — and every one of them is checkable by grep or by
+  reading the dependency's source before writing a line of code. The three that were falsified
+  were claims about the **dynamic behavior of a running system** (a query planner, a
+  build-plan solver, a retry path under a live clock). The generalizable rule is not "plans are
+  unreliable" but: a plan's claim is a hypothesis exactly when confirming it would require
+  running something. EP-7 had no such claims, and needed no contingency.
+
+- (M6, 2026-07-11.) The `--limit -1` test passes, which is a small surprise worth recording
+  for anyone extending the suite: optparse-applicative hands the leading-dash token `-1` to
+  the option's reader rather than treating it as an unknown flag, so `boundedIntReader` sees
+  `-1` and produces `LIMIT must be between 1 and 100 (got -1)` — the error the plan predicted,
+  without needing the `--limit=-1` form.
 
 
 ## Decision Log
@@ -214,7 +234,45 @@ Record every decision made while working on the plan.
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original purpose.
 
-(To be filled during and after implementation.)
+**Complete, 2026-07-11.** All six milestones landed in six commits (`a5ee38d`, `ba4b97e`,
+`483eee2`, `c43c9d4`, `2813a54`, `a844a29`). Every footgun named in the Purpose is closed, and
+each is closed *at the parser* — which is the part that matters, because it means the failure
+happens before the environment is read, before a connection is opened, and before an event is
+written:
+
+- A `kioku_memory` id passed to `distill session` is now `Expected prefix "kioku_session" but
+  got "kioku_memory"!` instead of a distillation pass against a session that does not exist.
+- `ops:host:db.internal:5432` parses, ref intact. Colon-bearing refs (URLs, `host:port`) were
+  simply unreachable from the CLI before.
+- `worker --backfill --timers-once` is an error rather than a silent win for `--timers-once`.
+- `recall --limit -1` is `LIMIT must be between 1 and 100 (got -1)` rather than a Postgres
+  runtime error.
+- `kioku demo` refuses without `--yes-write-events`, and with it prints what it will write and
+  where (password redacted) before writing — into `kioku_demo/demo/demo`, not the `rei`
+  namespace real data lives in.
+- `embedBatched` and two undeclared-unused dependencies are gone.
+
+The new `kioku-cli-test` suite is 36 pure tests that need no database and run in under 10ms;
+the full suite is 108 (kioku-core) + 36 (kioku-cli) + 6 (kioku-migrations), all green. kioku-cli
+had no test suite at all before this plan, which is why finding 8 ("none of the above is
+tested") was on the list.
+
+**Gaps and honest limits.** Three things are deliberately not fixed and should not be mistaken
+for oversights. `redactConnectionString` is best-effort by construction — it handles the
+keyword and URI forms, and a connection string that smuggles a secret some other way will print
+it; it exists so the preflight can name the target database, not as a security boundary. The
+demo guard makes the write *consented*, not *reversible*: the events remain permanent, because
+kioku has no delete, and the `kioku_demo` namespace only makes the residue obvious. And the
+`--limit` maxima (100, 50) are CLI ergonomics, not API limits — a library caller can still ask
+for a million.
+
+**The lesson worth carrying forward** is in Surprises: this plan's claims all held, and the
+reason is that they were claims about *static* properties of the tree (what imports what, what
+a library's `Show` instance prints) rather than about the *behavior of a running system*. The
+three sibling plans whose Decision Logs were falsified (EP-4, EP-5, EP-6) each asserted
+something about a planner, a solver, or a live retry path. "Verify before you trust the plan" is
+the right instinct, but the sharper form is: a plan's claim is a hypothesis precisely when
+confirming it would require running something.
 
 
 ## Context and Orientation
