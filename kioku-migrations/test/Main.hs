@@ -9,7 +9,9 @@
 module Main where
 
 import Control.Exception (bracket)
+import Data.Char (isAsciiLower, isDigit)
 import Data.Int (Int64)
+import Data.List (sort, (\\))
 import Data.Text (Text)
 import Data.Text.Encoding qualified as Text
 import Hasql.Connection qualified as Connection
@@ -21,6 +23,8 @@ import Hasql.Session qualified as Session
 import Hasql.Statement (Statement, preparable)
 import Kioku.Migrations (embeddedKiokuMigrationFiles)
 import Kioku.Migrations.TestSupport (withBareDatabase, withKiokuMigratedDatabase)
+import System.Directory (listDirectory)
+import System.FilePath (stripExtension, takeExtension)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
 
@@ -37,8 +41,74 @@ tests =
           testCase "keiro schema (after keiro's relocation)" (assertRegistryBump "keiro"),
           testCase "public schema (long-lived dev databases)" (assertRegistryBump "public")
         ],
-      testCase "the full migration chain applies to a fresh database" testFreshDatabase
+      testCase "the full migration chain applies to a fresh database" testFreshDatabase,
+      testGroup
+        "the embedded migration list matches the directory on disk"
+        [ testCase "no migration is missing from the binary" testEmbedIsCurrent,
+          testCase "every migration is named the way codd orders by" testMigrationNames
+        ]
     ]
+
+-- * The embed guard
+
+-- | Template Haskell embeds @sql-migrations/@ at compile time, and @file-embed@ registers
+-- as compilation dependencies only the files it /found/. A file newly ADDED to the
+-- directory is therefore invisible to GHC's recompilation check: the module looks up to
+-- date, the splice never re-runs, and the binary silently ships without the migration. No
+-- TH-side trick can see the file it is precisely the gap that hides, so the guard has to
+-- be a runtime comparison.
+testEmbedIsCurrent :: Assertion
+testEmbedIsCurrent = do
+  -- Cabal runs a test suite with the package root as its working directory — the same
+  -- relative path the splice used.
+  onDisk <- sort . filter isSqlFile <$> listDirectory "sql-migrations"
+  let embedded = sort (map fst embeddedKiokuMigrationFiles)
+  if onDisk == embedded
+    then pure ()
+    else
+      assertFailure
+        ( unlines
+            ( [ "The compiled-in migration list is stale.",
+                "",
+                "  missing from the binary: " <> show (onDisk \\ embedded),
+                "  embedded but not on disk: " <> show (embedded \\ onDisk),
+                "",
+                "Fix: EDIT kioku-migrations/src/Kioku/Migrations.hs (bump the",
+                "\"Last added\" comment) and rebuild. `touch` does not work —",
+                "GHC's recompilation check is content-based, so the file's bytes",
+                "must actually change. `just new-migration` does this for you."
+              ]
+            )
+        )
+
+-- | codd orders migrations by the UTC timestamp in the filename, so a mis-scaffolded name
+-- does not fail — it silently runs in the wrong place.
+testMigrationNames :: Assertion
+testMigrationNames =
+  case filter (not . wellFormed) (map fst embeddedKiokuMigrationFiles) of
+    [] -> pure ()
+    bad ->
+      assertFailure
+        ( "migration filenames must be YYYY-MM-DD-HH-MM-SS-slug.sql, but found: "
+            <> show bad
+        )
+  where
+    wellFormed name =
+      case stripExtension ".sql" name of
+        Nothing -> False
+        Just stem ->
+          case splitAt 19 stem of
+            (stamp, '-' : slug) ->
+              map digitOrDash stamp == "dddd-dd-dd-dd-dd-dd"
+                && not (null slug)
+                && all (\c -> isAsciiLower c || isDigit c || c == '-') slug
+            _ -> False
+    digitOrDash c
+      | isDigit c = 'd'
+      | otherwise = c
+
+isSqlFile :: FilePath -> Bool
+isSqlFile = (== ".sql") . takeExtension
 
 -- * The layout test
 

@@ -9,11 +9,16 @@ create-database:
     fi
     just migrate
 
-# Apply kiroku, keiro, and kioku's embedded read-model migrations.
+# Apply kiroku, keiro, and kioku's embedded read-model migrations, then reconcile
+# keiro's read-model registry to the identity the compiled read models declare.
+#
+# This used to `touch kioku-migrations.cabal` in the hope of forcing Template Haskell to
+# re-read sql-migrations/. It never worked: GHC's recompilation check is content-based, so
+# touching a file changes nothing. `just new-migration` edits Migrations.hs for real, and
+# `cabal test kioku-migrations-test` fails if the embed is stale anyway.
 migrate:
     #!/usr/bin/env bash
     set -euo pipefail
-    touch kioku-migrations/kioku-migrations.cabal
     CODD_CONNECTION="host=$PGHOST dbname=$PGDATABASE user=$(id -un)" \
     CODD_MIGRATION_DIRS=unused-for-embedded-migrations \
     CODD_EXPECTED_SCHEMA_DIR=unused-for-unverified-embedded-migrations \
@@ -47,3 +52,18 @@ new-migration name="":
     SET search_path TO kiroku, pg_catalog;
     EOF
     echo "Created $dest"
+
+    # The migrations are embedded into the binary by Template Haskell, and file-embed can
+    # only register as compilation dependencies the files that already existed when the
+    # module last compiled. A brand-new file is invisible to GHC, so without this the
+    # binary would silently ship without the migration. `touch` does NOT help: GHC's
+    # recompilation check is content-based, so the module's bytes must actually change.
+    hs="kioku-migrations/src/Kioku/Migrations.hs"
+    if ! grep -q '^-- Last added: ' "$hs"; then
+      echo "error: no '-- Last added:' line in $hs; the embed cannot be invalidated" >&2
+      exit 1
+    fi
+    tmp="$(mktemp)"
+    sed "s|^-- Last added: .*|-- Last added: ${ts:0:10} {{name}}.|" "$hs" > "$tmp"
+    mv "$tmp" "$hs"
+    echo "Bumped the 'Last added' note in $hs so Template Haskell re-embeds it"
