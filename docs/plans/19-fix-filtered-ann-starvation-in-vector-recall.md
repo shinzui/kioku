@@ -75,7 +75,66 @@ This section must always reflect the actual current state of the work.
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-- (Pre-implementation research, 2026-07-11.) **The single most important input to this plan is that
+- (**Handed over from EP-2, 2026-07-11. Read this before anything else in this section, because
+  it corrects the note immediately below it.**) EP-2's harness landed and its characterisation
+  sweep is in that plan's Outcomes
+  (docs/plans/18-build-a-recall-quality-harness-that-reproduces-filtered-ann-starvation.md).
+  Four measured results change this plan's starting point:
+
+  ```text
+   in-scope  decoys   rows returned  recall@10   plan chosen                       rows removed
+   --------  ------   -------------  ---------   -------------------------------   ------------
+        200      0×              50       1.00   exact (seq scan + top-N sort)     --
+        200      1×              50       1.00   exact (kioku_memories_scope_idx)  --
+        200     10×              50       1.00   exact (kioku_memories_scope_idx)  --
+       2000      0×              40       1.00   HNSW                              0
+       2000      1×               0       0.00   HNSW                              40   <-- STARVED
+       2000     10×              50       1.00   exact (kioku_memories_scope_idx)  --
+      20000      0×              40       1.00   HNSW                              0
+      20000      1×               0       0.00   HNSW                              40   <-- STARVED
+      20000     10×               0       0.00   HNSW                              40   <-- STARVED
+  ```
+
+  1. **The reassurance below — "at the default, Postgres declined the ANN index entirely and got
+     a perfect answer" — does not survive contact with a maximally adversarial corpus.** At 2000
+     in-scope and 2000 nearer decoys, with **no `SET` at all**, the planner chose HNSW and
+     returned **zero** rows. The exact plan's protection is a cost-model accident, not a
+     guarantee, and it can be lost without anyone touching a setting. (EP-2's corpus is harsher
+     than EP-5's by construction — *every* decoy is nearer than *every* in-scope row — so this is
+     not evidence that EP-5 mis-measured. It is evidence that the safety it observed is not
+     robust.)
+  2. **The budget is exactly 40 and there is no re-probing.** Every starving cell reads
+     `Rows Removed by Filter: 40`: the HNSW scan visits `hnsw.ef_search` (default 40) candidates,
+     the post-filter discards the out-of-scope ones, and the scan does not go back for more.
+  3. **The pool never fills, even with nothing to discard.** With 2000 (or 20000) in-scope rows
+     and *zero* decoys, the vector channel still returns 40 candidates against a `LIMIT` of 50.
+     This refutes the claim in `candidatePoolSize`'s own comment that "pgvector already searches
+     with `ef = max(ef_search, LIMIT)`, so the pool fills at the default". **Do not plan around
+     that sentence — it is false on pgvector 0.8.2.** Note the trap this sets: the natural cure
+     for an under-filled pool is to raise `ef_search`, which is exactly the change EP-5 measured
+     as *causing* starvation.
+  4. **It is not monotonic.** At 2000 in-scope rows, 1× decoys starves to zero but 10× decoys
+     returns 50 perfect rows — *more* interference made recall *better*, by tipping the planner
+     off HNSW and back onto the exact plan. At 20000 in-scope the same 10× ratio starves. So the
+     outcome is decided by **which plan Postgres picks**, not by corpus size or selectivity, and
+     a remedy tuned on one cell can be wrong on its neighbour. M1's job is to identify the regime
+     per cell, and M2 must bake off across the *whole* grid, not just the default corpus.
+
+  Two mechanical notes for M3. EP-2 registered its known-red case with `expectFail` from
+  `tasty-expected-failure`, wrapping **one** case, "the vector channel does not starve on a
+  selective scope", in `kioku-core/test/Kioku/RecallSqlSpec.hs`. Remove that wrapper when the fix
+  lands (tasty will force you to: an unexpected pass is reported as a failure). Leave the
+  neighbouring unmarked case, "the captured plan describes the query that was measured", alone —
+  it asserts the harness's own fidelity and must keep failing loudly if a change makes the
+  captured plan stop describing the query under test. Second: EP-2 found that the EXPLAIN's
+  **select list** changes which plan Postgres picks (row width sets the top-N sort's cost, which
+  is what the planner weighs against the HNSW scan). If you change
+  `selectVectorCandidatesStmt`'s projection, update `explainVectorStmt`'s copy in
+  `kioku-core/test/Kioku/RecallHarness.hs` in the same commit or the harness will silently start
+  measuring a different query. `planAgreesWithQuery` is the guard, and it is asserted.
+
+- (Pre-implementation research, 2026-07-11. **Superseded in part — see the EP-2 handover above.**)
+  **The single most important input to this plan is that
   the obvious fix was measured and it made recall worse.** From the previous initiative's EP-5,
   seeded with 2000 rows in the target namespace and 2000 nearer decoys in another:
 

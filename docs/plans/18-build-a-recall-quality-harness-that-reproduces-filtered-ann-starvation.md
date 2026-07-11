@@ -70,15 +70,17 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] M1: New module `kioku-core/test/Kioku/RecallHarness.hs` with a corpus seeder (in-scope rows, out-of-scope decoys, tunable decoy nearness) and a deterministic vector generator with an exactly-predictable cosine distance.
-- [ ] M1: Register `Kioku.RecallHarness` in the `kioku-test` stanza's `other-modules` in `kioku-core/kioku-core.cabal`.
-- [ ] M1: Prove the instrument — a test asserting the distances Postgres computes match the ones the harness predicted, and that every decoy really is nearer than every in-scope row.
-- [ ] M2: `EXPLAIN (ANALYZE, BUFFERS)` capture for the vector candidate query as it is actually issued.
-- [ ] M2: A quality metric over the seeded ground truth — rows returned, recall@k, rows removed by filter — packaged as `measureRecallQuality`.
-- [ ] M3: A starvation regression case in `kioku-core/test/Kioku/RecallSqlSpec.hs` whose failure message reads as a diagnosis (rows returned, recall@k, plan text).
-- [ ] M3: Resolve Decision 4 (how a known-red case is registered) and record the choice here and in EP-3's Progress.
-- [ ] M3: Run the characterisation sweep and record the recall@k table in this plan's Outcomes — this is the deliverable EP-3 consumes.
-- [ ] M3: Full suite green; update this plan's Outcomes and the MasterPlan's Progress/Registry.
+- [x] M1: New module `kioku-core/test/Kioku/RecallHarness.hs` with a corpus seeder (in-scope rows, out-of-scope decoys, tunable decoy nearness) and a deterministic vector generator with an exactly-predictable cosine distance. (2026-07-11, commit `6247cec`)
+- [x] M1: Register `Kioku.RecallHarness` in the `kioku-test` stanza's `other-modules` in `kioku-core/kioku-core.cabal`. (2026-07-11)
+- [x] M1: Prove the instrument — a test asserting the distances Postgres computes match the ones the harness predicted, and that every decoy really is nearer than every in-scope row. Landed as "the harness seeds the geometry it claims". (2026-07-11)
+- [x] M2: `EXPLAIN (ANALYZE, BUFFERS)` capture for the vector candidate query as it is actually issued. (2026-07-11, commit `d61791c`)
+- [x] M2: A quality metric over the seeded ground truth — rows returned, recall@k, rows removed by filter — packaged as `measureRecallQuality`. (2026-07-11)
+- [x] M2: **Added, not in the original plan** — a plan/query agreement self-check (`planAgreesWithQuery`), after the first EXPLAIN capture was found to describe a different query than the one under test. See Surprises; this is the most important thing M2 produced. (2026-07-11)
+- [x] M3: A starvation regression case in `kioku-core/test/Kioku/RecallSqlSpec.hs` whose failure message reads as a diagnosis (rows returned, recall@k, plan text). (2026-07-11)
+- [x] M3: Resolve Decision 4 (how a known-red case is registered) — `expectFail`, scoped to the known-red case alone. Recorded in Decision 6 below and in EP-3's Progress. (2026-07-11)
+- [x] M3: Run the characterisation sweep and record the recall@k table in this plan's Outcomes — this is the deliverable EP-3 consumes. (2026-07-11)
+- [x] M3: Full suite green (`cabal test all`, exit 0, all four suites PASS; kioku-test 114 tests). (2026-07-11)
+- [x] M3: Update this plan's Outcomes and the MasterPlan's Progress/Registry. (2026-07-11)
 
 
 ## Surprises & Discoveries
@@ -147,6 +149,102 @@ implementation. Provide concise evidence.
   takes ~15s. **Rerun before investigating.** This is contention, it pre-dates this work, and it
   is not caused by anything here.
 
+- (Implementation, M2, 2026-07-11.) **The instrument lied on its first run, in exactly the way
+  this plan warned instruments lie — and the plan's own sketch is what caused it.** This is the
+  single most important thing this plan produced, so it is recorded in full.
+
+  The plan's Concrete Steps said the `EXPLAIN` must reproduce "the query recall actually issues,
+  not a paraphrase", and listed what to copy: the predicates, the `ORDER BY`, the `LIMIT`, and
+  above all `embedding IS NOT NULL`. It said nothing about the **select list**, and the first
+  implementation selected `memory_id` alone, with a confident comment explaining that Postgres
+  chooses this plan from the `WHERE`, the `ORDER BY` and the `LIMIT`, and that the projection
+  could not turn an HNSW scan into anything else.
+
+  That is false, and the sweep caught it immediately. On the 2000-in-scope, 2000-decoy corpus:
+
+  ```text
+  rowsReturned=0  recall@10=0.0        <- the real query, via selectVectorCandidates
+  Limit (actual rows=50)               <- the EXPLAIN of "the same" query
+    -> Index Scan using kioku_memories_scope_idx (actual rows=2000)
+  ```
+
+  The real query returned **zero** rows; the EXPLAIN cheerfully reported **fifty**, on a
+  different plan. The projection sets the row width, the width sets the cost of the top-N sort
+  that the *exact* plan needs, and that cost is precisely what the planner weighs against the
+  HNSW scan. A narrow projection made the sort look cheap, so the planner took the exact plan —
+  and the instrument reported a healthy query while the real one starved.
+
+  Two things follow. First, the fix: `explainVectorStmt` now restates recall's full thirteen-
+  column projection, and with it every sweep cell's plan agrees with the real query's behaviour.
+  Second, and more durably: the harness now carries `planAgreesWithQuery`, which parses the
+  plan's top-node `actual rows=N` and asserts it equals the row count the real query returned.
+  A divergence is no longer something a human has to notice in a wall of EXPLAIN output; it
+  fails the suite. That check is asserted in "the captured plan describes the query that was
+  measured", which is deliberately *not* marked `expectFail`.
+
+  The lesson generalises past this plan. A measuring instrument's failure mode is not an error;
+  it is a plausible number. This one was caught only because the sweep printed the real query's
+  result *next to* the plan's, and they disagreed. An instrument that reports only one of the two
+  cannot be checked at all.
+
+- (Implementation, M3, 2026-07-11.) **The vector channel never fills its candidate pool, even
+  with no decoys at all — which refutes a claim in the shipping code's own comment.** With 2000
+  in-scope rows and *zero* out-of-scope rows, so nothing whatsoever for the filter to discard,
+  the vector channel returns **40** candidates against a `LIMIT` of 50. Same at 20000 rows: 40.
+
+  `candidatePoolSize`'s comment (`kioku-core/src/Kioku/Recall.hs:528-546`) says the opposite:
+
+  > pgvector already searches with `ef = max(ef_search, LIMIT)`, so the pool fills at the default.
+
+  It does not, on pgvector 0.8.2 as measured here. 40 is exactly the default `hnsw.ef_search`,
+  and the HNSW scan returns at most that many rows regardless of the `LIMIT`. So the vector
+  channel silently contributes 20% fewer candidates than the fusion is designed around, in the
+  *healthy* case, entirely independently of starvation. **EP-3 must not rely on that sentence.**
+
+- (Implementation, M3, 2026-07-11.) **Starvation is total and the budget is exactly 40 rows.**
+  Every starving cell shows the same line — `Rows Removed by Filter: 40` — and returns zero rows.
+  The mechanism is now unambiguous: the HNSW scan visits `hnsw.ef_search` (default 40) candidates,
+  the post-filter discards whichever of them are out of scope, and **there is no re-probing**.
+  When the decoys are nearer than every true answer, all 40 are decoys, all 40 are discarded, and
+  the channel returns nothing.
+
+  This differs from EP-5's recorded "1648 rows removed, zero returned", and the difference is
+  explained rather than smoothed over: EP-5 measured with `SET hnsw.ef_search = 200` and a wider
+  scan visits — and therefore discards — more rows. The phenomenon is the same; only the budget
+  differs. Both end at zero.
+
+- (Implementation, M3, 2026-07-11.) **Starvation is not monotonic in corpus size, and this is the
+  finding that most constrains EP-3.** Adding *more* decoys can make recall *better*, by tipping
+  the planner off the HNSW path and back onto the exact one. At 2000 in-scope rows: 1× decoys
+  starves to zero, but 10× decoys returns 50 perfect rows on the exact plan. At 20000 in-scope
+  rows the same 10× ratio stays on HNSW and starves.
+
+  So there is no monotone "bigger corpus is worse" story, and a remedy tuned on one cell can be
+  wrong on its neighbour. The variable that actually decides the outcome is **which plan Postgres
+  picks**, and it picks by cost. "Make the ANN scan work harder" and "keep the planner off the ANN
+  scan when the filter is selective" are opposite strategies, and the sweep says both regimes are
+  live in ordinary-sized corpora. EP-3 must choose against the table in Outcomes, not against an
+  intuition about scale.
+
+- (Implementation, 2026-07-11.) **The reassurance in `candidatePoolSize`'s comment — "The default
+  kept the exact plan" — does not hold on this corpus, but that is not evidence EP-5 mis-measured.**
+  At 2000+2000 with *no* `SET` at all, the planner chose HNSW and returned zero. The honest reading
+  is that this harness's corpus is strictly more adversarial by construction than EP-5's: every
+  decoy is nearer the query than every in-scope row, with no overlap, which is the worst case
+  rather than a typical one. What the measurement establishes is not that EP-5 was wrong but that
+  **the exact plan's protection is not robust** — it is a cost-model accident, not a guarantee, and
+  it can be lost without anyone touching a setting.
+
+- (Implementation, 2026-07-11.) **Seeding a 1536-dimension vector per row as a text literal is
+  ruinously expensive, and the fix is safe only because the M1 case checks it.** `vectorLiteral`
+  renders all 1536 components, of which 1534 are zero: roughly 6KB per row, so ~25MB of SQL for
+  the default corpus and ~1.3GB for the largest sweep cell. `seedCorpus` instead sends the two
+  significant components and lets Postgres append the zeros with `repeat(',0', 1534)`. The ground
+  truth stays Haskell's — only the padding moves — and the M1 case asserts that the distances
+  Postgres actually computes for the seeded rows match `1 - cos t` to within 1e-5, which is what
+  makes the shortcut a measurement rather than a hope. (The tolerance is 1e-5 rather than
+  something tighter because pgvector stores each component as a 4-byte float.)
+
 
 ## Decision Log
 
@@ -209,15 +307,153 @@ Record every decision made while working on the plan.
   mandatory rather than incidental.
   Date: 2026-07-11
 
+- Decision 6 (**resolves Decision 4**): The known-red starvation case is registered with
+  `expectFail` from `tasty-expected-failure` (added to the `kioku-test` stanza's `build-depends`
+  only), and the marker covers **exactly one case, which asserts exactly the thing that is
+  known-red**. Everything that must hold both today and after the fix — that the scope filter
+  never leaks an out-of-scope row, and that the captured plan describes the query that was
+  actually run — lives in a second, *unmarked* case, "the captured plan describes the query that
+  was measured".
+  Rationale: `expectFail` was preferred for the reason the plan gave — the suite stays green
+  across the EP-2→EP-3 boundary, and once the fix lands tasty reports the unexpected pass as a
+  failure, which forces whoever lands it to delete the marker rather than relying on them
+  remembering. But `expectFail` marks a *case*, not an assertion, so every failure inside a
+  marked case is "expected". Had the invariants shared the case, a genuine regression — the scope
+  filter leaking a decoy, say, which would be a correctness bug far worse than starvation — would
+  have been silently absorbed as the failure the suite was already anticipating. Splitting them
+  costs one extra ephemeral cluster (~6s) and buys back the ability to fail.
+  **EP-3 must remove the `expectFail` wrapper in `kioku-core/test/Kioku/RecallSqlSpec.hs` and
+  keep the unmarked case.**
+  Date: 2026-07-11
+
+- Decision 7: `explainVectorQuery` restates recall's full thirteen-column projection, and the
+  harness carries a `planAgreesWithQuery` self-check asserting the captured plan's top-node row
+  count equals the row count the real query returned.
+  Rationale: Forced by measurement, not chosen on principle. The first implementation selected
+  `memory_id` alone and was wrong — the projection sets the row width, the width sets the cost of
+  the top-N sort the exact plan needs, and that cost is what the planner weighs against the HNSW
+  scan. The EXPLAIN reported 50 rows on the exact plan while the real query returned zero on the
+  HNSW plan. See Surprises for the transcript. The self-check exists because a human noticing the
+  discrepancy in a wall of EXPLAIN output is not a control; an assertion is.
+  Date: 2026-07-11
+
+- Decision 8: `seedCorpus` sends only the two significant vector components and lets Postgres
+  append the 1534 zeros with `repeat(',0', 1534)`, rather than rendering a full 1536-element
+  literal per row through `vectorLiteral`.
+  Rationale: A full literal is ~6KB per row — about 25MB of SQL for the default corpus and over a
+  gigabyte for the largest sweep cell, which would have made the sweep impractical. The ground
+  truth stays in Haskell; only the zero padding moves into SQL. This is safe *because* the M1
+  case independently verifies that the distances Postgres computes for the seeded rows match the
+  closed form, so a mistake in the shortcut fails a test rather than quietly corrupting every
+  number built on it.
+  Date: 2026-07-11
+
 
 ## Outcomes & Retrospective
 
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original purpose.
 
-(To be filled during and after implementation. **M3 requires a characterisation table here** — a
-grid of recall@k and chosen plan across corpus sizes and decoy ratios. It is the input EP-3
-depends on, and without it EP-3's hard dependency on this plan is unsatisfied.)
+**Complete, 2026-07-11.** Two commits: `6247cec` (the seeder and its geometry check) and
+`d61791c` (the metric, the plan capture, and the regression cases). The full suite is green
+(`cabal test all`, exit 0; kioku-test 114 tests).
+
+### The characterisation sweep — the deliverable EP-3 consumes
+
+Measured with `Kioku.RecallHarness` on pgvector 0.8.2, one fresh migrated cluster per cell, every
+row committed and `ANALYZE`d before measuring. `k = 10`; the candidate pool is 50. "Plan" is the
+plan Postgres actually chose, read from `EXPLAIN (ANALYZE, BUFFERS)` of the query as issued.
+
+```text
+ in-scope  decoys   rows returned  recall@10   plan chosen                    rows removed by filter
+ --------  ------   -------------  ---------   ----------------------------   ----------------------
+      200      0×              50       1.00   exact (seq scan + top-N sort)  --
+      200      1×              50       1.00   exact (kioku_memories_scope_idx)  --
+      200     10×              50       1.00   exact (kioku_memories_scope_idx)  --
+     2000      0×              40       1.00   HNSW                           0
+     2000      1×               0       0.00   HNSW                           40   <-- STARVED
+     2000     10×              50       1.00   exact (kioku_memories_scope_idx)  --
+    20000      0×              40       1.00   HNSW                           0
+    20000      1×               0       0.00   HNSW                           40   <-- STARVED
+    20000     10×               0       0.00   HNSW                           40   <-- STARVED
+```
+
+Four things in that table decide the shape of EP-3's fix, and none of them were known when this
+plan was written.
+
+**1. Starvation is total, not partial.** Every starving cell returns *zero* rows and recall@10 of
+*zero*. There is no graceful degradation to argue about: the semantic half of hybrid recall is
+either fine or entirely absent.
+
+**2. The budget is exactly 40, and there is no re-probing.** Every starving cell reads
+`Rows Removed by Filter: 40`. The HNSW scan visits `hnsw.ef_search` (default 40) candidates, the
+post-filter discards the out-of-scope ones, and the scan does not go back for more. That is the
+whole mechanism, stated exactly.
+
+**3. The pool never fills, even with nothing to discard.** Look at the two `0×` rows: 2000 and
+20000 in-scope memories, *no* decoys, and the channel still returns 40 candidates against a
+`LIMIT` of 50. This is a defect in its own right, and it refutes the sentence in
+`candidatePoolSize`'s own comment claiming that "pgvector already searches with
+`ef = max(ef_search, LIMIT)`, so the pool fills at the default". It does not. EP-3 should not
+plan around that sentence.
+
+**4. It is not monotonic, which forbids the obvious fix.** At 2000 in-scope rows, 1× decoys
+starves to zero but 10× decoys returns 50 perfect rows — *more* interference made recall *better*,
+because the larger table tipped the planner off the HNSW path and back onto the exact one. At
+20000 in-scope rows the same 10× ratio stays on HNSW and starves. So the outcome is not decided by
+corpus size or by selectivity but by **which plan Postgres picks**, and it picks by cost.
+
+That last point is the one to carry into EP-3. "Make the ANN scan work harder" (raise `ef_search`,
+enable `hnsw.iterative_scan`) and "keep the planner off the ANN scan when the filter is selective"
+(a partial index carrying `status`, a pre-filtering strategy, a cost nudge) are *opposite*
+strategies, and this table shows both regimes occurring in corpora of entirely ordinary size.
+Worse, they interact: finding 3 says the healthy HNSW path already under-fills its pool by 20%, so
+the natural cure for that (raise `ef_search`) is the very change EP-5 measured as *causing*
+starvation by tipping the planner onto HNSW. EP-3 must measure, not reason.
+
+### What was built
+
+`kioku-core/test/Kioku/RecallHarness.hs` (test-only; nothing a host links depends on it):
+`vectorAtAngle` / `queryVector` / `cosineDistanceAtAngle` for the geometry, `CorpusConfig` /
+`defaultStarvationCorpus` / `seedCorpus` / `SeededCorpus` for the corpus and its ground truth, and
+`measureRecallQuality` / `RecallQuality` / `explainVectorQuery` / `describeRecallQuality` /
+`usedHnswIndex` / `planAgreesWithQuery` for the measurement. Three cases in
+`kioku-core/test/Kioku/RecallSqlSpec.hs`: the geometry check, the plan-fidelity check, and the
+`expectFail`'d starvation case.
+
+Against the plan's three acceptance checks: (1) the harness builds the geometry it claims —
+Postgres's distances match `1 - cos t` to within 1e-5, and every decoy is strictly nearer than
+every in-scope row; (2) the instrument reproduces the known result — zero rows returned, with a
+large `Rows Removed by Filter`, and where the numbers differ from EP-5's the difference is
+explained rather than smoothed (Surprises); (3) the starvation case fails for the right reason
+with a readable message:
+
+```text
+the vector channel does not starve on a selective scope: FAIL (expected)
+  the vector channel starved.
+  the vector channel returned 0 candidates, recall@10 = 0.0
+  plan: HNSW (approximate)
+  Limit  (actual time=0.099..0.099 rows=0 loops=1)
+    ->  Index Scan using kioku_memories_embedding_hnsw on kioku_memories  (actual rows=0)
+          Filter: ((status = 'active') AND (namespace = 'harness_target'))
+          Rows Removed by Filter: 40
+```
+
+### The lesson
+
+The plan's premise was that this defect survived because an empty vector channel is silent, and
+that the cure is an instrument that can see it. That was right, but it understated the problem by
+one level: **the instrument itself was silently wrong on its first run, and for the same class of
+reason.** The first `explainVectorQuery` selected one column instead of thirteen; the narrower row
+made the exact plan look cheap; and it reported a healthy 50-row query while the real one returned
+zero. It was caught only because the sweep happened to print the real result *beside* the plan, and
+they disagreed.
+
+So the harness now asserts its own fidelity (`planAgreesWithQuery`) rather than trusting it, and
+that assertion lives in an unmarked case where `expectFail` cannot absorb it. An instrument that
+reports a single number cannot be checked; one that reports two things that must agree can be. That
+is worth more than the sweep table, and it is the part of this plan most likely to matter to
+whatever comes after EP-3.
 
 
 ## Context and Orientation

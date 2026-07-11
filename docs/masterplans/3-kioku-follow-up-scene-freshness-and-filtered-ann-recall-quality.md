@@ -111,7 +111,7 @@ in neither the scene's source hash nor its prompt, so scheduling nothing is corr
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
 | 1 | Refresh scenes and personas when a memory's confidence changes | docs/plans/17-refresh-scenes-and-personas-when-a-memory-s-confidence-changes.md | None | None | Complete |
-| 2 | Build a recall-quality harness that reproduces filtered-ANN starvation | docs/plans/18-build-a-recall-quality-harness-that-reproduces-filtered-ann-starvation.md | None | None | Not Started |
+| 2 | Build a recall-quality harness that reproduces filtered-ANN starvation | docs/plans/18-build-a-recall-quality-harness-that-reproduces-filtered-ann-starvation.md | None | None | Complete |
 | 3 | Fix filtered-ANN starvation in vector recall | docs/plans/19-fix-filtered-ann-starvation-in-vector-recall.md | EP-2 | None | Not Started |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
@@ -192,9 +192,9 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 
 - [x] EP-1 M1: confidence changes schedule a scene-regeneration timer with a per-event timer id (2026-07-11, commit `c22b7b5`)
 - [x] EP-1 M2: end-to-end — a confidence change refreshes the scene row, the persona, and the mirror files (2026-07-11, commit `c22b7b5`)
-- [ ] EP-2 M1: a seedable corpus generator with a deterministic fake embedder and a tunable decoy distance
-- [ ] EP-2 M2: query-plan capture and a recall@k quality metric over the seeded ground truth
-- [ ] EP-2 M3: a starvation regression case that fails loudly when the vector channel returns nothing
+- [x] EP-2 M1: a seedable corpus generator with a deterministic fake embedder and a tunable decoy distance (2026-07-11, commit `6247cec`)
+- [x] EP-2 M2: query-plan capture and a recall@k quality metric over the seeded ground truth (2026-07-11, commit `d61791c`) — plus an unplanned but essential plan/query agreement self-check; see Surprises
+- [x] EP-2 M3: a starvation regression case that fails loudly when the vector channel returns nothing (2026-07-11, commit `d61791c`), with the characterisation sweep recorded in EP-2's Outcomes
 - [ ] EP-3 M1: characterise the starvation — where it starts, how it scales with corpus size and scope selectivity
 - [ ] EP-3 M2: prototyping bake-off of the candidate remedies against EP-2's harness, with EXPLAIN evidence
 - [ ] EP-3 M3: ship the winner (with its migration, if it needs one) and prove it on the starvation case
@@ -329,6 +329,50 @@ Discovered while implementing EP-1 (2026-07-11), and relevant beyond it:
   `kioku-core/test/Kioku/DistillSpec.hs`. No migration, no new dependency, and no change to
   `kioku-core/src/Kioku/Recall.hs`. The ANN work starts from an unchanged base.
 
+Discovered while implementing EP-2 (2026-07-11). All four items below have been cascaded into
+EP-3's Surprises section, because EP-3 was written on assumptions that two of them refute.
+
+- **The instrument was silently wrong on its first run, and this is the initiative's most
+  important discovery so far.** EP-2's first `explainVectorQuery` selected `memory_id` alone
+  rather than recall's thirteen columns, reasoning that the projection cannot change which plan
+  Postgres picks. It can: the projection sets the row width, the width sets the cost of the top-N
+  sort that the *exact* plan needs, and that cost is exactly what the planner weighs against the
+  HNSW scan. On the starving corpus the EXPLAIN reported a healthy 50-row query on the exact plan
+  while the real query took the HNSW plan and returned **zero**. It was caught only because the
+  sweep happened to print the real result beside the plan and they disagreed.
+
+  The remedy is now permanent: the harness carries `planAgreesWithQuery`, asserting the captured
+  plan's top-node row count equals the row count the real query returned, and that assertion
+  lives in an *unmarked* case where `expectFail` cannot absorb it. The general lesson — an
+  instrument that reports a single number cannot be checked; one that reports two things which
+  must agree can be — outranks the sweep table itself, and is the thing to carry into EP-3 and
+  past it.
+
+- **The shipping code's own comment contains a false claim, and it is one EP-3 would otherwise
+  have built on.** `candidatePoolSize` (`kioku-core/src/Kioku/Recall.hs:528-546`) asserts that
+  "pgvector already searches with `ef = max(ef_search, LIMIT)`, so the pool fills at the default".
+  Measured on pgvector 0.8.2: with 2000 in-scope rows and **zero** decoys — nothing at all for the
+  filter to discard — the vector channel returns **40** candidates against a `LIMIT` of 50. The
+  pool never fills. So the vector channel silently under-delivers by 20% even in the healthy case,
+  independently of starvation, and the natural cure (raise `ef_search`) is precisely the change
+  EP-5 measured as *causing* starvation. EP-3 inherits a trap, not a free win.
+
+- **Starvation is total, and its budget is exactly `hnsw.ef_search`.** Every starving cell returns
+  zero rows and reads `Rows Removed by Filter: 40`. The mechanism is now stated exactly: the HNSW
+  scan visits 40 candidates, the post-filter discards the out-of-scope ones, and **there is no
+  re-probing**. This also explains away the apparent discrepancy with EP-5's "1648 rows removed" —
+  EP-5 measured with `ef_search = 200`, and a wider scan discards more. Same phenomenon, different
+  budget; both end at zero.
+
+- **The defect is not monotonic in corpus size, which forbids reasoning about it by intuition.**
+  At 2000 in-scope rows, 1× decoys starves to zero but 10× decoys returns 50 perfect rows —
+  *more* interference made recall *better*, by tipping the planner off HNSW and back onto the
+  exact plan. At 20000 in-scope rows the same 10× ratio starves. The outcome is decided by which
+  plan the planner picks, and it picks by cost. This vindicates the decomposition's core bet: a
+  remedy chosen by argument rather than measurement would have been tuned on one cell and wrong on
+  its neighbour, and EP-3's bake-off must run across the whole grid rather than the default corpus
+  alone.
+
 
 ## Decision Log
 
@@ -382,6 +426,27 @@ plan.
   it. The suite already injects a fake embedder for vector-path tests (added by the previous
   initiative's EP-5, which had to give `DistillSpec` one when pgvector arrived in the dev shell);
   a second mechanism would be one more thing to keep honest. EP-2 must reuse that seam.
+  Date: 2026-07-11
+  **Amended during EP-2's implementation:** the harness needs no embedder at all, fake or
+  otherwise. It drives `selectVectorCandidates` directly with a query vector it constructs, and
+  seeds embeddings straight into the column — the embedding *endpoint* is never in the picture, so
+  there was no seam to reuse. The intent behind the decision (do not add a second mechanism, keep
+  the instrument out of library code) was honoured; the mechanism it named turned out to be
+  unnecessary.
+
+- Decision: EP-2's known-red starvation case is registered with `expectFail`
+  (`tasty-expected-failure`, added to the `kioku-test` stanza only), and the marker wraps exactly
+  one case, which asserts exactly the one thing that is known-red. The invariants that must hold
+  both before and after the fix — the scope filter never leaks an out-of-scope row, and the
+  captured plan describes the query that was actually run — live in a separate *unmarked* case.
+  EP-3 must remove the marker and keep the unmarked case.
+  Rationale: `expectFail` keeps the suite green across the EP-2→EP-3 boundary and makes EP-3's
+  success self-announcing, since tasty reports an unexpected pass as a failure. But it marks a
+  *case*, not an assertion, so every failure inside a marked case is "expected". Had the
+  invariants shared the case, a genuine correctness regression — the scope filter leaking a decoy
+  is strictly worse than starvation — would have been silently absorbed as the failure the suite
+  was already anticipating. Splitting them costs one ephemeral cluster and buys back the ability
+  to fail.
   Date: 2026-07-11
 
 
