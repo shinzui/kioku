@@ -26,7 +26,7 @@ scenesOptionsParser =
       (eitherReader parseScope)
       ( long "scope"
           <> metavar "NAMESPACE[:KIND:REF]"
-          <> help "Memory scope whose scenes should be printed"
+          <> help "Memory scope whose scenes should be printed; REF may contain ':'"
       )
 
 runScenes :: ScenesOptions -> IO ()

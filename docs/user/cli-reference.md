@@ -33,6 +33,17 @@ NAMESPACE                 # global scope
 NAMESPACE:KIND:REF         # entity scope
 ```
 
+Only the **first two** colons split the string. Everything after the second colon is the ref,
+colons included, so refs that are URLs or `host:port` pairs need no escaping:
+
+```text
+ops:host:db.internal:5432             # ref = db.internal:5432
+rei:url:https://example.com:8080/x    # ref = https://example.com:8080/x
+```
+
+`NAMESPACE` and `KIND` are short vocabulary labels and may not contain `:`, `/`, or `%`; all
+three parts must be non-empty.
+
 ---
 
 ## `kioku demo`

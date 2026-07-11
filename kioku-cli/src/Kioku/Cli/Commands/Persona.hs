@@ -26,7 +26,7 @@ personaOptionsParser =
       (eitherReader parseScope)
       ( long "scope"
           <> metavar "NAMESPACE[:KIND:REF]"
-          <> help "Memory scope whose persona should be printed"
+          <> help "Memory scope whose persona should be printed; REF may contain ':'"
       )
 
 runPersona :: PersonaOptions -> IO ()

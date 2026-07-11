@@ -36,7 +36,7 @@ recallOptionsParser =
       (eitherReader parseScope)
       ( long "scope"
           <> metavar "NAMESPACE[:KIND:REF]"
-          <> help "Memory scope to search"
+          <> help "Memory scope to search; REF may contain ':'"
       )
     <*> option
       (eitherReader parseStrategy)
