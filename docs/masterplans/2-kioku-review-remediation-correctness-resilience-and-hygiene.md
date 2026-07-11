@@ -77,7 +77,7 @@ bootstrap against both pinned and HEAD keiro) is entirely different from EP-5's
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
 | 1 | Make L1 distillation idempotent and debounce distillation timers | docs/plans/9-make-l1-distillation-idempotent-and-debounce-distillation-timers.md | None | None | Complete |
-| 2 | Propagate memory forget operations to scenes, personas, and workspace mirrors | docs/plans/10-propagate-memory-forget-operations-to-scenes-personas-and-workspace-mirrors.md | None | EP-1 | In Progress |
+| 2 | Propagate memory forget operations to scenes, personas, and workspace mirrors | docs/plans/10-propagate-memory-forget-operations-to-scenes-personas-and-workspace-mirrors.md | None | EP-1 | Complete |
 | 3 | Harden worker resilience with ack policy, bounded retries, and loop supervision | docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md | None | None | Complete |
 | 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | Not Started |
 | 5 | Harden schema and recall with indexes, constraints, and scope identity fixes | docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md | None | None | Not Started |
@@ -173,9 +173,9 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-1 M3: recall-based merge candidates in the worker — 2026-07-10 (`d63f93a`)
 - [x] EP-1 M4: real validation for distillation LLM outputs — 2026-07-10 (`de9360a`)
 - [x] EP-1 M5: end-to-end verification and evidence — 2026-07-10 (`cabal test all` → 31 passed, up from 19)
-- [ ] EP-2 M1: forget events schedule scene-regeneration timers
-- [ ] EP-2 M2: emptied scopes delete scene/persona rows and mirror files without the LLM
-- [ ] EP-2 M3: end-to-end — the timer worker propagates forgetting to every artifact
+- [x] EP-2 M1: forget events schedule scene-regeneration timers — 2026-07-11 (`0ff7680`)
+- [x] EP-2 M2: emptied scopes delete scene/persona rows and mirror files without the LLM — 2026-07-11 (`77c3c06`)
+- [x] EP-2 M3: end-to-end — the timer worker propagates forgetting to every artifact — 2026-07-11 (`1ca8923`, asserted against the mirror files' real bytes)
 - [x] EP-3 M1: embedding worker ack policy (retry/dead-letter/halt classification) — 2026-07-11 (`0400be1`)
 - [x] EP-3 M2: FireOutcome taxonomy for distillation timers, bounded attempts, unknown-PM handling — 2026-07-11 (`39e4474`)
 - [x] EP-3 M3: loop supervision, drain-before-sleep, startup backfill — 2026-07-11 (`7ba500f`, verified end-to-end against a real database)
@@ -327,6 +327,37 @@ Discovered during EP-3 implementation (2026-07-11), affecting sibling plans:
   `status = 'dead'` after eight claims rather than cycling indefinitely — the intended
   behavior, but worth knowing before anyone reads those rows as a regression.
 
+Discovered during EP-2 implementation (2026-07-11), affecting sibling plans:
+
+- **`DistillRuntime` gained a `workspaceRoot :: Maybe FilePath` field, and the mirror
+  helpers now take the runtime.** `Nothing` means `getCurrentDirectory` — production
+  behavior is unchanged and the CLI needed no edit — but every plan that record-updates a
+  `DistillRuntime` should know the field exists, and any plan asserting on scene/persona
+  mirror files must set it rather than reaching for `withCurrentDirectory`. This was forced
+  by EP-1's discovery that `DistillSpec` can no longer chdir (tasty runs cases
+  concurrently): without an injectable root there is no way to observe a mirror file from a
+  test without racing or writing into the repository working directory.
+  `Kioku.Distill.Runtime` now also exports `distillWorkspaceRoot`.
+- **EP-1 had accidentally committed test output.** `kioku-core/.kioku/{scenes,persona}/…md`
+  (added by `159bbf3`) were the suite's own mirror files — content identical to
+  `DistillSpec`'s canned `sceneResponse`/`personaResponse` — written because the tests
+  mirrored into whatever directory they ran in. EP-2 deletes them, gitignores `.kioku/`, and
+  moves the pre-existing `testReplayDistillation` onto the temp workspace, so the suite now
+  writes nothing into the repository. Any later plan that sees a `.kioku/` directory appear
+  in the tree should treat it as a bug, not a fixture.
+- **The three fire handlers needed no changes, which confirms EP-3's contract composed as
+  designed.** `Right Nothing` from an emptied-scope regeneration already maps to
+  `FireCompleted`, so an emptied-scope timer completes rather than looping — EP-2 extended
+  the L2/L3 regeneration semantics without touching `FireOutcome` or the dispatcher, exactly
+  the independence the Integration Points section predicted.
+- **Process-manager names are unchanged** (`kioku-l2-scene`, `kioku-l3-persona`), as EP-6's
+  reconciliation requires, and no SQL migration was added — confirming Decision 6 and the
+  Dependency Graph's corrected note that EP-2 needs no migration-timestamp coordination.
+- **The `MemoryConfidenceUpdated` staleness gap is still open** and is now the only known
+  event that changes a scene's source content without refreshing it. EP-2 deliberately
+  deferred it (its timer id needs the update timestamp mixed in, because confidence — unlike
+  the terminal forget events — can change repeatedly). It remains a candidate follow-up plan.
+
 Record every decomposition or coordination decision made while working on the master
 plan.
 
@@ -417,6 +448,19 @@ Compare the result against the original vision.
   docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md;
   filled the Progress section from the actual 32 child milestones; and recorded the
   authoring discoveries in Surprises & Discoveries.
+
+- 2026-07-11: EP-2 implemented and marked Complete (commits `0ff7680`, `77c3c06`,
+  `1ca8923`). Checked off EP-2's three Progress milestones. Recorded five implementation
+  discoveries in Surprises & Discoveries. The load-bearing one for sibling plans is that
+  `DistillRuntime` gained a `workspaceRoot` field (production behavior unchanged, but the
+  mirror helpers now take the runtime), forced by EP-1's removal of `DistillSpec`'s chdir —
+  a concrete case of one child plan's discovery changing another's design rather than just
+  its assumptions. EP-2 also removed two mirror files EP-1 had accidentally committed and
+  gitignored `.kioku/`. The plan's own integration constraints held: no migration, no
+  process-manager renames, no re-implementation of the scope-identity string format (rows
+  are deleted by the looked-up row's primary key and mirror paths come from
+  `sceneMirrorPath`/`personaMirrorPath`), so EP-5 and EP-6 compose in either order as
+  designed.
 
 - 2026-07-11: EP-3 implemented and marked Complete (commits `0400be1`, `39e4474`,
   `7ba500f`). Checked off EP-3's three Progress milestones. Recorded five implementation
