@@ -10,6 +10,7 @@ import Data.Text qualified as Text
 import Kioku.Api.Scope (MemoryScope)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Recall (RecallHit (..), RecallRequest (..), RecallStrategy (..), recall)
@@ -46,11 +47,11 @@ recallOptionsParser =
           <> help "Recall strategy"
       )
     <*> option
-      auto
+      (boundedIntReader "LIMIT" 1 100)
       ( long "limit"
           <> metavar "N"
           <> value 8
-          <> help "Maximum hits to return"
+          <> help "Maximum hits to return (1-100)"
       )
     <*> switch
       ( long "show-scores"

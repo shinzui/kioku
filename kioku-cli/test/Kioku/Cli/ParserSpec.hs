@@ -8,6 +8,7 @@ import Data.List (isInfixOf)
 import Data.Text qualified as Text
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Cli.Commands.Distill (DistillOptions (..), distillOptionsParser)
+import Kioku.Cli.Commands.Recall (RecallOptions (..), recallOptionsParser)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Id (genMemoryId, genSessionId, idText)
 import Options.Applicative
@@ -19,7 +20,8 @@ tests =
   testGroup
     "Kioku.Cli parsers"
     [ sessionIdTests,
-      scopeTests
+      scopeTests,
+      limitTests
     ]
 
 -- | Run a parser against an argument list, rendering a failure the way the real CLI would.
@@ -92,3 +94,41 @@ scopeTests =
     assertLeft label = \case
       Left _ -> pure ()
       Right scope -> assertBool (label <> " should not parse, got: " <> show scope) False
+
+-- | Out-of-range limits are a parse error, not a Postgres error (@--limit -1@ used to reach
+-- SQL and come back as @LIMIT must not be negative@).
+limitTests :: TestTree
+limitTests =
+  testGroup
+    "--limit is bounded at the parser"
+    [ testCase "recall rejects a negative limit, naming the range" do
+        assertLimitError "between 1 and 100" (recallWith ["--limit", "-1"]),
+      testCase "recall rejects zero" do
+        assertLimitError "between 1 and 100" (recallWith ["--limit", "0"]),
+      testCase "recall rejects one past the maximum" do
+        assertLimitError "between 1 and 100" (recallWith ["--limit", "101"]),
+      testCase "recall accepts both ends of the range" do
+        fmap (.limit) (recallWith ["--limit", "1"]) @?= Right 1
+        fmap (.limit) (recallWith ["--limit", "100"]) @?= Right 100,
+      testCase "recall's default limit is unchanged" do
+        fmap (.limit) (recallWith []) @?= Right 8,
+      testCase "distill rejects one past its lower maximum" do
+        sid <- genSessionId
+        assertLimitError "between 1 and 50" (distillWith sid ["--limit", "51"]),
+      testCase "distill accepts the top of its range" do
+        sid <- genSessionId
+        fmap (.candidateLimit) (distillWith sid ["--limit", "50"]) @?= Right 50,
+      testCase "distill's default limit is unchanged" do
+        sid <- genSessionId
+        fmap (.candidateLimit) (distillWith sid []) @?= Right 5
+    ]
+  where
+    recallWith extra =
+      parseWith recallOptionsParser (["query", "--scope", "mori"] <> extra)
+
+    distillWith sid extra =
+      parseWith distillOptionsParser (["session", Text.unpack (idText sid)] <> extra)
+
+    assertLimitError needle = \case
+      Right _ -> assertBool ("expected a parse error mentioning " <> show needle) False
+      Left err -> assertBool ("error should state the valid range: " <> err) (needle `isInfixOf` err)

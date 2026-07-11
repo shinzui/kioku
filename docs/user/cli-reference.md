@@ -86,7 +86,7 @@ kioku recall QUERY --scope NAMESPACE[:KIND:REF] [options]
 | `QUERY` (positional) | —      | The natural-language query to match against.                  |
 | `--scope`          | —        | Scope to search. Required. `NAMESPACE` or `NAMESPACE:KIND:REF`. |
 | `--strategy`       | `hybrid` | `keyword`, `embedding`, or `hybrid`.                          |
-| `--limit N`        | `8`      | Maximum hits to return.                                       |
+| `--limit N`        | `8`      | Maximum hits to return. Must be between **1 and 100**; anything else is a parse error stating the range. |
 | `--show-scores`    | off      | Print the fused score and the FTS/vector component ranks.     |
 
 Examples:
@@ -135,7 +135,7 @@ kioku distill session SESSION_ID [options]
 |----------------------|---------|-------------------------------------------------------------------|
 | `SESSION_ID` (positional) | — | The session to distill. Must carry the `kioku_session` prefix; any other prefix (a `kioku_memory` id, a bare UUID) is rejected with an error naming both the expected and the received prefix. |
 | `--candidates`       | `scan`  | How merge candidates are found: `scan` (scope SQL scan) or `recall` (hybrid recall). |
-| `--limit N`          | `5`     | Maximum merge candidates considered per extracted atom.           |
+| `--limit N`          | `5`     | Maximum merge candidates considered per extracted atom. Must be between **1 and 50**; anything else is a parse error stating the range. |
 
 - `--candidates scan` does a recency/scope SQL scan and needs **no** embedding endpoint.
 - `--candidates recall` uses hybrid recall to find merge candidates and therefore needs the

@@ -8,6 +8,7 @@ where
 
 import Data.Text qualified as Text
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Distill.L1 (L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
 import Kioku.Id (SessionId, idText, parseId)
@@ -52,11 +53,11 @@ sessionOptionsParser =
           <> help "Candidate lookup source"
       )
     <*> option
-      auto
+      (boundedIntReader "LIMIT" 1 50)
       ( long "limit"
           <> metavar "N"
           <> value 5
-          <> help "Maximum merge candidates per extracted atom"
+          <> help "Maximum merge candidates per extracted atom (1-50)"
       )
     <*> switch
       ( long "force"
