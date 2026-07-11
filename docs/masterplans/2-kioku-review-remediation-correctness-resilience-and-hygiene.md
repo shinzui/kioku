@@ -80,7 +80,7 @@ bootstrap against both pinned and HEAD keiro) is entirely different from EP-5's
 | 2 | Propagate memory forget operations to scenes, personas, and workspace mirrors | docs/plans/10-propagate-memory-forget-operations-to-scenes-personas-and-workspace-mirrors.md | None | EP-1 | Complete |
 | 3 | Harden worker resilience with ack policy, bounded retries, and loop supervision | docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md | None | None | Complete |
 | 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | Complete |
-| 5 | Harden schema and recall with indexes, constraints, and scope identity fixes | docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md | None | None | In Progress |
+| 5 | Harden schema and recall with indexes, constraints, and scope identity fixes | docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md | None | None | Complete |
 | 6 | Align read-model reconciliation with keiro schema relocation and guard embedded migrations | docs/plans/14-align-read-model-reconciliation-with-keiro-schema-relocation-and-guard-embedded-migrations.md | None | None | Not Started |
 | 7 | Tighten CLI and API surface validation | docs/plans/15-tighten-cli-and-api-surface-validation.md | None | EP-3 | Not Started |
 
@@ -184,12 +184,12 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-4 M3: honest idempotent accepts for session and memory commands — 2026-07-11 (`cd23156`)
 - [x] EP-4 M4: turn identity contract — 2026-07-11 (`b3436c7`)
 - [x] EP-4 M5: legacy decoder coverage and documentation truth — 2026-07-11 (`8ca34c1`, `cabal test all` → 88 passed, up from 43)
-- [ ] EP-5 M1: schema-hardening migration (indexes, NULLS NOT DISTINCT, scope CHECKs)
-- [ ] EP-5 M2: pgvector in the dev shell plus self-healing embedding-schema migration
-- [ ] EP-5 M3: vector recall query fix (ORDER BY, ef_search) with EXPLAIN evidence
-- [ ] EP-5 M4: embedding dimension validation at capability detection
-- [ ] EP-5 M5: collision-free scope identity with legacy-id stability
-- [ ] EP-5 M6: global-scope semantics documentation and haddocks
+- [x] EP-5 M1: schema-hardening migration (indexes, NULLS NOT DISTINCT, scope CHECKs) — 2026-07-11 (`830a1d4`, all 5 new tests fail without the migration)
+- [x] EP-5 M2: pgvector in the dev shell plus self-healing embedding-schema migration — 2026-07-11 (`312769a`, the degraded dev DB healed to `kiroku.vector(1536)`)
+- [x] EP-5 M3: vector recall query fix with EXPLAIN evidence — 2026-07-11 (`3a3f1e5`; **the ef_search half was measured, found to be a recall regression, and deliberately not shipped**)
+- [x] EP-5 M4: embedding dimension validation at capability detection — 2026-07-11 (`939cf8f`, plus a search_path-aware extension probe)
+- [x] EP-5 M5: collision-free scope identity with legacy-id stability — 2026-07-11 (`cdbd1f0`)
+- [x] EP-5 M6: global-scope semantics documentation and haddocks — 2026-07-11 (`18a5158`, `cabal test all` → 106 passed, up from 88)
 - [ ] EP-6 M1: location-agnostic reconciliation migration proven against both keiro layouts
 - [ ] EP-6 M2: code-side read-model registry reconciler wired into kioku-migrate
 - [ ] EP-6 M3: embed-staleness guard and just new-migration convention
@@ -399,6 +399,86 @@ Discovered during EP-4 implementation (2026-07-11), affecting sibling plans:
   correlationKey`), but **old code cannot read new events** — do not roll the library back across
   this boundary once new-format resume events exist.
 
+Discovered during EP-5 implementation (2026-07-11), affecting sibling plans:
+
+- **A plan told me to make a change that would have broken recall, and only measurement
+  caught it.** EP-5's Decision Log prescribed `SET LOCAL hnsw.ef_search = 200` on the theory
+  that pgvector's 40 default sits below the 50-row candidate pool and so could never fill it.
+  Both halves are false. pgvector searches with `ef = max(ef_search, LIMIT)`, so the pool
+  fills at the default; and raising it changes the *plan*, not just the scan width — seeded
+  with 2000 rows in the target namespace and 2000 nearer decoys in another, it moved the
+  planner off an exact plan returning 50 correct rows onto an HNSW scan that spent its budget
+  on rows the scope filter then discarded: 1648 removed, **zero returned**. It was not
+  shipped. Likewise the claimed defect (the `created_at DESC` tiebreak *defeats* the HNSW
+  index) does not reproduce on PostgreSQL 17, which supplies the second key with an
+  `Incremental Sort` over the index scan; the ORDER BY fix still landed, but for the narrower
+  and honest reason that it makes index use unconditional rather than contingent on a planner
+  feature that did not exist before PostgreSQL 13.
+  **Cross-plan lesson, and it is the same shape as EP-4's timestamp discovery: a plan's
+  reasoning about a system it did not run is a hypothesis, not an instruction.** EP-6 and
+  EP-7 should treat any *performance* or *planner* claim in their own text as unverified
+  until an `EXPLAIN ANALYZE` on seeded rows says otherwise. Neither of EP-5's errors would
+  have survived one.
+
+- **The "Last touched" comment convention is not a nicety — and `touch` is not a substitute
+  for it.** GHC's recompilation check is content-based, so touching `Migrations.hs` (or
+  `kioku-migrations.cabal`, which is what `just migrate` does) does *not* make Template
+  Haskell re-read `sql-migrations/`. Only editing the module's bytes does. This produced a
+  false test failure mid-milestone: the migration file was on disk, the module was touched,
+  and `SchemaSpec` still reported the index missing because the embed was stale.
+  `Data.FileEmbed.embedDir` registers the files it *found* as dependencies, so a newly added
+  file is by construction not among them. **EP-6 M3 owns this guard and should not assume
+  `touch` works around it; it does not.**
+
+- **Capability detection was asking the wrong question, and EP-5 changed it.**
+  `detectVectorCapability` probed `pg_extension` — "is pgvector installed *somewhere* in this
+  database" — but recall casts a bare `$1::vector` on a connection whose `search_path` is
+  `kiroku, pg_catalog` (kiroku's `schema = "kiroku"`, `extraSearchPath = []`). An extension
+  installed into `public`, the usual operator default, satisfies `pg_extension` and still
+  cannot be named: every vector query fails with `42704` while detection reports everything
+  healthy. Reproduced, then fixed by probing `to_regtype('vector')`, which resolves against
+  the live `search_path`. Any plan reasoning about "is pgvector available" must mean *on this
+  connection*.
+
+- **`detectVectorCapability` gained an argument and `VectorCapability` gained a constructor.**
+  It is now `Int -> Eff es VectorCapability` (the configured `KIOKU_EMBEDDING_DIMENSIONS`),
+  and `VectorDimensionMismatch !Int !Int` joins the variant list. EP-7's API-surface sweep
+  should expect both. `Kioku.Recall` also newly exports `selectFtsCandidates`,
+  `selectVectorCandidates`, and `vectorLiteral` as documented test seams, and
+  `Kioku.Api.Scope` exports `mkNamespace`/`mkScopeKind` — **which EP-7's CLI validation sweep
+  should adopt rather than re-implement.** `Kioku.Distill.L2`/`L3` now export `sceneRowId`/
+  `personaRowId`.
+
+- **`nix/haskell.nix` is seihou-managed and EP-5 edited it anyway**, because there was no
+  alternative: `extraDevPackages` is appended *after* `baseDevPackages`, so a pgvector-enabled
+  postgres added there loses the PATH race to the plain one. Two lines are load-bearing and
+  must survive any regeneration together: the `pkgs.postgresql.withPackages (ps: [ ps.pgvector ])`
+  wrapper, and `pkgs.postgresql.dev` beside it — the wrapper has a single `out` output and
+  drops the `dev` output carrying `libpq.pc`, which breaks `cabal`'s dependency resolution
+  outright, far from its cause.
+
+- **Vector-path tests only run inside the new dev shell.** `ephemeral-pg` takes `initdb`/
+  `postgres` from `PATH`, so a shell entered before EP-5 still spins up clusters without
+  pgvector, and the vector cases skip (loudly — they announce it). Anyone verifying vector
+  behavior must run `nix develop --command cabal test all`. A pleasant side effect: several
+  `EmbeddingWorkerSpec` cases that had been skipping vacuously now execute for the first time.
+
+- **The suite's ephemeral-Postgres clusters now lose a 60-second startup race often enough to
+  matter.** Four full-suite runs during EP-5 failed with
+  `TimeoutError (ConnectionTimeout {durationSeconds = 60})` and passed on rerun; a failing run
+  takes ~65s against a healthy ~15s. EP-5 added 12 database-backed cases to a suite tasty runs
+  concurrently with `-N`. This is contention, not a regression — but **EP-6 and EP-7 should
+  expect an occasional spurious red and rerun before investigating**, and both add more DB
+  tests. Capping tasty's thread count would likely fix it; it was left alone deliberately,
+  since throttling concurrency can also mask real races.
+
+- **Filtered-ANN starvation is real, reproducible, and deliberately left unfixed** — a known
+  gap, not an oversight. The HNSW scan is post-filtered, so a selective predicate correlated
+  with distance can starve the candidate pool. It predates this work and the ORDER BY fix
+  neither causes nor cures it. pgvector 0.8's `hnsw.iterative_scan` is *not* the drop-in
+  remedy the plan assumed (`relaxed_order` also returned zero rows on the same probe). The
+  repro is recorded at `candidatePoolSize`; it deserves its own plan.
+
 Record every decomposition or coordination decision made while working on the master
 plan.
 
@@ -533,3 +613,35 @@ Compare the result against the original vision.
 
   EP-4 added no migration and no read-model version bump, as its plan predicted, so it imposes no
   migration-timestamp coordination on EP-5 or EP-6.
+
+- 2026-07-11: EP-5 implemented and marked Complete (commits `830a1d4`, `312769a`, `3a3f1e5`,
+  `939cf8f`, `cdbd1f0`, `18a5158`). Checked off EP-5's six Progress milestones. The suite went
+  from 88 to 106 passing tests, and the vector-dependent ones now genuinely execute instead of
+  skipping vacuously.
+
+  **The load-bearing outcome is a change EP-5 did *not* make.** Its Decision Log prescribed
+  `SET LOCAL hnsw.ef_search = 200`; measurement showed that shipping it would have silently
+  emptied the vector channel exactly when the corpus is large and the scope is selective
+  (an exact plan returning 50 correct rows became an ANN scan returning zero). Both premises
+  behind it were false. The plan's Decision Log now records the supersession with the
+  `EXPLAIN ANALYZE` evidence, and the generalizable lesson — a plan's reasoning about a system
+  it never ran is a hypothesis, not an instruction — is recorded in Surprises for EP-6 and
+  EP-7, whose own texts contain unverified claims of the same kind.
+
+  Three discoveries change sibling plans' assumptions. EP-6 inherits a sharper version of its
+  own subject: `touch` does **not** defeat Template Haskell's stale embed, because GHC's
+  recompilation check is content-based — so the "Last touched" comment convention is the only
+  thing standing between a new migration and a silently stale binary, and EP-6 M3's guard is
+  more necessary than its plan text implies. EP-7 inherits three surface changes it must not
+  fight (`detectVectorCapability` now takes the configured dimension count and
+  `VectorCapability` gained `VectorDimensionMismatch`; `Kioku.Api.Scope` now exports
+  `mkNamespace`/`mkScopeKind`, which EP-7's CLI validation sweep should adopt rather than
+  re-implement). And both should expect an occasional spurious test failure from
+  ephemeral-Postgres startup contention, which EP-5's 12 new database-backed cases made
+  common enough to notice.
+
+  EP-5 added three migrations (`2026-07-11-17-35-11-kioku-schema-hardening`,
+  `2026-07-11-17-45-43-kioku-embedding-schema-heal`,
+  `2026-07-11-18-18-36-kioku-scope-identity-recompute`), all applied cleanly and idempotently
+  to the dev database, which is no longer in the degraded no-pgvector state this MasterPlan
+  recorded at authoring time.
