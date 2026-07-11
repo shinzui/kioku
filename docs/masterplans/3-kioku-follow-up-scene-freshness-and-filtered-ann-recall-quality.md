@@ -112,7 +112,7 @@ in neither the scene's source hash nor its prompt, so scheduling nothing is corr
 |---|-------|------|-----------|-----------|--------|
 | 1 | Refresh scenes and personas when a memory's confidence changes | docs/plans/17-refresh-scenes-and-personas-when-a-memory-s-confidence-changes.md | None | None | Complete |
 | 2 | Build a recall-quality harness that reproduces filtered-ANN starvation | docs/plans/18-build-a-recall-quality-harness-that-reproduces-filtered-ann-starvation.md | None | None | Complete |
-| 3 | Fix filtered-ANN starvation in vector recall | docs/plans/19-fix-filtered-ann-starvation-in-vector-recall.md | EP-2 | None | Not Started |
+| 3 | Fix filtered-ANN starvation in vector recall | docs/plans/19-fix-filtered-ann-starvation-in-vector-recall.md | EP-2 | None | Complete |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3).
@@ -195,10 +195,10 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-2 M1: a seedable corpus generator with a deterministic fake embedder and a tunable decoy distance (2026-07-11, commit `6247cec`)
 - [x] EP-2 M2: query-plan capture and a recall@k quality metric over the seeded ground truth (2026-07-11, commit `d61791c`) — plus an unplanned but essential plan/query agreement self-check; see Surprises
 - [x] EP-2 M3: a starvation regression case that fails loudly when the vector channel returns nothing (2026-07-11, commit `d61791c`), with the characterisation sweep recorded in EP-2's Outcomes
-- [ ] EP-3 M1: characterise the starvation — where it starts, how it scales with corpus size and scope selectivity
-- [ ] EP-3 M2: prototyping bake-off of the candidate remedies against EP-2's harness, with EXPLAIN evidence
-- [ ] EP-3 M3: ship the winner (with its migration, if it needs one) and prove it on the starvation case
-- [ ] EP-3 M4: document the honest limits of the shipped remedy
+- [x] EP-3 M1: characterise the starvation — where it starts, how it scales with corpus size and scope selectivity (2026-07-11) — **the ANN regime**: above ~2000 embedded rows the planner routinely takes the HNSW path and starves
+- [x] EP-3 M2: prototyping bake-off of the candidate remedies against EP-2's harness, with EXPLAIN evidence (2026-07-11) — full table, losers included, in EP-3's Outcomes
+- [x] EP-3 M3: ship the winner and prove it on the starvation case (2026-07-11, commit `0f3efad`) — **no migration needed**; the fix is a query change plus a `SET LOCAL`
+- [x] EP-3 M4: document the honest limits of the shipped remedy (2026-07-11) — `docs/user/recall.md` and the rewritten `candidatePoolSize` comment
 
 
 ## Surprises & Discoveries
@@ -374,6 +374,52 @@ EP-3's Surprises section, because EP-3 was written on assumptions that two of th
   alone.
 
 
+Discovered while implementing EP-3 (2026-07-11):
+
+- **A measurement of a nondeterministic system needs a sample size, and nobody asked whether the
+  system was deterministic.** This is the initiative's deepest finding and it very nearly shipped a
+  broken fix. EP-3's bake-off ran each candidate remedy once, against the real starving corpus,
+  through the real statement, with a ground truth known by construction — a real measurement by
+  every standard this initiative had set — and it named `hnsw.iterative_scan` the winner: 50 rows,
+  recall@10 = 1.00, every bar cleared. Re-running the identical settings gave *contradictory*
+  results, and more scan budget sometimes produced *fewer* rows, which is impossible as a parameter
+  effect. HNSW graph construction is randomized, and every bake-off cell builds a fresh graph. Five
+  runs per candidate on five fresh graphs showed `iterative_scan` returning the right answer 2 times
+  in 5 (`relaxed_order`) and 4 times in 5 (`strict_order`) at 20000 rows.
+
+  The MasterPlan's founding premise was "a plan's claim about a system it never ran is a
+  hypothesis". EP-3 shows the premise does not go far enough: **a claim about a system you ran
+  *once* is also a hypothesis, if the system is random.** EP-5's single `relaxed_order` probe and
+  EP-3's own round 1 made exactly the same error, and the second one was made by the very process
+  built to prevent the first.
+
+- **The shipped fix satisfies "the plan is chosen for a reason, not by luck" in a stronger way than
+  that bar anticipated.** EP-3's Decision 2(c) demanded a remedy whose query plan is stable, on the
+  reasoning that a remedy depending on the planner's choice is a coincidence waiting to regress. The
+  remedy that won does not force a plan at all — it makes **both** plans correct. The approximate
+  pass fills its pool when it can; when it cannot, an exact pass that filters before it ranks
+  supplies the answer. The planner's choice therefore stops determining correctness, which is
+  strictly better than a planner that reliably chooses well, and it is the property the previous
+  initiative's `ef_search` result proved we could not otherwise have.
+
+- **EP-3 needed no migration, so the MasterPlan's most carefully-reasoned coordination constraint
+  never came into play.** The Integration Points section and Decision 3 both go to some length about
+  how an index change must land (a new migration, never an in-place edit, `just new-migration` to
+  defeat the Template Haskell stale-embed trap). The winning remedy turned out to be a query change
+  plus a `SET LOCAL`. The constraint was correctly reasoned and simply not needed — worth recording,
+  because the effort spent on it was not wasted so much as insured against a branch that was not
+  taken.
+
+- **The second bug the harness found was not the one it was built to find.** EP-2's instrument was
+  built to make starvation visible. It also revealed that the vector channel silently under-delivers
+  by 20% in the *healthy* case — 40 candidates against a pool of 50, with nothing out of scope to
+  discard — because pgvector's default `hnsw.ef_search` (40) sits below the pool size, contradicting
+  a claim in kioku's own source comment. That bug had nothing to do with starvation, was present on
+  every recall on every corpus above ~2000 rows, and was invisible for the same reason starvation
+  was: nothing measured recall quality. An instrument built for one defect found another for free,
+  which is the strongest possible argument for EP-2 having been its own plan.
+
+
 ## Decision Log
 
 Record every decomposition or coordination decision made while working on the master
@@ -455,4 +501,82 @@ plan.
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original vision.
 
-(To be filled during and after implementation.)
+**Complete, 2026-07-11.** All three child plans landed. Both defects the previous initiative left
+open are closed, and each is guarded by a test that fails if it reopens. Five commits:
+
+```text
+c22b7b5  fix(distill): regenerate scenes when a memory's confidence changes
+6247cec  test(recall): add a seeded corpus harness with a known-by-construction ground truth
+d61791c  test(recall): fail loudly when the vector channel starves on a selective scope
+0f3efad  fix(recall): rescue the vector channel from filtered-ANN starvation
+         (plus the docs commits recording each plan's outcomes)
+```
+
+The full suite is green: `cabal test all`, exit 0, four suites, 115 tests in `kioku-test`.
+
+### Against the original vision
+
+The Vision promised two things. Both were delivered, and the second was delivered *more* than
+promised.
+
+**Scene freshness (EP-1).** A confidence change now refreshes the scope's scene and, through the
+existing cascade, the persona and both mirror files. The end-to-end test asserts on the real bytes
+of the mirror file on disk. The work was one case arm — but the plan predicted that the *naive*
+version of that arm would be worse than the bug (keiro silently drops a re-scheduled timer whose
+timer has already fired, so a fixed source id would refresh the scene once and never again), and
+that prediction was checked by injecting the naive fix and watching the timer count stop at 2
+instead of 3. A bug that would have looked fixed.
+
+**Recall quality (EP-2, EP-3).** Vector recall returns the right memories for a selective scope,
+proven by a harness rather than an argument, exactly as the Vision demanded. On the starving corpus
+it went from **0 rows, recall@10 = 0.00** to **50 rows, recall@10 = 1.00, five runs out of five**.
+
+What the Vision did not anticipate: a **second** recall bug, found by the instrument as a free
+side-effect. The vector channel was returning 40 candidates against a pool of 50 even with nothing
+out of scope to discard — a silent 20% under-delivery on every recall over a corpus above ~2000
+rows — because pgvector's default `hnsw.ef_search` sits below the pool size. kioku's own source
+comment asserted the opposite, confidently and wrongly. That is now fixed too.
+
+### The lesson, which is not the one this MasterPlan was built around
+
+This initiative's decomposition rested on a premise inherited from the previous one: *a plan's
+confident claim about a system its author never ran is a hypothesis.* That premise is correct, and
+splitting the ANN work into "build the instrument" and "use the instrument" was the right call — EP-2
+paid for itself twice over, finding a bug it was not built to find.
+
+But the premise is not sufficient, and EP-3 proved it the hard way. **EP-3's bake-off ran the
+candidates. It measured them, on the real corpus, through the real statement, against a ground truth
+known by construction. And it still got the wrong answer**, naming `hnsw.iterative_scan` the winner
+on a single passing run. Only a repeatability probe — the same settings, five freshly built HNSW
+graphs — revealed that it returns the right answer 2 times in 5. HNSW construction is randomized;
+nobody had asked whether the system under measurement was deterministic, so nobody had asked what
+sample size a measurement of it required.
+
+So the rule that comes out of this initiative is narrower and more useful than the one that went in:
+
+> Running the system is not enough. **Ask what would make the measurement lie, and check that
+> too.** Twice now the answer was something structural that no amount of care about the *content* of
+> the measurement would have caught: once an EXPLAIN whose select list quietly changed the plan
+> (EP-2), once a randomized index that made n=1 meaningless (EP-3). Both produced confident,
+> plausible, wrong numbers rather than errors.
+
+The instruments that survive this initiative encode that rule. EP-2's harness asserts its own
+fidelity — `planAgreesWithQuery` fails the suite if the captured plan stops describing the query it
+claims to measure — and it does so in a case deliberately kept outside the `expectFail` marker so it
+cannot be absorbed by an expected failure next door. That check is the most durable thing built here,
+more than the fix.
+
+### What is not fixed
+
+Stated plainly, and documented at `candidatePoolSize` and in `docs/user/recall.md`:
+
+- A very large scope that *also* starves is now **slow rather than wrong**: the exact fallback runs
+  and costs ~7ms per 2000 embedded rows in the scope. Correct answers, more latency.
+- The fallback triggers on the candidate pool coming back *short*. An approximate pass that returns
+  a full pool of mediocre-but-in-scope matches, while better ones existed, is not detected. In
+  practice a filter selective enough to hide good matches also shortens the pool, but that is an
+  argument, not a proof — and this initiative is on record about the difference.
+- Observability ships as a return value (`VectorChannelOutcome`, `vectorChannelStarved`), not an
+  emitted metric, because `Kioku.Recall` cannot reach the host's tracer without an API change out of
+  proportion to the goal. A host that wants a metric must call `selectVectorCandidatesDiagnosed`.
+  If that proves too passive, wiring it to the tracer is a small, well-scoped follow-up.

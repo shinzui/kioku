@@ -34,7 +34,8 @@ embedding endpoint. `embedding` is pure semantic similarity.
      else — over rows where `embedding IS NOT NULL`. An HNSW index can only produce the
      distance ordering, so any second sort key leaves the planner to make up the difference,
      and where it cannot (PostgreSQL before 13, or an incremental sort it declines) it
-     abandons the index for a sequential scan.
+     abandons the index for a sequential scan. The vector channel runs in two passes; see
+     [The vector channel's two passes](#the-vector-channels-two-passes).
    Both queries filter `status = 'active'`, the request `namespace`, and — for entity scopes —
    the exact `scope_kind`/`scope_ref`.
 4. **Fuse.** The two candidate lists are merged by memory id; each memory keeps its FTS rank
@@ -42,6 +43,65 @@ embedding endpoint. `embedding` is pure semantic similarity.
 5. **Score & sort.** Each fused candidate gets a blended score (below); results are sorted
    descending.
 6. **Trim.** The top `maxResults` are taken, then a character budget is applied.
+
+## The vector channel's two passes
+
+The vector half of a hybrid recall can quietly return **nothing**, and this section explains when,
+why, and what kioku does about it — including what it still does not fix.
+
+**The hazard.** The HNSW index that makes vector search fast covers the embedding column and
+nothing else. It picks its candidates by distance alone, and the `namespace`, scope, and
+`status = 'active'` predicates are applied *afterwards*, to rows it has already chosen. So when the
+memories nearest your query happen to sit outside the scope you asked about — a small scope inside a
+large namespace, which is the normal shape of kioku data — the index can spend its entire search
+budget on rows the filter then throws away, and the vector channel comes back empty. This is called
+*filtered-ANN starvation*, and it is a property of approximate search under a filter, not a bug in
+any one query.
+
+It used to be invisible. Recall fuses its two channels by rank, so a vector channel that returns
+zero rows contributes zero ranks and the blended score decays smoothly into pure keyword scoring:
+no error, no warning, and nothing in the result recording that the semantic half of your "hybrid"
+search vanished. You got plausible keyword results and had no way to tell.
+
+**What kioku does.** The vector channel now runs in two passes:
+
+1. The **approximate pass** is the HNSW scan, with `hnsw.ef_search` set to the candidate pool size
+   so the pool actually fills. This is the fast path and it is what runs on almost every recall.
+2. If the approximate pass comes back with fewer candidates than the pool, kioku runs an **exact
+   pass**: the same query, but with the scope filter applied *before* the ranking rather than after
+   it, so it cannot starve. Its results are authoritative.
+
+The second pass only runs when the first came back short, so a healthy recall pays nothing for it.
+When it does run, it scans every embedded memory in the scope you asked about — roughly 7ms per 2000
+embedded rows, growing linearly. That is the price of a correct answer, and it is bounded by the
+size of the scope you asked about, which is the set you wanted searched anyway.
+
+**What this does not fix.** Three things, stated plainly:
+
+- **A very large scope that also starves is slow, not wrong.** If a scope holds tens of thousands of
+  embedded memories *and* the approximate pass starves on it, the exact pass will run and take tens
+  of milliseconds. You get the right answer; you wait longer for it. If that matters for your
+  workload, make the scope more selective.
+- **The approximate pass can still return a *misleading* pool rather than a short one.** The
+  fallback triggers on the pool coming back short. If the approximate scan returns a full pool of 50
+  in-scope-but-mediocre matches while better ones existed, nothing detects that. In practice a
+  filter selective enough to hide good matches is also selective enough to shorten the pool, but
+  this is a genuine gap rather than a proof.
+- **Ordering within the returned candidates is the approximate pass's ordering** when the fallback
+  does not fire. That is the normal, intended behaviour of approximate search.
+
+**Seeing it.** `Kioku.Recall.selectVectorCandidatesDiagnosed` returns a `VectorChannelOutcome`
+alongside the rows, recording how many candidates the approximate pass produced, whether the exact
+fallback fired, and how many rows were finally returned. `vectorChannelStarved` is true when the
+fallback found rows the approximate pass had missed. A host that wants a metric or a log line for
+the health of its semantic channel should count those; kioku does not emit one itself, because
+`Kioku.Recall` has no access to the host's tracer or metrics handle.
+
+**A note for anyone tempted by `hnsw.iterative_scan`.** pgvector 0.8 ships its own remedy for
+starvation, and kioku does not use it. It was measured across five freshly built indexes on a
+20000-row starving corpus and returned the right answer 2 times in 5 (`relaxed_order`) and 4 times
+in 5 (`strict_order`). HNSW graph construction is randomized, so it is a lottery: it would pass any
+single test run and starve at random in production. Do not reach for it again without a sample size.
 
 ## Global scope: namespace-wide recall vs exact-scope reads
 

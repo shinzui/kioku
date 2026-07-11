@@ -60,14 +60,19 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] M0: Confirm EP-2 has landed and read its Outcomes table (the characterisation sweep). If it is missing, stop — this plan's hard dependency is unsatisfied.
-- [ ] M1: Characterise the failure — establish from EP-2's harness where starvation begins and, critically, **which regime** it is (does the planner pick the ANN path and starve, or pick the exact path and succeed?).
-- [ ] M2: Prototyping bake-off — run each candidate remedy against the starving corpus, recording recall@10, rows returned, latency, and the chosen plan for each. Record the full table in this plan's Outcomes, including the losers.
-- [ ] M2: Choose the winner against the criteria in Decision 2, and record the choice with its evidence in the Decision Log.
-- [ ] M3: Ship the winner. If it needs a migration, add a NEW one via `just new-migration` (never edit the existing index migrations — see Decision 3).
-- [ ] M3: The harness's starvation case passes; remove EP-2's `expectFail` marker if it added one.
-- [ ] M4: Document the honest limits of the shipped remedy — what still starves, and under what conditions — at `candidatePoolSize` and in `docs/user/recall.md`.
-- [ ] M4: Full suite green; update this plan's Outcomes and the MasterPlan's Progress/Registry.
+- [x] M0: Confirm EP-2 has landed and read its Outcomes table (the characterisation sweep). If it is missing, stop — this plan's hard dependency is unsatisfied. (2026-07-11; table present, harness exports all four required functions, starvation case present and `expectFail`-marked.)
+- [x] M1: Characterise the failure — establish from EP-2's harness where starvation begins and, critically, **which regime** it is. **Answer: the ANN regime.** Above ~2000 embedded rows the planner routinely picks the HNSW path, and the HNSW path starves whenever out-of-scope rows are nearer than in-scope ones. The exact plan protects only small corpora (200 rows) and one accidental cell. See Outcomes. (2026-07-11)
+- [x] M2: Extend the harness with the prototyping seams the bake-off needs — `measureRecallQualityWith` (settings applied in the *same* transaction as the query, since `SET LOCAL` dies with its transaction) and `runDdl` (for the index candidates). Export `selectVectorCandidatesStmt`, `vectorCandidateQuery`, `memoryRecordColumns` and `candidatePoolSize` from `Kioku.Recall` so the harness drives the real statement rather than a copy. (2026-07-11)
+- [x] M2: Prototyping bake-off — run each candidate remedy against the starving corpus, recording recall@10, rows returned, latency, and the chosen plan for each. Record the full table in this plan's Outcomes, including the losers. (2026-07-11)
+- [x] M2: **Repeatability probe — added, not in the original plan, and it changed the answer.** The first bake-off round gave contradictory results for identical settings, so each candidate was re-run five times on a freshly built HNSW graph. See Surprises: `iterative_scan` is *non-deterministic* at 20000 rows, and a single sample of it is worthless. (2026-07-11)
+- [x] M2: Choose the winner against the criteria in Decision 2, and record the choice with its evidence in the Decision Log. **Winner: `hnsw.ef_search` = pool size, plus an exact pre-filtered pass when the approximate pass comes back short. `iterative_scan` rejected — it is a lottery.** See Decision 5. (2026-07-11)
+- [x] M3: Ship the winner. **No migration was needed** — the fix is a query change plus a `SET LOCAL`, not an index change, so Decision 3's rules never came into play. (2026-07-11, commit `0f3efad`)
+- [x] M3: Add Decision 4's observability — `VectorChannelOutcome`, `vectorChannelStarved`, `selectVectorCandidatesDiagnosed`. Shipped as a return value rather than an emitted metric; see Decision 7 for why, and the limit is documented. (2026-07-11)
+- [x] M3: The harness's starvation case passes; EP-2's `expectFail` marker removed. A second case ("a healthy scope never pays for the exact fallback") pins bar (b). (2026-07-11)
+- [x] M3: Delete the throwaway bake-off module. Its output lives on as the table in Outcomes. (2026-07-11)
+- [x] M4: Document the honest limits of the shipped remedy — what still starves, and under what conditions — at `candidatePoolSize` and in `docs/user/recall.md`. (2026-07-11)
+- [x] M4: Full suite green (`cabal test all`, exit 0; kioku-test 115 tests). (2026-07-11)
+- [x] M4: Update this plan's Outcomes and the MasterPlan's Progress/Registry/Outcomes. (2026-07-11)
 
 
 ## Surprises & Discoveries
@@ -132,6 +137,48 @@ implementation. Provide concise evidence.
   `selectVectorCandidatesStmt`'s projection, update `explainVectorStmt`'s copy in
   `kioku-core/test/Kioku/RecallHarness.hs` in the same commit or the harness will silently start
   measuring a different query. `planAgreesWithQuery` is the guard, and it is asserted.
+
+- (**Implementation, M2, 2026-07-11. The most important measurement in this initiative, and it
+  overturned the bake-off's own first-round winner.**) **`hnsw.iterative_scan` is
+  non-deterministic, and a single sample of it is worthless.**
+
+  Round 1 of the bake-off ran each candidate once and produced an apparent winner:
+  `relaxed_order + max_scan_tuples=200000 + scan_mem_multiplier=4` returned 50 rows with
+  recall@10 = 1.0 on both starving cells. It cleared every bar. It was, on that evidence, the fix.
+
+  Round 2 re-ran the same settings with the variables isolated and produced *contradictory*
+  results: `relaxed + mst=200k` returned 50 rows while `relaxed + mst=200k + mem4` returned **0**,
+  and `strict + mst=1M + mem8` returned 0 while `strict + mst=200k + mem4` returned 50. More scan
+  budget producing *fewer* rows is not a parameter effect — it is noise. The cause: every bake-off
+  cell builds a fresh database, so it builds a **fresh HNSW graph**, and HNSW construction is
+  randomized. Whether the iterative scan reaches the in-scope rows within its budget depends on
+  the graph it happens to get.
+
+  Round 3 measured it properly — same settings, five freshly built graphs, at 20000 in-scope ×
+  20000 decoys:
+
+  ```text
+  candidate                     run1  run2  run3  run4  run5     rows returned (of 50)
+  ---------------------------   ----  ----  ----  ----  ----     ---------------------
+  baseline                         0     0     0     0     0     always starves
+  relaxed + mst=200k + mem4        0    50     0     0    50     2 of 5   <-- COIN FLIP
+  strict  + mst=200k + mem4        0    50    50    50    50     4 of 5   <-- still fails
+  exact path (pre-filtered)       50    50    50    50    50     5 of 5   <-- deterministic
+  ```
+
+  So `iterative_scan` is not a fix; it is a lottery whose odds improve with budget. It fails bar
+  (a) outright at 20000 rows and fails bar (c) — "the query plan is stable and understood" —
+  catastrophically: a remedy that returns the right answer 40% of the time would pass any single
+  test run and starve in production at random.
+
+  **This is the fifth time in two initiatives that a confident claim about an unrun system was
+  falsified by running it — and this time the confident claim was made by the bake-off itself.**
+  Round 1 was a real measurement, on the real corpus, through the real statement, and it was still
+  wrong, because n=1 against a randomized data structure is not a measurement. The lesson is not
+  "measure" — this plan already said that. It is that **a measurement of a nondeterministic system
+  needs a sample size, and nobody had asked whether the system was deterministic.** EP-5's single
+  `relaxed_order` probe and this plan's own round 1 made exactly the same error, four months and
+  one initiative apart.
 
 - (Pre-implementation research, 2026-07-11. **Superseded in part — see the EP-2 handover above.**)
   **The single most important input to this plan is that
@@ -265,17 +312,167 @@ Record every decision made while working on the plan.
   of this bug from a two-plan investigation into a glance at a dashboard.
   Date: 2026-07-11
 
+- Decision 5 (**the M2 choice, resolving Decision 1**): Ship **`hnsw.ef_search` set to the candidate
+  pool size, plus an exact pre-filtered pass that runs whenever the approximate pass returns fewer
+  rows than the pool.** Reject `hnsw.iterative_scan` in every mode and at every budget.
+  Rationale: measured, five runs per cell on five freshly built HNSW indexes (see Outcomes for the
+  full table and Surprises for why the sample size is not optional). The shipped remedy returns
+  recall@10 = 1.00 on both starving corpora, 5 times out of 5, and leaves the healthy corpora
+  strictly better than before (the pool fills, 40 → 50) at indistinguishable latency (0.127–0.158ms
+  vs 0.138–0.161ms). It clears bars (a) through (e); notably (e) is free, because it needs no
+  minimum pgvector version.
+  `iterative_scan` was the obvious answer, it is pgvector's own remedy for precisely this problem,
+  and **round 1 of this bake-off named it the winner on a single passing run.** Five runs showed it
+  is a lottery at 20000 rows: 2 of 5 for `relaxed_order`, 4 of 5 for `strict_order`. HNSW graph
+  construction is randomized. It fails bar (a) at scale and fails bar (c) — "stable and understood"
+  — as completely as a remedy can, because it would pass any test you gave it and starve at random
+  in production.
+  Bar (c) deserves a specific note, because the shipped remedy satisfies it in an unusual way. It
+  does not force the planner onto a particular path. It makes **both paths correct**: the ANN path
+  fills its pool when it can, and when it cannot, the exact path — which cannot starve, because it
+  filters before it ranks — supplies the answer. The planner's choice therefore no longer determines
+  correctness at all, which is a stronger property than "the planner reliably chooses well" and is
+  exactly what the previous initiative's `ef_search` result showed we could not have.
+  Date: 2026-07-11
+
+- Decision 6: The exact pass is fenced with `OFFSET 0`, not with a `MATERIALIZED` CTE.
+  Rationale: Both stop the planner from pulling the subquery up and reaching the HNSW index with the
+  outer `ORDER BY`, which is the point. But `MATERIALIZED` forces every in-scope row's
+  1536-dimension embedding into memory — about 6KB per row, so roughly 120MB for a 20000-row scope —
+  while the fence streams and the top-N sort holds only 50 rows. The `OFFSET 0` is load-bearing and
+  is commented as such in the source, because it looks exactly like the kind of thing a future
+  reader tidies away.
+  Date: 2026-07-11
+
+- Decision 7: Decision 4's observability ships as a return value (`VectorChannelOutcome`,
+  `vectorChannelStarved`, and `selectVectorCandidatesDiagnosed`), not as an emitted metric or log
+  line.
+  Rationale: `Kioku.Recall`'s effect row is `(Store :> es)`. The tracer and the metrics handle live
+  on `Kioku.App.AppEnv`, which recall does not take and which threading through would be a real API
+  change to a module three hosts depend on — disproportionate to the goal. The additive return value
+  gives a host everything it needs to emit its own metric, is testable (both new cases assert on it),
+  and costs nothing. The limit is stated plainly in `docs/user/recall.md`: kioku does not emit a
+  metric itself, and a host that wants one must call the diagnosed variant. If that proves too
+  passive in practice, wiring it to the tracer is a small follow-up with a clear owner.
+  Date: 2026-07-11
+
 
 ## Outcomes & Retrospective
 
 Summarize outcomes, gaps, and lessons learned at major milestones or at completion.
 Compare the result against the original purpose.
 
-(To be filled during and after implementation. **M2 must record the full bake-off table here,
-including the candidates that lost and why** — a negative result on a plausible remedy is exactly
-the kind of finding that stops the next person from re-trying it, and EP-5's single untabulated
-`relaxed_order` failure is why this plan had to treat `iterative_scan` as an open question rather
-than a closed one.)
+### M1 — which regime are we in?
+
+**The ANN regime.** Above roughly 2000 embedded rows the planner routinely chooses the HNSW path,
+and the HNSW path starves whenever out-of-scope rows sit nearer the query than in-scope ones. The
+exact plan — the one EP-5 saw return 50 perfect rows — protects only small corpora (200 rows, where
+it is chosen in every cell) and one accidental cell (2000 in-scope × 10× decoys, where the larger
+table happens to make the exact plan look cheaper). At 20000 in-scope rows the planner takes HNSW
+at every decoy ratio and starves at every non-zero one.
+
+So the family of remedy that matters is "make the ANN path survive a filter", not "keep the planner
+off it" — with the important caveat that the second family is still a valid *fallback*, and the
+bake-off measured it.
+
+The measured boundary and the full grid are in EP-2's Outcomes
+(docs/plans/18-build-a-recall-quality-harness-that-reproduces-filtered-ann-starvation.md); they are
+not repeated here. What matters for this plan is the one-sentence answer above and the fact that the
+planner's choice is *not* a reliable protection: it is a cost-model accident that flips with corpus
+size, and it flips towards starvation as the corpus grows.
+
+### M2 — the bake-off
+
+Every candidate was measured through EP-2's harness, against the same seeded corpora, with a
+ground truth known by construction. `k = 10`; the candidate pool is 50, so "50 rows" is a full
+pool. **Every figure below is the median of five runs on five freshly built HNSW indexes**, for the
+reason given in Surprises — a single run of anything touching HNSW is not a measurement.
+
+```text
+candidate                       starving          starving        healthy         healthy      plan      portability
+                                2000+2000         20000+20000     2000+0          200+200
+                                rows / r@10       rows / r@10     rows / r@10     rows / r@10
+-----------------------------   --------------    -----------     -----------     -----------  -------   -----------
+(baseline, today)               0 / 0.00          0 / 0.00        40 / 1.00       50 / 1.00    HNSW      --
+iterative_scan=strict_order     50 / 1.00         1 / 0.10        50 / 1.00       50 / 1.00    HNSW      pgvector>=0.8
+iterative_scan=relaxed_order    50 / 1.00         1 / 0.10        50 / 1.00       50 / 1.00    HNSW      pgvector>=0.8
+strict + max_scan_tuples 200k   50 / 1.00         FLAKY (4 of 5)  50 / 1.00       50 / 1.00    HNSW      pgvector>=0.8
+relaxed + max_scan_tuples 200k  50 / 1.00         FLAKY (2 of 5)  50 / 1.00       50 / 1.00    HNSW      pgvector>=0.8
+ef_search = 200                 50 / 1.00 (luck)  0 / 0.00        50 / 1.00       50 / 1.00    UNSTABLE  none
+ef_search = 50 (= pool size)    0 / 0.00          0 / 0.00        50 / 1.00       50 / 1.00    HNSW      none
+status in the index predicate   0 / 0.00          0 / 0.00        40 / 1.00       50 / 1.00    HNSW      none
+exact pre-filtered pass         50 / 1.00         50 / 1.00       50 / 1.00       50 / 1.00    exact     none
+per-namespace partial HNSW      40 / 1.00         40 / 1.00       40 / 1.00       50 / 1.00    HNSW      unshippable
+SHIPPED (ef_search=50 + exact
+  fallback when pool short)     50 / 1.00 (5/5)   50 / 1.00 (5/5) 50 / 1.00 (5/5) 50 / 1.00    both      none
+```
+
+Latency, measured on the same corpora: the approximate pass is 0.13–0.16ms and is what runs on a
+healthy recall. The exact pass costs ~7ms at 2000 in-scope rows and ~73ms at 20000, growing
+linearly, and runs only when the approximate pass came back short. The shipped path's healthy-corpus
+latency (0.127–0.158ms) is indistinguishable from the baseline's (0.138–0.161ms), so bar (d) holds.
+
+**The winner: set `hnsw.ef_search` to the candidate pool size, and run an exact pre-filtered pass
+whenever the approximate pass returns fewer rows than the pool.** It clears every bar in Decision 2:
+recall@10 = 1.00 on both starving corpora, five runs out of five (a); no regression on the healthy
+corpora, and in fact an improvement — the pool now fills, 40 → 50 (b); the mechanism forces the
+outcome rather than hoping for a planner choice, and the *plan* no longer determines correctness
+because both paths now return the right answer (c); healthy-corpus latency is unchanged (d); no
+pgvector version floor, so there is no portability cost to pay (e).
+
+**Why each loser lost.**
+
+- **`hnsw.iterative_scan`, in every mode and at every budget — rejected on evidence, and this is the
+  finding worth carrying forward.** It is pgvector's own remedy for exactly this problem, and at
+  2000 rows it works perfectly. At 20000 rows it is a *lottery*: `relaxed_order` with a generous
+  budget returned the right answer 2 times in 5, `strict_order` 4 times in 5, on five freshly built
+  indexes. HNSW graph construction is randomized, so whether the iterative scan reaches the in-scope
+  rows within its budget depends on the graph it happened to get. Round 1 of this bake-off ran it
+  once, saw 50 rows and recall 1.00, and named it the winner. It was wrong. Fails bar (a) at scale
+  and fails bar (c) catastrophically — a remedy that works 40% of the time passes every single test
+  run you will ever give it.
+- **`ef_search = 200`** — the remedy the previous initiative prescribed. It "works" at 2000+2000, but
+  only because it flips the planner onto the *exact* plan, which is a coincidence, not a mechanism:
+  at 20000+20000 the planner stays on HNSW and it returns zero. It also imposes a 60× latency
+  penalty on the *healthy* 2000+0 corpus (7.7ms vs 0.13ms) by forcing the exact plan there too.
+  Fails (a), (b), (c), and (d). The original warning against it was right, and understated.
+- **`status = 'active'` in the index predicate** — no effect whatsoever on starvation (0 rows on
+  both starving corpora). Correctly predicted, and worth having measured: it proves essentially all
+  of the discard is the *scope* filter, not the status filter, which is what rules out the whole
+  family of "fold the fixed predicates into the index" remedies. Fails (a).
+- **`ef_search = 50` alone** — fixes the pool under-fill (40 → 50) at no cost, and does nothing at
+  all for starvation. Kept, as half of the shipped fix; rejected as a fix on its own.
+- **Per-namespace partial HNSW index** — the ceiling, measured to establish what "fixed" looks like.
+  Genuinely pre-filtered, so it cannot starve, and it is the fastest option (0.12ms). Unshippable:
+  namespaces are host-supplied data, not schema, so this would mean creating indexes at runtime.
+  Note it *still* returns only 40 rows, not 50, because the `ef_search` under-fill is orthogonal to
+  starvation — which is how that second bug was found.
+
+### M3 / M4 — what shipped
+
+`selectVectorCandidatesDiagnosed` in `kioku-core/src/Kioku/Recall.hs` runs the two passes and
+returns a `VectorChannelOutcome` (`annRows`, `exactFallbackFired`, `rowsReturned`) alongside the
+rows; `selectVectorCandidates` keeps its old shape and signature, so no host sees an API change.
+`selectVectorCandidatesExactStmt` is the exact pass: the same predicates, but fenced with `OFFSET 0`
+so the planner cannot pull the subquery up and reach the HNSW index with the outer `ORDER BY`. A
+`MATERIALIZED` CTE would also have fenced it and was rejected — materialising forces every in-scope
+row's 1536-dimension embedding into memory (~6KB each, so ~120MB for a 20000-row scope), whereas the
+fence streams and the top-N sort holds only 50 rows.
+
+No migration was needed: the fix is a query change and a `SET LOCAL`, not an index change. Decision
+3's rules about never editing the existing index migrations therefore never came into play.
+
+Two cases in `kioku-core/test/Kioku/RecallSqlSpec.hs` guard it, and EP-2's `expectFail` marker is
+gone. "The vector channel does not starve on a selective scope" asserts the outcome *and the
+mechanism* — that the approximate pass really did starve and the fallback really did fire — so that
+if a future change makes the ANN pass succeed on this corpus, the case fails and tells you it has
+stopped testing what it was built to test, rather than passing vacuously. "A healthy scope never
+pays for the exact fallback" is bar (b) as a test: it fails if the fallback fires on a corpus with
+nothing to filter out, which is what would happen if anyone reverted the `ef_search` setting.
+
+The honest limits are in `docs/user/recall.md` under "The vector channel's two passes" and at
+`candidatePoolSize`, whose old comment — which asserted two things that turned out to be false — has
+been rewritten rather than left to rot two lines from the fix.
 
 
 ## Context and Orientation
