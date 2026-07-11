@@ -6,13 +6,10 @@ module Kioku.Distill.Timer.Worker
     fireKiokuTimer,
     fireL1Timer,
     kiokuTimerWorkerOptions,
-    runKiokuTimerWorkerLoop,
     runKiokuTimerWorkerOnce,
   )
 where
 
-import Control.Concurrent (threadDelay)
-import Control.Monad (forever)
 import Data.Text qualified as Text
 import Data.Time (NominalDiffTime, addUTCTime)
 import Effectful (Eff, IOE, (:>))
@@ -170,21 +167,6 @@ runKiokuTimerWorkerOnce ::
 runKiokuTimerWorkerOnce metrics rt finder now =
   runTimerWorkerWith metrics kiokuTimerWorkerOptions now \row ->
     fireKiokuTimer rt finder row >>= applyFireOutcome row
-
--- | The old poll loop, kept only so the CLI keeps compiling until it takes over
--- loop supervision itself; 'drainKiokuTimers' is what replaces it.
-runKiokuTimerWorkerLoop ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
-  Maybe KeiroMetrics ->
-  DistillRuntime ->
-  FindMergeCandidates es ->
-  Int ->
-  Eff es ()
-runKiokuTimerWorkerLoop metrics rt finder pollMicros =
-  forever do
-    now <- liftIO getCurrentTime
-    void (runKiokuTimerWorkerOnce metrics rt finder now)
-    liftIO (threadDelay (max 100000 pollMicros))
 
 -- | Claim and fire due timers until none remain, returning how many were
 -- processed.

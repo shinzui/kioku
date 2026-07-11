@@ -5,14 +5,16 @@ module Kioku.Cli.Commands.Worker
   )
 where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (race)
+import Control.Exception (SomeException, displayException, try)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Effectful (IOE, (:>))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Distill.L1 (FindMergeCandidates, recallCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
-import Kioku.Distill.Timer.Worker (runKiokuTimerWorkerLoop, runKiokuTimerWorkerOnce)
+import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Memory.Embedding.Worker (backfillMissingEmbeddings, runEmbeddingWorkerHost)
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
@@ -20,6 +22,8 @@ import Kiroku.Store.Connection (KirokuStore, defaultConnectionSettings, withStor
 import Kiroku.Store.Effect (Store)
 import Options.Applicative
 import System.Environment (lookupEnv)
+import System.Exit (ExitCode (..), exitWith)
+import System.IO (hPutStrLn, stderr)
 
 data WorkerOptions = WorkerOptions
   { backfill :: !Bool,
@@ -81,22 +85,68 @@ runBackfill env capability config = do
     Left storeErr -> ioError (userError ("kioku worker backfill store error: " <> show storeErr))
     Right count -> putStrLn ("Backfilled " <> show count <> " memory embeddings.")
 
+-- | Run both pipelines under supervision.
+--
+-- The timer loop used to run on a bare 'forkIO', which produced two silent
+-- deaths. A store error aborted the loop's single error scope and killed only
+-- the forked thread, leaving a process that looked alive while all distillation
+-- had stopped. In the other direction, an embedding halt made shibuya exit its
+-- processor gracefully, 'waitApp' return, and the whole process exit 0 — taking
+-- the timer loop with it.
+--
+-- 'race' makes both directions loud: whichever pipeline stops first ends the
+-- race, and the process exits non-zero with a reason so a supervisor restarts
+-- it. Neither side is expected to return at all.
 runContinuousWorker :: AppEnv -> KirokuStore -> VectorCapability -> EmbeddingConfig -> IO ()
 runContinuousWorker env store capability config = do
   let model = toEmbeddingModel config
   case capability of
     VectorAvailable -> do
-      _ <- forkIO (runTimerLoop env capability config)
-      result <- runAppIO env (runEmbeddingWorkerHost store capability model config.dimensions)
-      case result of
-        Left storeErr -> ioError (userError ("kioku worker store error: " <> show storeErr))
-        Right () -> pure ()
+      startupBackfill env capability config
+      outcome <-
+        try @SomeException $
+          race
+            (runTimerLoop env capability config)
+            (runAppIO env (runEmbeddingWorkerHost store capability model config.dimensions))
+      case outcome of
+        -- A halted processor can tear its own machinery down hard enough to
+        -- surface as an exception rather than a clean return (shibuya's halt path
+        -- can leave a thread blocked in STM). Either way the pipeline is gone;
+        -- what matters is that the operator gets a reason and a non-zero exit
+        -- instead of a process that looks alive.
+        Left err ->
+          dieWorker ("worker pipeline crashed: " <> displayException err)
+        Right (Left ()) ->
+          dieWorker "timer loop stopped unexpectedly"
+        Right (Right (Left storeErr)) ->
+          dieWorker ("embedding worker stopped with store error: " <> show storeErr)
+        Right (Right (Right ())) ->
+          -- The handler already printed the halt reason at decision time.
+          dieWorker "embedding worker stopped (processor halted or subscription ended)"
     VectorExtensionUnavailable -> do
       putStrLn "pgvector is not available; recall will run FTS-only; running kioku timer worker only."
       runTimerLoop env capability config
     VectorColumnsUnavailable missing -> do
       putStrLn ("pgvector columns are missing (" <> Text.unpack (Text.intercalate ", " missing) <> "); running kioku timer worker only.")
       runTimerLoop env capability config
+
+-- | Recover embeddings lost to an outage that outlasted the retry window.
+-- Idempotent, so it is safe on every start. A failure here is only a warning:
+-- if the database is down, the loops' own retry and exit behavior is the honest
+-- place for that to surface, not a special case at startup.
+startupBackfill :: AppEnv -> VectorCapability -> EmbeddingConfig -> IO ()
+startupBackfill env capability config = do
+  result <- runAppIO env (backfillMissingEmbeddings capability (toEmbeddingModel config) config.dimensions)
+  case result of
+    Left storeErr ->
+      hPutStrLn stderr ("kioku worker: startup backfill failed: " <> show storeErr)
+    Right count ->
+      putStrLn ("Startup backfill: embedded " <> show count <> " missing memory embeddings.")
+
+dieWorker :: String -> IO ()
+dieWorker msg = do
+  hPutStrLn stderr ("kioku worker: " <> msg <> "; exiting")
+  exitWith (ExitFailure 1)
 
 runTimerOnce :: AppEnv -> EmbeddingConfig -> IO ()
 runTimerOnce env config = do
@@ -110,18 +160,41 @@ runTimerOnce env config = do
     Right Nothing -> putStrLn "No due kioku distillation timers."
     Right (Just _) -> putStrLn "Processed one due kioku distillation timer."
 
+-- | Drain due timers, sleep, repeat — forever.
+--
+-- Each pass gets its own 'runAppIO', and therefore its own store-error scope.
+-- That is the whole point: the old loop lived inside a single 'runAppIO', so the
+-- first transient store error aborted the @forever@ and killed the loop. Here a
+-- store error is logged and retried with capped exponential backoff (5s doubling
+-- to 60s, reset on success), because a database outage should not require an
+-- operator to restart anything — and restarting would not have helped.
+--
+-- This never returns normally, so 'race' seeing it finish genuinely means
+-- something impossible happened. Non-store exceptions propagate to 'race', which
+-- is equally loud.
 runTimerLoop :: AppEnv -> VectorCapability -> EmbeddingConfig -> IO ()
 runTimerLoop env capability config = do
   rt <- newDistillRuntime
   putStrLn "kioku timer worker started."
-  result <-
-    runAppIO
-      env
-      (runKiokuTimerWorkerLoop Nothing rt (mergeCandidateFinder config capability) defaultTimerPollMicros)
-  case result of
-    Left storeErr -> ioError (userError ("kioku timer worker store error: " <> show storeErr))
-    Right () -> pure ()
+  let go failures = do
+        result <- runAppIO env (drainKiokuTimers Nothing rt (mergeCandidateFinder config capability))
+        case result of
+          Left storeErr -> do
+            hPutStrLn stderr ("kioku timer worker: store error (will retry): " <> show storeErr)
+            threadDelay (storeErrorBackoffMicros failures)
+            go (failures + 1)
+          Right _processed -> do
+            threadDelay defaultTimerPollMicros
+            go 0
+  go 0
 
+-- | 5s doubling per consecutive failure, capped at 60s.
+storeErrorBackoffMicros :: Int -> Int
+storeErrorBackoffMicros failures =
+  min (60 * 1000 * 1000) (5 * 1000 * 1000 * (2 ^ min 8 (max 0 failures)))
+
+-- | With draining, the poll interval no longer caps throughput: a burst of due
+-- timers is processed in one pass rather than one per interval.
 defaultTimerPollMicros :: Int
 defaultTimerPollMicros = 5 * 1000 * 1000
 

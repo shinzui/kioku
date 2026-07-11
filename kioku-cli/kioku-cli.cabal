@@ -46,6 +46,7 @@ library
     Kioku.Cli.Scope
 
   build-depends:
+    , async                 >=2.2
     , base                  >=4.21 && <5
     , containers            >=0.6
     , effectful             >=2.5

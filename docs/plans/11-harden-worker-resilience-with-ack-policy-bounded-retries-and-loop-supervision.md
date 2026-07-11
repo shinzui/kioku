@@ -51,9 +51,9 @@ backfill pass, the drain behavior, and the loud non-zero exit when a pipeline di
 - [x] M2: convert `fireL1Timer` (Timer/Worker.hs), `fireL2SceneTimer` (L2.hs), `fireL3PersonaTimer` (L3.hs) to return `FireOutcome`. — 2026-07-11
 - [x] M2: add `applyFireOutcome`, switch to keiro `runTimerWorkerWith` with `maxAttempts = Just 8`, handle unknown process-manager timers, delete unused `runL1TimerWorkerLoop`/`runL1TimerWorkerOnce`. — 2026-07-11
 - [x] M2: new test module `kioku-core/test/Kioku/TimerWorkerSpec.hs` (outcome mapping, unknown-PM requeue, attempt-ceiling dead-letter, drain); register in cabal and `test/Main.hs`. — 2026-07-11 (6 cases green)
-- [ ] M3: add `drainKiokuTimers` to Timer/Worker.hs; drain-before-sleep test.
-- [ ] M3: restructure `kioku-cli/src/Kioku/Cli/Commands/Worker.hs` — per-iteration `runAppIO` with capped-backoff retry on store errors, `Control.Concurrent.Async.race` supervision, startup backfill pass, non-zero exit on pipeline death; add `async` to `kioku-cli.cabal`.
-- [ ] Final: full build + test sweep, manual CLI verification, update all living sections, write Outcomes & Retrospective.
+- [x] M3: add `drainKiokuTimers` to Timer/Worker.hs; drain-before-sleep test. — 2026-07-11
+- [x] M3: restructure `kioku-cli/src/Kioku/Cli/Commands/Worker.hs` — per-iteration `runAppIO` with capped-backoff retry on store errors, `Control.Concurrent.Async.race` supervision, startup backfill pass, non-zero exit on pipeline death; add `async` to `kioku-cli.cabal`. — 2026-07-11
+- [x] Final: full build + test sweep (43 tests green), manual CLI verification against a real database, living sections updated. — 2026-07-11
 
 
 ## Surprises & Discoveries
@@ -130,6 +130,56 @@ Found during implementation (2026-07-11):
   pgvector build: that one case fails (`expected: VectorExtensionUnavailable, but got:
   VectorAvailable`) while every other case, including all seven new ones, passes.
 
+
+Found while verifying M3 against a real database (2026-07-11):
+
+- **A halted embedding processor does not return gracefully; it crashes.** The plan's
+  research (above) predicted that `AckHalt` makes shibuya exit the processor cleanly, so
+  `waitApp` returns and `runEmbeddingWorkerHost` yields `Right ()`. What actually happens at
+  this pin is that the halt tears its own machinery down and the `race` rethrows
+  `ExceptionInLinkedThread ... thread blocked indefinitely in an STM transaction`. The
+  supervision contract still holds — the process dies loudly and non-zero — but the clean
+  `dieWorker "embedding worker stopped ..."` branch is not the one that fires. M3 therefore
+  wraps the `race` in `try @SomeException` and routes the crash through `dieWorker` too, so
+  the operator always gets a reason and exit 1 rather than an uncaught-exception dump. The
+  `Right (Right ())` branch is retained for the case shibuya intends.
+- **The embedding-columns migration fails hard when pgvector is already installed in
+  `public`.** `2026-06-24-01-00-00-kioku-memory-embeddings.sql` runs `CREATE EXTENSION IF
+  NOT EXISTS vector` and then `ALTER TABLE kioku_memories ADD COLUMN embedding vector(1536)`
+  with an unqualified type name, but migrations run with `search_path` set to `kiroku`. If
+  the extension already exists in `public` (the default, and the most common way an operator
+  installs it), the `CREATE EXTENSION` is a no-op, the availability check passes, and the
+  `ALTER TABLE` then dies with `42704: type "vector" does not exist` — the whole migration
+  aborts instead of degrading. Reproduced while building the pgvector database for this
+  plan's verification. This belongs to
+  docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md's
+  M2 (self-healing embedding-schema migration), which should either schema-qualify the type
+  or create the extension into the target schema.
+
+Manual verification evidence (2026-07-11), against a pgvector database built out-of-tree
+and the repository's own dev database:
+
+```text
+$ kioku worker                      # VectorAvailable path
+Startup backfill: embedded 0 missing memory embeddings.
+kioku timer worker started.
+kioku embedding worker started. Press Ctrl+C to stop.
+
+# database stopped underneath the running worker — the loop survives and retries
+kioku timer worker: store error (will retry): ConnectionLost "... Connection refused ..."
+kioku timer worker: store error (will retry): ConnectionLost "... Connection refused ..."
+
+# a permanent store error (worker run as a role denied SELECT on kioku_memories)
+kioku-memory-embedding: fatal store error, halting: UnexpectedServerError "42501" "permission denied for table kioku_memories"
+kioku worker: worker pipeline crashed: ExceptionInLinkedThread ...; exiting
+$ echo $?
+1
+
+# drain: seven due timers, one pass (old loop: one timer per five-second poll)
+6 x "attempt 1]: retrying in 30s"
+1 x "attempt 2]: retrying in 60s"
+due timers before: 7    due timers after: 0
+```
 
 ## Decision Log
 
