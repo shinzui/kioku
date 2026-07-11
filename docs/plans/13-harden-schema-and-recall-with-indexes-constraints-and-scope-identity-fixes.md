@@ -46,9 +46,9 @@ treat it as "rows with no entity scope".
 Use a checklist to summarize granular steps. Every stopping point must be documented here,
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 
-- [ ] M1: mint the schema-hardening migration (indexes, NULLS NOT DISTINCT uniques, scope CHECKs, redundant-index drop) and touch `Migrations.hs`
-- [ ] M1: add DB-level constraint and index tests (`kioku-core/test/Kioku/SchemaSpec.hs`)
-- [ ] M1: `cabal test all` green; `just migrate` applies cleanly on the dev DB
+- [x] M1: mint the schema-hardening migration (indexes, NULLS NOT DISTINCT uniques, scope CHECKs, redundant-index drop) and touch `Migrations.hs` — `2026-07-11-17-35-11-kioku-schema-hardening.sql`
+- [x] M1: add DB-level constraint and index tests (`kioku-core/test/Kioku/SchemaSpec.hs`) — 5 cases, all 5 fail without the migration and pass with it
+- [x] M1: `cabal test all` green (93 passed, up from 88); `just migrate` applies cleanly on the dev DB and is a no-op on the second run
 - [ ] M2: add pgvector to the dev shell Postgres in `nix/haskell.nix`
 - [ ] M2: mint the embedding-schema self-healing migration and touch `Migrations.hs`
 - [ ] M2: verify the dev DB heals (embedding columns and HNSW index appear after `just migrate`)
@@ -108,6 +108,55 @@ implementation. Provide concise evidence.
   `s.session_id = c.previous_session_id`, a primary-key lookup, so it is healthy. The
   seq-scan problem is specific to the *memory* supersession chain, whose recursive join has
   OR arms on the un-indexed `supersedes`/`superseded_by` columns.
+
+Discovered during M1 implementation (2026-07-11):
+
+- **The "Last touched" comment convention is load-bearing in a way its own wording hides,
+  and this milestone tripped over it.** GHC's recompilation check is *content*-based, not
+  mtime-based, so `touch`ing `Migrations.hs` — or `kioku-migrations.cabal`, which is what
+  `just migrate` does — does **not** force Template Haskell to re-read `sql-migrations/`.
+  Only an actual edit to the module's bytes does. Proving the M1 tests fail before the
+  migration and pass after it required editing the comment *twice* (once to embed the
+  directory without the new file, once to embed it with), and both intermediate `touch`
+  runs silently reused a stale embed and reported a false failure. Evidence: with the
+  migration file present on disk and `Migrations.hs` merely touched, `SchemaSpec` still
+  reported `kioku_memories_supersedes_idx is missing`. `Data.FileEmbed.embedDir` registers
+  the files it *found* as dependencies, so a newly added file is by construction not among
+  them — the exact staleness hole
+  docs/plans/14-align-read-model-reconciliation-with-keiro-schema-relocation-and-guard-embedded-migrations.md
+  M3 exists to close. That plan should not assume `touch` is a workaround; it is not one.
+
+- The constraint names the plan predicted from the DDL were exactly right
+  (`kioku_scenes_namespace_scope_kind_scope_ref_scene_key_key`,
+  `kioku_personas_namespace_scope_kind_scope_ref_key`), and both scene/persona upserts
+  target the primary keys (`ON CONFLICT (scene_id)` / `(persona_id)`, `L2.hs:487` /
+  `L3.hs:387`), so swapping the unique constraints disturbed neither.
+
+- `pg_indexes.indexname` has PostgreSQL type `name` (OID 19), not `text` (OID 25), so a
+  hasql `D.text` decoder on it fails with `UnexpectedColumnTypeStatementError 0 25 19`.
+  `SchemaSpec` casts with `indexname::text`. Any sibling plan writing catalog queries
+  through hasql needs the same cast.
+
+- **`SchemaSpec` reads the SQLSTATE through a raw hasql connection, not through the kiroku
+  `Store` effect, and it has to.** `Kiroku.Store.Error.mapTransactionUsageError` recognises
+  23505 only on the event tables (`events_pkey`, `stream_events_pkey`); a unique violation
+  on an *application* table falls through to `mapUsageError`, which reports it as
+  `WrongExpectedVersion "<transaction>" AnyVersion (StreamVersion 0)` — the SQLSTATE is
+  gone. A check violation (23514) does survive, as `UnexpectedServerError "23514" msg`.
+  Any sibling plan asserting on constraint violations should connect raw rather than assert
+  on `WrongExpectedVersion`.
+
+- The full suite hit one flaky failure under load —
+  `Failed to start ephemeral PostgreSQL: TimeoutError (ConnectionTimeout {durationSeconds = 60})`
+  in `TimerWorkerSpec` — and passed on rerun (93/93). M1 added five more database-backed
+  cases to a suite tasty runs concurrently with `-N`; the ephemeral-pg cluster count is now
+  high enough to occasionally lose a 60-second startup race. Not a regression, but the
+  remaining milestones add more DB tests and should expect it.
+
+- The `just new-migration` recipe's own usage string said `just new-migration name=<slug>`,
+  which `just` rejects (it parses `name=...` as the positional value and fails the
+  `[a-z0-9-]` check). The working form is `just new-migration <slug>`; the usage string is
+  corrected in this milestone's commit.
 
 
 ## Decision Log

@@ -110,6 +110,7 @@ test-suite kioku-test
     Kioku.IdempotencySpec
     Kioku.RecallSpec
     Kioku.ReiCompatSpec
+    Kioku.SchemaSpec
     Kioku.SessionInvariantsSpec
     Kioku.SessionLineageSpec
     Kioku.TimerWorkerSpec

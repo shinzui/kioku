@@ -25,7 +25,7 @@ new-migration name="":
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -z "{{name}}" ]; then
-      echo "usage: just new-migration name=<slug>   (slug: [a-z0-9-])" >&2
+      echo "usage: just new-migration <slug>   (slug: [a-z0-9-])" >&2
       exit 1
     fi
     if ! printf '%s' "{{name}}" | grep -Eq '^[a-z0-9][a-z0-9-]*$'; then

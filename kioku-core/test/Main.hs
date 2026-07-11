@@ -6,6 +6,7 @@ import Kioku.EmbeddingWorkerSpec qualified as EmbeddingWorkerSpec
 import Kioku.IdempotencySpec qualified as IdempotencySpec
 import Kioku.RecallSpec qualified as RecallSpec
 import Kioku.ReiCompatSpec qualified as ReiCompatSpec
+import Kioku.SchemaSpec qualified as SchemaSpec
 import Kioku.SessionInvariantsSpec qualified as SessionInvariantsSpec
 import Kioku.SessionLineageSpec qualified as SessionLineageSpec
 import Kioku.TimerWorkerSpec qualified as TimerWorkerSpec
@@ -20,6 +21,7 @@ main =
         ReiCompatSpec.tests,
         IdempotencySpec.tests,
         RecallSpec.tests,
+        SchemaSpec.tests,
         SessionInvariantsSpec.tests,
         SessionLineageSpec.tests,
         EmbeddingWorkerSpec.tests,
