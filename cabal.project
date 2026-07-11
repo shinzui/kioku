@@ -3,6 +3,7 @@ packages:
   kioku-core
   kioku-cli
   kioku-migrations
+  kioku-migrate
 
 with-compiler: ghc-9.12.4
 

@@ -11,19 +11,30 @@
 -- row. Every subsequent query then fails closed with
 -- 'Keiro.ReadModel.ReadModelStaleSchema'.
 --
--- 'kiokuReadModelSchemas' lets a migration runner reconcile those stale rows to
--- the current identity. Because Kioku guarantees its read-model migrations leave
--- the table data correct for the current version, advancing the registry guard
--- is safe here without a rebuild. A consumer that introduces a /non-additive/
--- reshape must instead rewrite the projected data in its migration before
--- reconciling.
+-- 'reconcileReadModelRegistry' repairs those rows to the identity the compiled
+-- code expects, deriving every name, version, and shape hash from
+-- 'kiokuReadModelSchemas' — the same 'ReadModel' values the queries use, so the
+-- registry can never disagree with the code. The @kioku-migrate@ executable runs
+-- it immediately after applying migrations, which is why a read-model version
+-- bump needs no hand-written registry SQL. A host that applies migrations as a
+-- library (via @Kioku.Migrations.runKiokuMigrations@) must call it itself; see
+-- @docs\/user\/library-api.md@.
+--
+-- Because Kioku guarantees its read-model migrations leave the table data correct
+-- for the current version, advancing the registry guard is safe here without a
+-- rebuild. A consumer that introduces a /non-additive/ reshape must instead
+-- rewrite the projected data in its migration before reconciling.
 module Kioku.ReadModel
   ( ReadModelSchema (..),
     kiokuReadModelSchemas,
+    ReconcileOutcome (..),
+    reconcileReadModelRegistry,
   )
 where
 
+import Effectful (Eff, (:>))
 import Keiro.ReadModel (ReadModel (..))
+import Keiro.ReadModel.Schema qualified as Schema
 import Kioku.Memory.ReadModel
   ( memoriesByNamespaceReadModel,
     memoriesByNamespaceRowsReadModel,
@@ -48,6 +59,7 @@ import Kioku.Session.ReadModel
     sessionsByStartedRangeReadModel,
     turnsBySessionReadModel,
   )
+import Kiroku.Store.Effect (Store)
 
 -- | The registry identity of a read model: its logical name plus the schema
 -- 'version' and 'shapeHash' the current code expects.
@@ -85,3 +97,45 @@ kiokuReadModelSchemas =
     schemaOf memoriesByTypeRowsReadModel,
     schemaOf memorySupersessionChainReadModel
   ]
+
+-- | What reconciliation did to one read model's registry row.
+data ReconcileOutcome
+  = -- | No row existed; one was inserted at the current identity.
+    Registered
+  | -- | The row disagreed with the code and was bumped to the current identity.
+    Reconciled
+  | -- | The row already matched the code. Left untouched, status and all.
+    AlreadyCurrent
+  deriving stock (Eq, Show)
+
+-- | Bring every row of keiro's @keiro_read_models@ registry up to the schema
+-- identity the compiled code expects, and report what changed.
+--
+-- Idempotent: a second run reports 'AlreadyCurrent' for every model and writes
+-- nothing. It is built on keiro's own registry statements, which are compiled
+-- into whichever keiro version Kioku links against — so it finds the registry
+-- table wherever that version puts it, and survives keiro's schema relocation
+-- without change.
+reconcileReadModelRegistry ::
+  (Store :> es) => Eff es [(ReadModelSchema, ReconcileOutcome)]
+reconcileReadModelRegistry =
+  forM kiokuReadModelSchemas \schema -> do
+    existing <- Schema.lookupReadModel schema.readModelName
+    outcome <- case existing of
+      Nothing ->
+        Registered
+          <$ Schema.registerReadModel
+            schema.readModelName
+            schema.readModelVersion
+            schema.readModelShapeHash
+      Just metadata
+        | metadata.version == schema.readModelVersion
+            && metadata.shapeHash == schema.readModelShapeHash ->
+            pure AlreadyCurrent
+        | otherwise ->
+            Reconciled
+              <$ Schema.markLive
+                schema.readModelName
+                schema.readModelVersion
+                schema.readModelShapeHash
+    pure (schema, outcome)

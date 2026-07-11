@@ -38,17 +38,6 @@ library
     , kiroku-store-migrations
     , time                     >=1.12   && <1.15
 
-executable kioku-migrate
-  import:         shared
-  main-is:        Main.hs
-  hs-source-dirs: app
-  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
-  build-depends:
-    , base
-    , codd
-    , kioku-migrations
-    , time              >=1.12 && <1.15
-
 library test-support
   import:          shared
   visibility:      public

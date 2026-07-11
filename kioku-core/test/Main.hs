@@ -4,6 +4,7 @@ import Kioku.AwaitingSpec qualified as AwaitingSpec
 import Kioku.DistillSpec qualified as DistillSpec
 import Kioku.EmbeddingWorkerSpec qualified as EmbeddingWorkerSpec
 import Kioku.IdempotencySpec qualified as IdempotencySpec
+import Kioku.ReadModelReconcileSpec qualified as ReadModelReconcileSpec
 import Kioku.RecallSpec qualified as RecallSpec
 import Kioku.RecallSqlSpec qualified as RecallSqlSpec
 import Kioku.ReiCompatSpec qualified as ReiCompatSpec
@@ -22,6 +23,7 @@ main =
       [ AwaitingSpec.tests,
         ReiCompatSpec.tests,
         IdempotencySpec.tests,
+        ReadModelReconcileSpec.tests,
         RecallSpec.tests,
         RecallSqlSpec.tests,
         SchemaSpec.tests,

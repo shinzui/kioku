@@ -1,0 +1,42 @@
+cabal-version: 3.0
+name:          kioku-migrate
+version:       0.1.0.0
+synopsis:      The kioku schema migration entry point
+description:
+  Applies kioku's migration chain and then reconciles keiro's read-model
+  registry to the identity the compiled read models declare.
+  .
+  This lives in its own package rather than as an executable of
+  kioku-migrations because it depends on kioku-core (for the read-model
+  schemas), and kioku-core's test suite depends on
+  kioku-migrations:test-support. Cabal's solver detects dependency cycles at
+  package granularity, so an executable stanza inside kioku-migrations would
+  close that cycle and make the whole project unsolvable -- even though the
+  component graph itself is acyclic.
+
+license:       BSD-3-Clause
+author:        Nadeem Bitar
+maintainer:    nadeem@gmail.com
+copyright:     2026 Nadeem Bitar
+category:      Database
+build-type:    Simple
+
+executable kioku-migrate
+  main-is:            Main.hs
+  hs-source-dirs:     app
+  default-language:   GHC2024
+  default-extensions:
+    BlockArguments
+    DuplicateRecordFields
+    OverloadedRecordDot
+    OverloadedStrings
+
+  ghc-options:        -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , base
+    , codd
+    , kioku-core
+    , kioku-migrations
+    , kiroku-store
+    , text              >=2.0  && <2.2
+    , time              >=1.12 && <1.15
