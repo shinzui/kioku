@@ -67,11 +67,12 @@ Start here, in order:
 # 1. Point kioku at a Postgres database with the kiroku schema migrated.
 export PG_CONNECTION_STRING='host=localhost dbname=kioku user=me'
 
-# 2. Write a memory and read it back.
-kioku demo
+# 2. Write a memory and read it back. The events are permanent (kioku has no
+#    delete), so the demo requires an explicit opt-in.
+kioku demo --yes-write-events
 
 # 3. Recall memories relevant to a query within a scope.
-kioku recall "how does the user like answers" --scope rei:intention:intention_demo
+kioku recall "how does the user like answers" --scope kioku_demo:demo:demo
 ```
 
 See **[Getting Started](getting-started.md)** for the full setup.

@@ -7,8 +7,11 @@ module Kioku.Cli.ParserSpec (tests) where
 import Data.List (isInfixOf)
 import Data.Text qualified as Text
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
+import Kioku.Cli.Commands.Demo (DemoOptions (..), demoOptionsParser, demoScope)
+import Kioku.Cli.Commands.DemoSession (DemoSessionOptions (..), demoSessionOptionsParser)
 import Kioku.Cli.Commands.Distill (DistillOptions (..), distillOptionsParser)
 import Kioku.Cli.Commands.Recall (RecallOptions (..), recallOptionsParser)
+import Kioku.Cli.Options (redactConnectionString)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Id (genMemoryId, genSessionId, idText)
 import Options.Applicative
@@ -21,7 +24,9 @@ tests =
     "Kioku.Cli parsers"
     [ sessionIdTests,
       scopeTests,
-      limitTests
+      limitTests,
+      demoGuardTests,
+      redactionTests
     ]
 
 -- | Run a parser against an argument list, rendering a failure the way the real CLI would.
@@ -132,3 +137,51 @@ limitTests =
     assertLimitError needle = \case
       Right _ -> assertBool ("expected a parse error mentioning " <> show needle) False
       Left err -> assertBool ("error should state the valid range: " <> err) (needle `isInfixOf` err)
+
+-- | The demo commands append permanent events (kioku has no delete) to whatever
+-- @PG_CONNECTION_STRING@ points at. Consent is a required flag, so a bare invocation dies in
+-- the parser — before the environment is read and before anything is written.
+demoGuardTests :: TestTree
+demoGuardTests =
+  testGroup
+    "demo commands require --yes-write-events"
+    [ testCase "bare `demo` does not parse" do
+        assertMissingFlag (parseWith demoOptionsParser []),
+      testCase "`demo --yes-write-events` parses" do
+        parseWith demoOptionsParser ["--yes-write-events"] @?= Right DemoOptions,
+      testCase "bare `demo-session` does not parse" do
+        assertMissingFlag (parseWith demoSessionOptionsParser []),
+      testCase "`demo-session --yes-write-events` parses" do
+        parseWith demoSessionOptionsParser ["--yes-write-events"] @?= Right DemoSessionOptions,
+      testCase "the demo writes into its own namespace, not rei" do
+        demoScope @?= ScopeEntity (Namespace "kioku_demo") (ScopeKind "demo") "demo"
+    ]
+  where
+    assertMissingFlag = \case
+      Right _ -> assertBool "expected the demo command to refuse without --yes-write-events" False
+      Left err ->
+        assertBool
+          ("failure should name the missing flag: " <> err)
+          ("Missing: --yes-write-events" `isInfixOf` err)
+
+-- | The preflight prints the target database. A password must not travel with it into a
+-- terminal or a CI log.
+redactionTests :: TestTree
+redactionTests =
+  testGroup
+    "redactConnectionString"
+    [ testCase "keyword form: the password is replaced" do
+        let redacted = redactConnectionString "host=x dbname=y password=hunter2"
+        assertBool "password should be redacted" ("password=REDACTED" `Text.isInfixOf` redacted)
+        assertBool "the secret should not survive" (not ("hunter2" `Text.isInfixOf` redacted)),
+      testCase "URI form: the userinfo password is replaced" do
+        let redacted = redactConnectionString "postgres://me:hunter2@db:5432/kioku"
+        assertBool
+          ("host and user should survive: " <> Text.unpack redacted)
+          ("me:REDACTED@db:5432" `Text.isInfixOf` redacted)
+        assertBool "the secret should not survive" (not ("hunter2" `Text.isInfixOf` redacted)),
+      testCase "a connection string with no password is unchanged" do
+        redactConnectionString "host=x dbname=y user=me" @?= "host=x dbname=y user=me",
+      testCase "a URI with no password is unchanged" do
+        redactConnectionString "postgres://db:5432/kioku" @?= "postgres://db:5432/kioku"
+    ]

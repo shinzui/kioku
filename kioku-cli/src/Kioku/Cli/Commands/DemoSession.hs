@@ -1,34 +1,48 @@
 module Kioku.Cli.Commands.DemoSession
-  ( runDemoSession,
+  ( DemoSessionOptions (..),
+    demoSessionOptionsParser,
+    runDemoSession,
   )
 where
 
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
-import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.Cli.Commands.Demo (demoScope)
+import Kioku.Cli.Options (redactConnectionString, yesWriteEventsFlag)
 import Kioku.Id (genSessionId, idText)
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), StartSessionData (..))
 import Kioku.Session.ReadModel (SessionRow (..), TurnRow (..))
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Options.Applicative
 import System.Environment (lookupEnv)
 
-runDemoSession :: IO ()
-runDemoSession = do
+data DemoSessionOptions = DemoSessionOptions
+  deriving stock (Eq, Show)
+
+demoSessionOptionsParser :: Parser DemoSessionOptions
+demoSessionOptionsParser = DemoSessionOptions <$ yesWriteEventsFlag
+
+runDemoSession :: DemoSessionOptions -> IO ()
+runDemoSession DemoSessionOptions = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
+  putStrLn "kioku demo-session appends permanent session events (kioku has no delete)."
+  putStrLn ("Target: " <> Text.unpack (redactConnectionString (Text.pack connStr)))
+  putStrLn "Scope:  kioku_demo/demo/demo"
+  putStrLn "Note:   completing this session schedules a distillation timer; a running worker will process it (an LLM call)."
   withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
     tr <- noopTracer
     sid <- genSessionId
     now <- getCurrentTime
-    let scope = ScopeEntity (Namespace "rei") (ScopeKind "intention") "intention_demo"
+    let scope = demoScope
         startPayload =
           StartSessionData
             { sessionId = sid,
               agentId = "demo-agent",
               focus = "demo",
               scope = scope,
-              subjectRef = Just "intention_demo",
+              subjectRef = Just "demo",
               previousSessionId = Nothing,
               parentSessionId = Nothing,
               delegationDepth = 0,

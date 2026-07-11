@@ -1,5 +1,8 @@
 module Kioku.Cli.Commands.Demo
-  ( runDemo,
+  ( DemoOptions (..),
+    demoOptionsParser,
+    demoScope,
+    runDemo,
   )
 where
 
@@ -9,21 +12,41 @@ import Data.Time (getCurrentTime)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.Cli.Options (redactConnectionString, yesWriteEventsFlag)
 import Kioku.Id (genMemoryId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
 import Kioku.Recall qualified as Recall
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Options.Applicative
 import System.Environment (lookupEnv)
 
-runDemo :: IO ()
-runDemo = do
+data DemoOptions = DemoOptions
+  deriving stock (Eq, Show)
+
+demoOptionsParser :: Parser DemoOptions
+demoOptionsParser = DemoOptions <$ yesWriteEventsFlag
+
+-- | The demo writes into a namespace nothing else reads.
+--
+-- It used to write into @rei:intention:intention_demo@ — the same namespace real Rei data
+-- lives in — and those events are permanent, because kioku has no delete. They also fed the
+-- distillation timers. A dedicated @kioku_demo@ namespace makes demo residue unmistakable and
+-- keeps distillation of demo data confined to a namespace nothing else reads.
+demoScope :: MemoryScope
+demoScope = ScopeEntity (Namespace "kioku_demo") (ScopeKind "demo") "demo"
+
+runDemo :: DemoOptions -> IO ()
+runDemo DemoOptions = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
+  putStrLn "kioku demo appends permanent memory events (kioku has no delete)."
+  putStrLn ("Target: " <> Text.unpack (redactConnectionString (Text.pack connStr)))
+  putStrLn "Scope:  kioku_demo/demo/demo"
   withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
     tr <- noopTracer
     mid <- genMemoryId
     now <- getCurrentTime
-    let scope = ScopeEntity (Namespace "rei") (ScopeKind "intention") "intention_demo"
+    let scope = demoScope
         payload =
           RecordMemoryData
             { memoryId = mid,
@@ -49,7 +72,7 @@ runDemo = do
       Right (Right writtenId, Left recallErr) ->
         ioError (userError ("kioku demo recall error after writing " <> show writtenId <> ": " <> show recallErr))
       Right (Right writtenId, Right records) -> do
-        putStrLn ("Recorded memory " <> Text.unpack (idText writtenId) <> " in scope rei/intention/intention_demo")
+        putStrLn ("Recorded memory " <> Text.unpack (idText writtenId) <> " in scope kioku_demo/demo/demo")
         mapM_ printRecord records
 
 requireEnv :: String -> IO String

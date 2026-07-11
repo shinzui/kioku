@@ -98,7 +98,7 @@ must not invent biographical or private facts.
 Print it:
 
 ```bash
-kioku persona --scope rei:intention:intention_demo
+kioku persona --scope rei:intention:intention_01h4...
 ```
 
 ## Timers — when distillation runs

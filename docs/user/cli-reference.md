@@ -48,15 +48,36 @@ three parts must be non-empty.
 
 ## `kioku demo`
 
-Records one example memory (`rei:intention:intention_demo`, a `preference` with `high`
-confidence) and reads back the active memories in that scope. Useful as a smoke test that your
-database and connection string work.
+Records one example memory (`kioku_demo:demo:demo`, a `preference` with `high` confidence) and
+reads back the active memories in that scope. Useful as a smoke test that your database and
+connection string work.
+
+> **This writes permanent events.** kioku is event-sourced and has no delete: the events this
+> command appends to the database at `PG_CONNECTION_STRING` cannot be removed. It therefore
+> requires `--yes-write-events`; without it the command is a parse error and nothing is written
+> (the environment is not even read).
 
 ```bash
-kioku demo
+kioku demo --yes-write-events
 ```
 
-No flags.
+| Flag                | Description                                                          |
+|---------------------|----------------------------------------------------------------------|
+| `--yes-write-events`| **Required.** Confirms you accept permanent writes to the target database. |
+
+Before writing, the command prints what it is about to do — the permanence warning, the target
+connection string with any password redacted, and the scope:
+
+```text
+kioku demo appends permanent memory events (kioku has no delete).
+Target: host=localhost dbname=kioku user=me
+Scope:  kioku_demo/demo/demo
+Recorded memory kioku_memory_01... in scope kioku_demo/demo/demo
+- kioku_memory_01... [preference/high] prefers concise answers
+```
+
+The demo writes into the `kioku_demo` namespace, which nothing else reads, so demo residue is
+unmistakable and distillation of demo data stays confined to it.
 
 ---
 
@@ -65,11 +86,17 @@ No flags.
 Demonstrates the **session** aggregate end to end (start → record → complete). Useful to verify
 the session read model and projections are wired up.
 
+> **This writes permanent events**, and completing the demo session also schedules a real
+> distillation timer — a running `kioku worker` will process it, which costs an LLM call. Like
+> `kioku demo`, it requires `--yes-write-events` and prints a preflight notice first.
+
 ```bash
-kioku demo-session
+kioku demo-session --yes-write-events
 ```
 
-No flags.
+| Flag                | Description                                                          |
+|---------------------|----------------------------------------------------------------------|
+| `--yes-write-events`| **Required.** Confirms you accept permanent writes to the target database. |
 
 ---
 
@@ -93,7 +120,7 @@ Examples:
 
 ```bash
 # Default hybrid recall within an entity scope
-kioku recall "preferred writing style" --scope rei:intention:intention_demo
+kioku recall "preferred writing style" --scope kioku_demo:demo:demo
 
 # Keyword-only, limited to 3 hits
 kioku recall "deploy script" --scope mori:repo:web --strategy keyword --limit 3
@@ -196,7 +223,7 @@ kioku persona --scope NAMESPACE[:KIND:REF]
 Prints the persona markdown, or `(no persona yet)` if none has been distilled.
 
 ```bash
-kioku persona --scope rei:intention:intention_demo
+kioku persona --scope rei:intention:intention_01h4...
 ```
 
 ---

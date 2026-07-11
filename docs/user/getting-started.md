@@ -68,23 +68,29 @@ or local Postgres exposes.
 
 ## 4. Write and recall your first memory
 
-The `demo` command records one memory in the scope `rei:intention:intention_demo` and reads it
-back:
+The `demo` command records one memory in the scope `kioku_demo:demo:demo` and reads it back.
+
+kioku is event-sourced and has no delete, so this writes **permanent** events to the database
+at `PG_CONNECTION_STRING`. The command therefore requires an explicit `--yes-write-events`, and
+prints what it is about to write, and where, before writing it:
 
 ```bash
-kioku demo
+kioku demo --yes-write-events
 ```
 
 ```text
-Recorded memory memory_01... in scope rei/intention/intention_demo
-- memory_01... [preference/high] prefers concise answers
+kioku demo appends permanent memory events (kioku has no delete).
+Target: host=localhost dbname=kioku user=me
+Scope:  kioku_demo/demo/demo
+Recorded memory kioku_memory_01... in scope kioku_demo/demo/demo
+- kioku_memory_01... [preference/high] prefers concise answers
 ```
 
 Now recall it by meaning:
 
 ```bash
 kioku recall "what writing style is preferred" \
-  --scope rei:intention:intention_demo
+  --scope kioku_demo:demo:demo
 ```
 
 ```text
@@ -94,7 +100,7 @@ kioku recall "what writing style is preferred" \
 Add `--show-scores` to see the fused score and the component ranks:
 
 ```bash
-kioku recall "writing style" --scope rei:intention:intention_demo --show-scores
+kioku recall "writing style" --scope kioku_demo:demo:demo --show-scores
 ```
 
 ```text
@@ -107,10 +113,12 @@ contribute (e.g. pgvector unavailable, or the query did not embed). See [Recall]
 
 ## 5. (Optional) build a session and distill it
 
-The session demo records a session aggregate:
+The session demo records a session aggregate. Like `kioku demo` it writes permanent events, and
+completing the session also schedules a distillation timer that a running worker will process
+(an LLM call), so it too requires the explicit opt-in:
 
 ```bash
-kioku demo-session
+kioku demo-session --yes-write-events
 ```
 
 To turn a session's evidence into memory atoms (L1 distillation), run:
