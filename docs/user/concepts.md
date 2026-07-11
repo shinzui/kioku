@@ -46,9 +46,19 @@ recall. Tags and confidence can be updated in place while a memory is active. Th
 are exposed as library functions (`record`, `supersede`, `archive`, `updateTags`,
 `updateConfidence`, `merge`) — see [Library API](library-api.md).
 
-> **Idempotency.** Writes are idempotent and guarded by the current read-model state. Recording
-> a memory id that already exists is a no-op; superseding/archiving an already-inactive memory
-> is a no-op rather than an error.
+> **Idempotency.** A duplicate write that matches what already happened succeeds; a *conflicting*
+> one is rejected. Recording a memory id that already exists is a no-op only when the request
+> carries the same content, scope, type, priority, confidence, and tags — recording different
+> content under an existing id returns `MemoryConflict`. Likewise, superseding a memory that was
+> already superseded is a no-op only when the winner is the same; naming a different winner
+> conflicts, as does archiving a memory that was superseded.
+>
+> Call-time timestamps (`recordedAt` and friends) are deliberately *not* compared: the id is the
+> identity, and a retry that re-reads its clock is still a retry.
+>
+> These rules are enforced by the aggregate, not by a read-model precheck, so they hold under
+> concurrent writers. A duplicate that loses a concurrent race still gets the same success the
+> winner got.
 
 ## Scope
 
@@ -85,7 +95,9 @@ Sessions move through states:
 
 - **start → running** — `start` opens a session.
 - **running → awaiting** — `awaitInput` parks it while the host waits for external input,
-  optionally with a correlation key and deadline.
+  optionally with a correlation key and deadline. The **deadline is advisory**: kioku stores it
+  for the host's own bookkeeping and *does not enforce it*. No timer fires and nothing expires
+  when it passes — a parked session stays parked until something resumes, completes, or fails it.
 - **awaiting → running** — `resume` restarts it and stores the resume input on the read model.
 - **running → completed** — `complete` closes it (optionally records the model used and a
   summary).
@@ -93,13 +105,34 @@ Sessions move through states:
 - **interactive** — `recordInteractive` captures a whole interactive conversation in one shot.
 
 `complete` and `failSession` can also close a session while it is **awaiting**; both clear the
-awaiting fields in the read model. `resume` is idempotent after a successful resume, but a
-resume that supplies a non-matching correlation key is rejected.
+awaiting fields in the read model. Closing an *already-closed* session conflicts rather than
+silently succeeding: completing a failed session, or failing a completed one, returns
+`SessionConflict`.
+
+**Resume correlation is an aggregate invariant.** The key a `resume` supplies must equal the key
+the session actually parked on — exactly, including the keyless case, where a resume must also
+supply no key. The awaited key is part of the session's replayed state, so the check survives
+concurrent writers: a caller holding a stale key cannot answer a wait that was already resumed
+and re-parked under a new one. `resume` is idempotent after a successful resume only when it
+re-delivers the same input; a different input means someone else answered the wait, and returns
+`SessionConflict`. To answer a wait *without* the key — an operator override for a session whose
+key is lost or wrong — call `forceResume`, which is explicit and inherently last-writer-wins.
+
+**Lineage is validated at `start`.** A session may not be its own predecessor or its own parent,
+`delegationDepth` must be non-negative and consistent with `parentSessionId` (a delegated session
+sits at depth ≥ 1; a root session at depth 0), and the depth is capped. kioku does *not* check
+that the referenced sessions exist — a dangling pointer is harmless, and requiring existence
+would forbid out-of-order ingestion.
 
 While a session is **running**, a host can call `recordTurn` to capture raw conversation
 **turns** (role, content, tool summary, token counts). Turns are the **L0 evidence floor** the
 distillation pyramid feeds on — but only when a host opts in to recording them. A host that
 never records turns can still distill from recorded memories directly.
+
+A turn's identity is `(sessionId, turnIndex)`; `turnId` is an idempotency token that travels with
+it. Indexes must strictly increase — the aggregate enforces this, so a stale or out-of-order turn
+cannot overwrite a committed one. Re-recording an identical turn is a no-op; the same index with
+different content, or a `turnId` reappearing at a different index, returns `SessionConflict`.
 
 Sessions have two separate relationship axes:
 

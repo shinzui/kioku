@@ -82,6 +82,9 @@ data FailSessionData = FailSessionData
   deriving stock (Generic, Eq, Show)
 
 -- | What a parked session is waiting for.
+--
+-- @deadline@ is advisory only: it is stored for hosts and kioku does not enforce it. No timer
+-- fires and nothing expires when it passes (MasterPlan 2 decision, 2026-07-07).
 data Continuation = Continuation
   { reason :: !Text,
     correlationKey :: !(Maybe Text),
@@ -90,6 +93,10 @@ data Continuation = Continuation
   deriving stock (Generic, Eq, Show)
   deriving anyclass (FromJSON, ToJSON)
 
+-- | Park a session until a host supplies input.
+--
+-- @deadline@ is advisory only: it is stored for hosts and kioku does not enforce it. No timer
+-- fires and nothing expires when it passes (MasterPlan 2 decision, 2026-07-07).
 data AwaitInputData = AwaitInputData
   { sessionId :: !SessionId,
     reason :: !Text,

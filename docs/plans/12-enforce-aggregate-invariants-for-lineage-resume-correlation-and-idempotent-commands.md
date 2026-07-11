@@ -79,8 +79,8 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [x] M3: Post-rejection re-read fallback so a concurrent duplicate loser gets the idempotent success.
 - [x] M3: Tests — duplicate-vs-conflict for every accept listed above. — 2026-07-11 (`cd23156`), 17 new cases in `kioku-core/test/Kioku/IdempotencySpec.hs`; suite 62 → 79 passing.
 - [x] M4: Run the turn-index monotonicity audit (Concrete Steps, step 0) and record the result here. — 2026-07-11, **Audit B passed**: zero rows returned (no session stream has a non-increasing `turnIndex` in stream order). The strict `lastTurnIndex` register guard ships as designed; no fallback to the command-layer-only contract is needed.
-- [ ] M4: `lastTurnIndex` register + strictly-increasing guard on the `RecordTurn` edge; command-layer turn dedup in `Session.recordTurn`; projection updates `turn_id` on `(session_id, turn_index)` conflict.
-- [ ] M4: Tests — idempotent re-record, conflicting re-record, turn-id reuse at a different index, aggregate rejection of a non-increasing index.
+- [x] M4: `lastTurnIndex` register + strictly-increasing guard on the `RecordTurn` edge; command-layer turn dedup in `Session.recordTurn`; projection updates `turn_id` on `(session_id, turn_index)` conflict.
+- [x] M4: Tests — idempotent re-record, conflicting re-record, turn-id reuse at a different index, aggregate rejection of a non-increasing index. — 2026-07-11 (`b3436c7`), 4 new cases; suite 79 → 83 passing. Fail-before verified: without `requireGt` the aggregate accepts a stale index.
 - [ ] M5: ReiCompatSpec fixtures for `agent_session_completed`, `agent_session_failed`, `interactive_session_recorded`, plus native `SessionResumed`-without-`force` decoding.
 - [ ] M5: Documentation truth pass — `docs/user/concepts.md`, `docs/user/library-api.md`, advisory-deadline code comments.
 - [ ] Final: full `cabal build all` + `cabal test` green; update Outcomes & Retrospective.
