@@ -362,3 +362,48 @@ Most hosts let the **worker** drive these on timers rather than calling them dir
 kioku ships its schema as embedded migrations applied via codd. A host composes kioku's
 migrations with its own. In this repo, `just migrate` runs `kioku-migrate` against the
 dev-shell database. See the [Getting Started](getting-started.md) setup steps.
+
+### Applying migrations as a library: reconcile the read-model registry
+
+Applying the migrations is only half the job. keiro records each read model's schema
+identity — its version and shape hash — in a `keiro_read_models` registry row, and refuses
+to serve any query whose registry row disagrees with the code's declared identity, failing
+with `ReadModelStaleSchema`. That guard is deliberate, but nothing repairs the rows on its
+own: `registerReadModel` only ever *inserts*, so an existing row stays pinned at its old
+version forever. A kioku upgrade that bumps a read model's version therefore takes every
+query for that model down until the registry catches up.
+
+`kioku-migrate` does this for you — it reconciles the registry immediately after applying
+migrations, and a version bump needs no extra work. **A host that instead calls
+`runKiokuMigrations` or `runKiokuMigrationsNoCheck` directly must call
+`Kioku.ReadModel.reconcileReadModelRegistry` afterwards**, on a `Store`, or it will hit that
+outage on the next kioku upgrade:
+
+```haskell
+import Kioku.Migrations (runKiokuMigrationsNoCheck)
+import Kioku.ReadModel (reconcileReadModelRegistry)
+
+_ <- runKiokuMigrationsNoCheck settings (secondsToDiffTime 5)
+withStore (defaultConnectionSettings connStr) \store -> do
+  tracer <- noopTracer
+  result <-
+    runAppIO
+      AppEnv {store = store, tracer = tracer, metrics = Nothing}
+      reconcileReadModelRegistry
+  either throwIO (const (pure ())) result
+```
+
+It is idempotent — a second run writes nothing — and it derives every name, version, and
+shape hash from the same `ReadModel` values the queries use, so it cannot drift from the
+code. Run it at migration time, not at app startup: every host process would otherwise race
+to write the registry on boot.
+
+### Adding a migration
+
+Use `just new-migration <slug>`. It mints a codd-ordered `YYYY-MM-DD-HH-MM-SS-slug.sql`
+filename *and* edits `kioku-migrations/src/Kioku/Migrations.hs`, which is load-bearing: the
+migrations are embedded by Template Haskell, and a file added since the last compile is not
+one of GHC's registered dependencies, so the module would not recompile and the binary would
+silently ship without the migration. `touch` does not help — GHC's recompilation check is
+content-based, so the module's bytes must actually change. If you create a migration by
+hand, `cabal test kioku-migrations-test` fails and tells you exactly this.

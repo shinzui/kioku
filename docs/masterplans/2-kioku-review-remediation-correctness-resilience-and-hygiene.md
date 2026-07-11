@@ -81,7 +81,7 @@ bootstrap against both pinned and HEAD keiro) is entirely different from EP-5's
 | 3 | Harden worker resilience with ack policy, bounded retries, and loop supervision | docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md | None | None | Complete |
 | 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | Complete |
 | 5 | Harden schema and recall with indexes, constraints, and scope identity fixes | docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md | None | None | Complete |
-| 6 | Align read-model reconciliation with keiro schema relocation and guard embedded migrations | docs/plans/14-align-read-model-reconciliation-with-keiro-schema-relocation-and-guard-embedded-migrations.md | None | None | In Progress |
+| 6 | Align read-model reconciliation with keiro schema relocation and guard embedded migrations | docs/plans/14-align-read-model-reconciliation-with-keiro-schema-relocation-and-guard-embedded-migrations.md | None | None | Complete |
 | 7 | Tighten CLI and API surface validation | docs/plans/15-tighten-cli-and-api-surface-validation.md | None | EP-3 | Not Started |
 
 
@@ -190,10 +190,10 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-5 M4: embedding dimension validation at capability detection — 2026-07-11 (`939cf8f`, plus a search_path-aware extension probe)
 - [x] EP-5 M5: collision-free scope identity with legacy-id stability — 2026-07-11 (`cdbd1f0`)
 - [x] EP-5 M6: global-scope semantics documentation and haddocks — 2026-07-11 (`18a5158`, `cabal test all` → 106 passed, up from 88)
-- [ ] EP-6 M1: location-agnostic reconciliation migration proven against both keiro layouts
-- [ ] EP-6 M2: code-side read-model registry reconciler wired into kioku-migrate
-- [ ] EP-6 M3: embed-staleness guard and just new-migration convention
-- [ ] EP-6 M4: end-to-end sweep and library-api docs update
+- [x] EP-6 M1: location-agnostic reconciliation migration proven against both keiro layouts — 2026-07-11 (`3a55a9b`, three layouts; the old body fails the keiro case with `42P01`)
+- [x] EP-6 M2: code-side read-model registry reconciler wired into kioku-migrate — 2026-07-11 (`68efc7b`, **the executable moved to a new `kioku-migrate` package**)
+- [x] EP-6 M3: embed-staleness guard and just new-migration convention — 2026-07-11 (`cfe3623`)
+- [x] EP-6 M4: end-to-end sweep and library-api docs update — 2026-07-11 (`cabal test all` → 108 + 6 passed, up from 106)
 - [ ] EP-7 M1: strict ids at the CLI boundary, explicit lenient parser in the API
 - [ ] EP-7 M2: scope grammar that can express colons
 - [ ] EP-7 M3: bounded --limit options
@@ -479,6 +479,41 @@ Discovered during EP-5 implementation (2026-07-11), affecting sibling plans:
   remedy the plan assumed (`relaxed_order` also returned zero rows on the same probe). The
   repro is recorded at `candidatePoolSize`; it deserves its own plan.
 
+Discovered during EP-6 implementation (2026-07-11), affecting sibling plans:
+
+- **The repository gained a package, because a plan's claim about cabal was false.** EP-6's
+  Decision Log had the reconciler's `kioku-core` dependency ride the `kioku-migrate`
+  executable inside `kioku-migrations`, reasoning that "the executable, which nothing depends
+  on, carries the new `kioku-core` dependency with zero cycle risk." The *component* graph is
+  acyclic, but cabal's solver detects cycles at PACKAGE granularity and refused to produce a
+  build plan at all: `rejecting: kioku-core:*test (cyclic dependencies; conflict set:
+  kioku-core, kioku-migrations)`. The executable now lives in its own `kioku-migrate` package
+  (in `cabal.project`); `kioku-migrations` stays dependency-clean; the binary name and
+  `just migrate` are unchanged, so **EP-7 needs no rebase** — but any plan that adds a
+  `build-depends` edge between local packages should know the solver is stricter than the
+  component graph implies. This is the third consecutive plan (after EP-4's timestamps and
+  EP-5's `ef_search`) whose Decision Log asserted something confident about a system the
+  author never ran; all three were caught only by execution. **EP-7 should treat its own
+  tooling and API claims as hypotheses.**
+- **`reconcileReadModelRegistry` is landed, so no future plan may hand-write registry-bump
+  SQL.** Bumping a read model's `version`/`shapeHash` in code and running `just migrate` is
+  now sufficient — the reconciler derives the identity from the same `ReadModel` values the
+  queries use. `Kioku.ReadModel` newly exports `ReconcileOutcome (..)` and
+  `reconcileReadModelRegistry`; EP-7's API-surface sweep should expect both.
+  `Kioku.Migrations` newly exports `embeddedKiokuMigrationFiles`.
+- **`just migrate` no longer touches `kioku-migrations.cabal`, and `just new-migration` now
+  EDITS `Migrations.hs` rather than touching it.** EP-5's finding that GHC's recompilation
+  check is content-based made the old `touch` a no-op that looked like a safeguard. The
+  scaffolder rewrites the `-- Last added:` line (a real byte change), and
+  `kioku-migrations-test` fails with an actionable message if a hand-created migration leaves
+  the embed stale. Any later plan adding a migration by hand will now be told so.
+- **Half of the pin-bump follow-up was already done.**
+  `Kioku.Migrations.TestSupport` already passes `keiro` in `namespacesToCheck`. Only
+  `Justfile`'s `CODD_SCHEMAS=kiroku` still needs `keiro` added when the keiro pin moves.
+- **The ephemeral-Postgres startup contention EP-5 flagged reproduced once here** (a
+  `ConnectionTimeout` at 60s in an unrelated `IdempotencySpec` case, green on rerun), as
+  predicted. EP-7 should expect the same.
+
 Record every decomposition or coordination decision made while working on the master
 plan.
 
@@ -645,3 +680,28 @@ Compare the result against the original vision.
   `2026-07-11-18-18-36-kioku-scope-identity-recompute`), all applied cleanly and idempotently
   to the dev database, which is no longer in the degraded no-pgvector state this MasterPlan
   recorded at authoring time.
+
+- 2026-07-11: EP-6 implemented and marked Complete (commits `3a55a9b`, `68efc7b`, `cfe3623`).
+  Checked off EP-6's four Progress milestones. All three "the migration system lies to you"
+  defects are closed: the registry-bump migration now locates `keiro_read_models` across all
+  three physical layouts (proven by running the shipped bytes against each; the old body fails
+  the relocated one with `42P01`), `kiokuReadModelSchemas` finally has a consumer in
+  `reconcileReadModelRegistry` which `kioku-migrate` runs after every apply, and a stale
+  Template Haskell embed is now a test failure with an actionable message instead of a binary
+  that silently ships without a migration.
+
+  **The load-bearing surprise is structural: the repository gained a package.** EP-6's own
+  Decision Log claimed the `kioku-migrate` executable could take a `kioku-core` dependency
+  with "zero cycle risk" since nothing depends on the executable. Cabal disagreed — it detects
+  cycles at package granularity, not component granularity, and refused to solve the build at
+  all. The executable moved to a new `kioku-migrate` package; the binary name, `just migrate`,
+  and every consumer entry point are unchanged, so no sibling plan needs a rebase. But the
+  pattern now has three instances in this MasterPlan (EP-4's timestamps, EP-5's `ef_search`,
+  EP-6's cabal cycle) and is recorded in Surprises for EP-7: **a plan's confident claim about
+  a system its author never ran is a hypothesis, whether the system is a query planner or a
+  build tool.**
+
+  EP-6 added no new migration (it edited one in place, as designed) and imposes no
+  migration-timestamp coordination on EP-7. It did retire `just migrate`'s
+  `touch kioku-migrations.cabal`, which EP-5 had already shown to be a no-op — leaving it
+  would have kept implying a guarantee that never existed.

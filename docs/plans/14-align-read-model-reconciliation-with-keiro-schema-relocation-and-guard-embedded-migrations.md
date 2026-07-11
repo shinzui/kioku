@@ -58,15 +58,15 @@ a no-op the second time and always leaves the registry rows at the code's curren
 
 ## Progress
 
-- [ ] Milestone 1: rewrite the registry-bump migration body to be location-agnostic.
-- [ ] Milestone 1: add the `kioku-migrations-test` suite with the two-layout SQL test and the fresh-database test.
-- [ ] Milestone 2: add `reconcileReadModelRegistry` to `kioku-core/src/Kioku/ReadModel.hs` and fix the module haddock.
-- [ ] Milestone 2: wire the reconciler into `kioku-migrations/app/Main.hs` (the `kioku-migrate` executable).
-- [ ] Milestone 2: add `kioku-core/test/Kioku/ReadModelReconcileSpec.hs` proving stale-row fail-closed then repair.
-- [ ] Milestone 3: export `embeddedKiokuMigrationNames` and add the disk-vs-embedded staleness test.
-- [ ] Milestone 3: make `just new-migration` touch `Migrations.hs`; update the "Last touched" comment.
-- [ ] Milestone 4: run the full validation sweep (build, all tests, `just migrate` twice) and update docs/user/library-api.md.
-- [ ] Milestone 4: fill in Outcomes & Retrospective.
+- [x] Milestone 1: rewrite the registry-bump migration body to be location-agnostic — 2026-07-11 (`3a55a9b`)
+- [x] Milestone 1: add the `kioku-migrations-test` suite with the layout SQL test (three layouts, not two) and the fresh-database test — 2026-07-11 (`3a55a9b`; restoring the old body fails the keiro case with `42P01`)
+- [x] Milestone 2: add `reconcileReadModelRegistry` to `kioku-core/src/Kioku/ReadModel.hs` and fix the module haddock — 2026-07-11 (`68efc7b`)
+- [x] Milestone 2: wire the reconciler into the `kioku-migrate` executable — 2026-07-11 (`68efc7b`; **the executable moved to a new `kioku-migrate` package — see Surprises**)
+- [x] Milestone 2: add `kioku-core/test/Kioku/ReadModelReconcileSpec.hs` proving stale-row fail-closed then repair — 2026-07-11 (`68efc7b`)
+- [x] Milestone 3: export `embeddedKiokuMigrationFiles` and add the disk-vs-embedded staleness test — 2026-07-11 (`cfe3623`)
+- [x] Milestone 3: make `just new-migration` **edit** (not touch) `Migrations.hs` — 2026-07-11 (`cfe3623`)
+- [x] Milestone 4: run the full validation sweep (build, all tests, `just migrate` twice) and update docs/user/library-api.md — 2026-07-11
+- [x] Milestone 4: fill in Outcomes & Retrospective — 2026-07-11
 
 
 ## Surprises & Discoveries
@@ -111,6 +111,49 @@ to this section during implementation.
   EXCLUDED.name` deliberately never bumps version or shape_hash of an existing row. This
   confirms Finding 1's mechanism and means the reconcile-then-requery test needs no process
   restart.
+
+Found during implementation (2026-07-11):
+
+- **The Decision Log's "zero cycle risk" claim was false, and it cost the plan a package.**
+  The plan reasoned that because nothing depends on the `kioku-migrate` executable, giving
+  it a `kioku-core` dependency could not close the `kioku-core:test → kioku-migrations:test-support`
+  loop. The *component* graph is indeed acyclic — but cabal's solver does cycle detection at
+  PACKAGE granularity, and it rejected the whole build plan outright:
+  `rejecting: kioku-core:*test (cyclic dependencies; conflict set: kioku-core, kioku-migrations)`.
+  Not a warning, not a per-component fallback: `cabal build` could not solve at all.
+  Moving `test-support` into its own package does not help (the cycle just gets longer), so
+  the executable had to leave `kioku-migrations` entirely. It now lives in a new
+  `kioku-migrate` package (`kioku-migrate/kioku-migrate.cabal`, added to `cabal.project`),
+  which depends on both `kioku-migrations` and `kioku-core` while `kioku-migrations` stays
+  dependency-clean. The executable name, the `just migrate` recipe, and every consumer's
+  entry point are unchanged. **This is the same failure shape EP-4 and EP-5 recorded: a
+  plan's reasoning about a build system it never ran is a hypothesis.**
+- **`Kioku.Migrations.TestSupport` already passes `keiro` in `namespacesToCheck`**
+  (`noCheckCoddSettings ["kiroku", "keiro", "kioku", "public"]`), so half of the pin-bump
+  follow-up this plan's Validation section flagged is already done. `Justfile`'s
+  `CODD_SCHEMAS=kiroku` still needs `keiro` added when the pin moves.
+- **The plan's hasql calls were wrong for the pinned version.** Step 3 prescribed
+  `Hasql.Connection.acquire` + `Hasql.Session.run` + `Hasql.Session.sql`. The version in
+  this project has neither `Session.run` nor `Session.sql`: raw scripts go through
+  `Connection.use conn (Session.script :: Text -> Session ())`, and `preparable` takes the
+  SQL as `Text`, not `ByteString`. `Kioku.SchemaSpec` was the correct reference, not the
+  plan.
+- **The layout test grew a third case.** The plan specified two layouts (`kiroku`, `keiro`);
+  `public` is a third real one (long-lived dev databases), and the rewritten body claims to
+  handle it, so it is now asserted. Running the OLD body against all three is what shows the
+  test is honest: it passes on `kiroku` and `public` (both were on the old `search_path`)
+  and fails only on `keiro`, with exactly the predicted
+  `42P01 relation "keiro_read_models" does not exist`.
+- **`just migrate`'s `touch kioku-migrations/kioku-migrations.cabal` never did anything** and
+  has been removed. It was there to force the TH re-embed; per EP-5's discovery, GHC's
+  recompilation check is content-based, so touching any file — the cabal file least of all —
+  cannot invalidate the splice. Leaving it in would have kept implying a guarantee that did
+  not exist. `just new-migration` now rewrites the `-- Last added:` line in `Migrations.hs`,
+  which is a real byte change, and fails loudly if that line is missing.
+- **The ephemeral-Postgres startup contention EP-5 warned about is real here too.** One
+  full-suite run failed with `TimeoutError (ConnectionTimeout {durationSeconds = 60})` in an
+  unrelated `IdempotencySpec` case and passed on rerun. Two more database-backed cases were
+  added by this plan.
 
 
 ## Decision Log
@@ -184,6 +227,17 @@ to this section during implementation.
   `runKiokuMigrations` instead of the executable must call it themselves — documented in
   Interfaces and Dependencies and in `docs/user/library-api.md`.
   Date: 2026-07-07.
+  **SUPERSEDED 2026-07-11 as to placement; the reasoning above is wrong.** "The executable,
+  which nothing depends on, carries the new `kioku-core` dependency with zero cycle risk" is
+  false. Cabal's solver detects cycles at package granularity, not component granularity: with
+  the executable inside `kioku-migrations`, `cabal build` refused to produce any plan at all
+  (`rejecting: kioku-core:*test (cyclic dependencies; conflict set: kioku-core,
+  kioku-migrations)`). Everything else in this decision stands — migration time is still the
+  right moment, app startup would still have every host racing on boot, and `TestSupport`
+  still must not depend on `kioku-core`. The executable simply had to move OUT of
+  `kioku-migrations` into its own `kioku-migrate` package, which is free to depend on both.
+  `kioku-migrations` stays dependency-clean, the binary name and `just migrate` are unchanged,
+  and the cycle is gone.
 - Decision: Guard the TH-embedded migration list with a runtime test (disk listing vs
   embedded names) in a new `kioku-migrations-test` suite, plus making `just new-migration`
   touch `Migrations.hs`; rejected `qAddDependentFile` on the directory and a custom
@@ -214,7 +268,53 @@ to this section during implementation.
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+All four milestones landed (`3a55a9b`, `68efc7b`, `cfe3623`, plus this doc pass). The suite
+went from 106 to 108 kioku-core tests, and a new `kioku-migrations-test` suite adds 6 more.
+Each of the three defects is now covered by a test that fails without its fix.
+
+**What the plan got right.** The central bet — that a code-side reconciler riding keiro's own
+compiled registry statements is pin-bump-proof by construction, while any SQL we write
+ourselves is not — held exactly. `reconcileReadModelRegistry` is 20 lines, derives everything
+from `kiokuReadModelSchemas`, and needs no knowledge of where `keiro_read_models` physically
+lives. The in-place migration edit was also right, and for the reason given: codd never
+re-runs a filename it recorded, so the edit is a no-op on every database where the old body
+succeeded, and it is the *only* fix that also works on a fresh keiro-HEAD database. The
+three-layout test proves it: restoring the old body fails the `keiro` case with the predicted
+`42P01`, and passes on `kiroku` and `public`.
+
+**What it got wrong, and the lesson.** The Decision Log asserted that putting the reconciler's
+`kioku-core` dependency on the *executable* carried "zero cycle risk" because nothing depends
+on the executable. That is true of the component graph and false of cabal, which does cycle
+detection per package and refused to solve the build at all. The fix was mechanical (a new
+`kioku-migrate` package) but it was not a detail — it changed the repository's package layout,
+which is exactly the kind of thing a plan is supposed to settle in advance. This is the third
+consecutive plan in this MasterPlan whose Decision Log contained a confident claim about a
+system the author never ran (EP-4's timestamps, EP-5's `ef_search`, EP-6's cabal cycle), and
+all three were caught only by execution. The pattern is worth naming: **a plan's claim about
+tooling behavior deserves the same "verify before trusting" treatment as a claim about query
+plans.**
+
+**One deliberate scope addition.** `just migrate`'s `touch kioku-migrations.cabal` was removed
+rather than left alone. EP-5 had already established that `touch` cannot invalidate a Template
+Haskell embed (GHC's recompilation check is content-based), which makes that line a no-op that
+*looks* like a safeguard — worse than nothing, because it invites the reader to believe the
+staleness problem is handled. `just new-migration` now rewrites the `-- Last added:` line for
+real, and the guard test catches the hand-created case.
+
+**Gaps and follow-ups.**
+
+- The keiro-HEAD scenario is proven against a hand-built *replica* of its layout, not against
+  a kioku compiled on keiro HEAD — as the plan intended, and for the reason it gave (that is a
+  cohort pin bump, governed by the `cohort-migrate` skill). What this plan guarantees is that
+  kioku's own migration and reconciler are correct on both sides of that bump.
+- One pin-bump follow-up remains: `Justfile`'s `CODD_SCHEMAS=kiroku` will need `keiro` added.
+  The other one the plan flagged — `TestSupport`'s `namespacesToCheck` — turned out to be done
+  already.
+- The reconciler advances a registry row's identity without rebuilding data, which is safe
+  only because kioku's read-model migrations are additive by policy. That contract is now
+  stated in `Kioku.ReadModel`'s haddock and in `docs/user/library-api.md`; a future
+  non-additive reshape must rewrite the projected data in its own migration before the
+  reconciler runs. Nothing enforces this mechanically.
 
 
 ## Context and Orientation
