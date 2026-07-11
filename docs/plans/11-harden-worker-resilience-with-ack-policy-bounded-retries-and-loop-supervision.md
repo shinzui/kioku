@@ -295,7 +295,43 @@ due timers before: 7    due timers after: 0
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+Delivered in three commits (`0400be1`, `39e4474`, `7ba500f`). Both workers now share one
+failure taxonomy, and every failure lands somewhere an operator can see it. The test suite
+grew from 31 to 43 cases; the new ones fail against the pre-plan code by construction (the
+old handler returns `AckOk`/`AckHalt` where they expect retry/dead-letter, and the old fire
+functions leave timers `firing` where they expect `scheduled`-with-backoff or `dead`).
+
+Against the original findings:
+
+- Findings 1–3 (embedding worker): a provider outage now retries with backoff and is
+  recovered by the startup backfill instead of silently losing the embedding forever; a
+  transient store error retries instead of halting the pipeline; a corrupt payload
+  dead-letters with a reason instead of vanishing. Only a permanent store error halts, and
+  the M1 dimension-mismatch test proves that path against a real `vector(1536)` column.
+- Findings 4–5 (timers): `FireOutcome` replaced the three-way-ambiguous `Nothing`. Transient
+  failures reschedule with exponential backoff, permanent ones dead-letter immediately, and
+  keiro's attempt ceiling (8) turns a structurally failing distillation into a visible `dead`
+  row instead of an unbounded LLM bill. Unknown-PM timers requeue 600s out and stop starving
+  the queue.
+- Finding 6 (supervision): verified end-to-end. A database outage is now survivable (the loop
+  logs and retries forever), and a genuinely dead pipeline exits 1 with a reason. No bare
+  `forkIO` remains.
+- Finding 7 (throughput): seven due timers drained in one pass against the dev database.
+- Finding 8 (coverage): thirteen new cases across two spec modules.
+
+Two things did not go as designed, both recorded above in Surprises & Discoveries. A halted
+processor crashes rather than returning cleanly, so the supervision code had to catch
+exceptions as well as inspect return values — the contract (loud, non-zero, with a reason)
+holds, but by a different route than planned. And proving M1's vector-gated cases required
+building a pgvector PostgreSQL out-of-tree, because this repo's dev shell ships none; those
+three cases skip in the default shell and are only green when pgvector is present.
+
+Two gaps handed to siblings rather than fixed here, because they are squarely in
+docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md's
+scope: `DistillSpec`'s `testRecallCandidateWindow` asserts pgvector's *absence* and will fail
+the moment the dev shell gains it, and the embedding-columns migration aborts outright when
+pgvector is already installed in `public`. Both are load-bearing for that plan's M2 and both
+are documented with reproductions.
 
 
 ## Context and Orientation

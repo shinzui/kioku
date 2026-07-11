@@ -78,7 +78,7 @@ bootstrap against both pinned and HEAD keiro) is entirely different from EP-5's
 |---|-------|------|-----------|-----------|--------|
 | 1 | Make L1 distillation idempotent and debounce distillation timers | docs/plans/9-make-l1-distillation-idempotent-and-debounce-distillation-timers.md | None | None | Complete |
 | 2 | Propagate memory forget operations to scenes, personas, and workspace mirrors | docs/plans/10-propagate-memory-forget-operations-to-scenes-personas-and-workspace-mirrors.md | None | EP-1 | Not Started |
-| 3 | Harden worker resilience with ack policy, bounded retries, and loop supervision | docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md | None | None | In Progress |
+| 3 | Harden worker resilience with ack policy, bounded retries, and loop supervision | docs/plans/11-harden-worker-resilience-with-ack-policy-bounded-retries-and-loop-supervision.md | None | None | Complete |
 | 4 | Enforce aggregate invariants for lineage, resume correlation, and idempotent commands | docs/plans/12-enforce-aggregate-invariants-for-lineage-resume-correlation-and-idempotent-commands.md | None | None | Not Started |
 | 5 | Harden schema and recall with indexes, constraints, and scope identity fixes | docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md | None | None | Not Started |
 | 6 | Align read-model reconciliation with keiro schema relocation and guard embedded migrations | docs/plans/14-align-read-model-reconciliation-with-keiro-schema-relocation-and-guard-embedded-migrations.md | None | None | Not Started |
@@ -176,9 +176,9 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [ ] EP-2 M1: forget events schedule scene-regeneration timers
 - [ ] EP-2 M2: emptied scopes delete scene/persona rows and mirror files without the LLM
 - [ ] EP-2 M3: end-to-end — the timer worker propagates forgetting to every artifact
-- [ ] EP-3 M1: embedding worker ack policy (retry/dead-letter/halt classification)
-- [ ] EP-3 M2: FireOutcome taxonomy for distillation timers, bounded attempts, unknown-PM handling
-- [ ] EP-3 M3: loop supervision, drain-before-sleep, startup backfill
+- [x] EP-3 M1: embedding worker ack policy (retry/dead-letter/halt classification) — 2026-07-11 (`0400be1`)
+- [x] EP-3 M2: FireOutcome taxonomy for distillation timers, bounded attempts, unknown-PM handling — 2026-07-11 (`39e4474`)
+- [x] EP-3 M3: loop supervision, drain-before-sleep, startup backfill — 2026-07-11 (`7ba500f`, verified end-to-end against a real database)
 - [ ] EP-4 M1: resume correlation becomes an aggregate invariant (plus explicit forceResume)
 - [ ] EP-4 M2: lineage validation at start and a cycle-proof chain query
 - [ ] EP-4 M3: honest idempotent accepts for session and memory commands
@@ -284,7 +284,48 @@ Discovered during EP-1 implementation (2026-07-10), affecting sibling plans:
   companion guard: a deterministic id found in a retired state means "already processed".
 
 
-## Decision Log
+Discovered during EP-3 implementation (2026-07-11), affecting sibling plans:
+
+- **EP-5 inherits two pgvector landmines, both reproduced.** First,
+  `kioku-core/test/Kioku/DistillSpec.hs:465` (`testRecallCandidateWindow`, added by EP-1)
+  asserts `capability @?= VectorExtensionUnavailable` — it hard-codes the *absence* of
+  pgvector, and its comment says that absence "is what makes dummyEmbeddingModel safe". The
+  moment EP-5 M2 adds pgvector to the dev shell, that case fails and would start calling a
+  dummy embedding endpoint; EP-5 must give it an injected fake embedder. Verified by running
+  the suite against a pgvector build: that one case fails while all 43 others pass. Second,
+  the embedding-columns migration
+  (`kioku-migrations/sql-migrations/2026-06-24-01-00-00-kioku-memory-embeddings.sql`)
+  **aborts** rather than degrading when pgvector is already installed in `public`: it runs
+  `CREATE EXTENSION IF NOT EXISTS vector` (a no-op), passes its availability check, then
+  fails on the unqualified `vector(1536)` type because migrations run with `search_path` set
+  to `kiroku` (`42704: type "vector" does not exist`). Since `public` is where operators
+  usually install pgvector, EP-5's self-healing migration must schema-qualify the type or
+  create the extension into the target schema.
+- **The fire-outcome contract is landed and EP-1's handlers are migrated.**
+  `Kioku.Distill.Timer.Outcome` exports `FireOutcome (..)`, `fireRetryDelay`,
+  `unknownTimerRetryDelay`, and `timerMarkerEventId` (moved out of its three duplicated
+  private definitions). All three fire handlers now return `FireOutcome`;
+  `Kioku.Distill.Timer.Worker` exports `applyFireOutcome`, `kiokuTimerWorkerOptions`
+  (`maxAttempts = Just 8`), `runKiokuTimerWorkerOnce`, and `drainKiokuTimers`. Removed:
+  `runKiokuTimerWorkerLoop`, `runL1TimerWorkerLoop`, `runL1TimerWorkerOnce`. The
+  process-manager names are unchanged, as EP-2 and EP-6 require.
+- **EP-7's rebase surface in `Worker.hs` is larger than planned but its own edit is
+  untouched.** `runContinuousWorker`/`runTimerLoop` were rewritten and `startupBackfill`,
+  `dieWorker`, and `storeErrorBackoffMicros` added, but `WorkerOptions` and
+  `workerOptionsParser` were deliberately left byte-identical, so EP-7's
+  `--timers-once`/`--backfill` mutual-exclusion fix applies cleanly. `kioku-cli` gained an
+  `async` dependency (alongside the `effectful` one EP-1 added); EP-7's dead-dependency sweep
+  must keep both.
+- **A halted shibuya processor crashes rather than returning.** EP-3's research predicted a
+  graceful `waitApp` return on `AckHalt`; in reality the halt surfaces as
+  `ExceptionInLinkedThread ... blocked indefinitely in an STM transaction`. The worker now
+  catches it and still exits 1 with a reason. Any sibling plan reasoning about shibuya
+  processor shutdown should not assume a clean return.
+- **The dev database's stale distillation timers now dead-letter instead of retrying
+  forever.** The repository's dev database held seven overdue `kioku-l1-extract` timers that
+  fail for want of an `ANTHROPIC_API_KEY`. Under the new attempt ceiling they will reach
+  `status = 'dead'` after eight claims rather than cycling indefinitely — the intended
+  behavior, but worth knowing before anyone reads those rows as a regression.
 
 Record every decomposition or coordination decision made while working on the master
 plan.
@@ -376,3 +417,14 @@ Compare the result against the original vision.
   docs/plans/13-harden-schema-and-recall-with-indexes-constraints-and-scope-identity-fixes.md;
   filled the Progress section from the actual 32 child milestones; and recorded the
   authoring discoveries in Surprises & Discoveries.
+
+- 2026-07-11: EP-3 implemented and marked Complete (commits `0400be1`, `39e4474`,
+  `7ba500f`). Checked off EP-3's three Progress milestones. Recorded five implementation
+  discoveries in Surprises & Discoveries. Two of them are load-bearing for EP-5, which now
+  inherits a failing-on-pgvector test in `DistillSpec` and a migration that aborts when
+  pgvector already lives in `public` — both reproduced, neither fixed here, because both sit
+  in EP-5 M2's scope. The fire-outcome contract this MasterPlan's Integration Points assigned
+  to EP-3 is landed, and EP-1's handlers were migrated onto it as designed (mechanical, as
+  predicted). Loop supervision was verified end-to-end against a real database rather than by
+  inspection: the process now survives a database outage and exits 1 with a reason when a
+  pipeline genuinely dies.
