@@ -110,6 +110,7 @@ test-suite kioku-test
     Kioku.EmbeddingWorkerSpec
     Kioku.IdempotencySpec
     Kioku.ReadModelReconcileSpec
+    Kioku.RecallHarness
     Kioku.RecallSpec
     Kioku.RecallSqlSpec
     Kioku.ReiCompatSpec

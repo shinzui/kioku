@@ -21,6 +21,14 @@ import Kioku.App (AppEffects, AppEnv (..), noopTracer, runAppIO)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Recall (RecallRequest (..), RecallStrategy (..), selectFtsCandidates, selectVectorCandidates, vectorLiteral)
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
+import Kioku.RecallHarness
+  ( CorpusConfig (..),
+    SeededCorpus (..),
+    cosineDistanceAtAngle,
+    defaultStarvationCorpus,
+    queryVector,
+    seedCorpus,
+  )
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Error (StoreError)
@@ -41,8 +49,125 @@ tests =
           testCase "punctuation only" (assertQueryDoesNotThrow "-- ; ()")
         ],
       testCase "a vector round-trip ranks the nearest embedding first" testVectorRoundTrip,
-      testCase "capability detection reads the column's real width" testDimensionDetection
+      testCase "capability detection reads the column's real width" testDimensionDetection,
+      testCase "the harness seeds the geometry it claims" testHarnessGeometry
     ]
+
+-- | The instrument's own test, and the one that everything downstream rests on.
+--
+-- 'Kioku.RecallHarness' claims that a row seeded at angle @t@ sits at cosine distance
+-- @1 - cos t@ from the query, and it uses that claim to know the true ranking of the corpus
+-- /without asking the database/ — which is what makes recall@k a measurement rather than a
+-- tautology. If the claim is false, every number the harness reports is fiction, so it is
+-- checked directly here against the distances Postgres actually computes.
+--
+-- The second assertion is the one that makes starvation possible at all: every decoy must be
+-- strictly nearer the query than every in-scope row, because starvation requires the filter to
+-- correlate with distance. A corpus where that does not hold cannot starve, and a test built on
+-- it would pass for the wrong reason.
+testHarnessGeometry :: IO ()
+testHarnessGeometry =
+  withRecallFixture \runEff -> do
+    result <- runEff do
+      available <- vectorTypeIsReachable
+      if not available
+        then pure Nothing
+        else do
+          corpus <- seedCorpus smallCorpus
+          measured <- actualDistances
+          pure (Just (corpus, measured))
+    case result of
+      Left err -> assertFailure ("store error: " <> show err)
+      Right Nothing ->
+        putStrLn "  [skipped] no reachable pgvector on this cluster; re-enter the dev shell to exercise the recall harness"
+      Right (Just (corpus, measured)) -> do
+        assertEqual
+          "every seeded row came back"
+          (smallCorpus.inScopeCount + smallCorpus.decoyCount)
+          (length measured)
+
+        -- 1. Postgres agrees with the closed form the ground truth is built on.
+        let predicted memoryId
+              | Just t <- lookup memoryId (seedAngles smallCorpus) = cosineDistanceAtAngle t
+              | otherwise = error ("unseeded memory id came back: " <> Text.unpack memoryId)
+            worstError =
+              maximum [abs (d - predicted memoryId) | (memoryId, d) <- measured]
+        assertBool
+          ( "Postgres disagrees with the harness's closed-form distance by "
+              <> show worstError
+              <> "; the ground truth cannot be trusted"
+          )
+          -- pgvector stores each component as a 4-byte float, so agreement is to float
+          -- precision, not double.
+          (worstError < 1e-5)
+
+        -- 2. Every decoy really is nearer than every in-scope row, or nothing can starve.
+        let distancesFor prefix =
+              [d | (memoryId, d) <- measured, prefix `Text.isPrefixOf` memoryId]
+            decoyDistances = distancesFor "m_decoy_"
+            inScopeDistances = distancesFor "m_in_"
+        assertBool
+          ( "the decoys are not strictly nearer than the in-scope rows: farthest decoy "
+              <> show (maximum decoyDistances)
+              <> " vs nearest in-scope "
+              <> show (minimum inScopeDistances)
+              <> " — this corpus cannot starve"
+          )
+          (maximum decoyDistances < minimum inScopeDistances)
+
+        -- 3. The ground-truth ordering is what it says it is: nearest first.
+        let truthDistances =
+              [d | memoryId <- corpus.trueNearestInScope, Just d <- [lookup memoryId measured]]
+        assertEqual
+          "the ground truth names every in-scope row"
+          smallCorpus.inScopeCount
+          (length truthDistances)
+        assertBool
+          "the ground truth is not ordered nearest-first"
+          (and (zipWith (<=) truthDistances (drop 1 truthDistances)))
+
+-- | Small enough to be quick, large enough that both bands are populated. The starvation case
+-- uses 'defaultStarvationCorpus'; this one only has to prove the geometry.
+smallCorpus :: CorpusConfig
+smallCorpus = defaultStarvationCorpus {inScopeCount = 20, decoyCount = 20}
+
+-- | The angles the harness seeded, recomputed here from the same config, so the assertion
+-- compares Postgres against the /closed form/ rather than against the harness's own vectors.
+seedAngles :: CorpusConfig -> [(Text, Double)]
+seedAngles cfg =
+  [ ("m_in_" <> Text.pack (show i), t)
+  | (i, t) <- zip [0 :: Int ..] (evenly cfg.inScopeCount cfg.inScopeAngles)
+  ]
+    <> [ ("m_decoy_" <> Text.pack (show i), t)
+       | (i, t) <- zip [0 :: Int ..] (evenly cfg.decoyCount cfg.decoyAngles)
+       ]
+  where
+    evenly n (lo, hi)
+      | n <= 0 = []
+      | n == 1 = [lo]
+      | otherwise = [lo + (hi - lo) * fromIntegral i / fromIntegral (n - 1) | i <- [0 .. n - 1]]
+
+-- | Every seeded row's true cosine distance to the query, as Postgres computes it. The harness
+-- must never do this — its whole value is knowing the answer without asking — but the test that
+-- validates the harness must.
+actualDistances :: (Store :> es) => Eff es [(Text, Double)]
+actualDistances =
+  runTransaction (Tx.statement (vectorLiteral queryVector) stmt)
+  where
+    stmt :: Statement Text [(Text, Double)]
+    stmt =
+      preparable
+        "SELECT memory_id, (embedding <=> $1::vector)::float8 \
+        \  FROM kiroku.kioku_memories \
+        \ WHERE embedding IS NOT NULL \
+        \ ORDER BY 2"
+        (E.param (E.nonNullable E.text))
+        ( D.rowList
+            ( (,)
+                <$> D.column (D.nonNullable D.text)
+                <*> D.column (D.nonNullable D.float8)
+            )
+        )
 
 -- | The migrated schema declares @embedding vector(1536)@, so a process configured for 512
 -- is misconfigured and every embedding write it attempts would fail on the @::vector@ cast.
