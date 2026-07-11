@@ -23,9 +23,13 @@ import Kioku.Recall (RecallRequest (..), RecallStrategy (..), selectFtsCandidate
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
 import Kioku.RecallHarness
   ( CorpusConfig (..),
+    RecallQuality (..),
     SeededCorpus (..),
     cosineDistanceAtAngle,
     defaultStarvationCorpus,
+    describeRecallQuality,
+    measureRecallQuality,
+    planAgreesWithQuery,
     queryVector,
     seedCorpus,
   )
@@ -34,6 +38,7 @@ import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.ExpectedFailure (expectFail)
 import Test.Tasty.HUnit (assertBool, assertEqual, assertFailure, testCase)
 
 tests :: TestTree
@@ -50,8 +55,102 @@ tests =
         ],
       testCase "a vector round-trip ranks the nearest embedding first" testVectorRoundTrip,
       testCase "capability detection reads the column's real width" testDimensionDetection,
-      testCase "the harness seeds the geometry it claims" testHarnessGeometry
+      testCase "the harness seeds the geometry it claims" testHarnessGeometry,
+      testCase "the captured plan describes the query that was measured" testPlanCaptureIsFaithful,
+      -- KNOWN RED. Today's query starves on this corpus and returns zero rows, so this case is
+      -- marked expected-to-fail: it states the behaviour we want, keeps the suite green until
+      -- the fix lands, and then — because tasty reports an *unexpected pass* as a failure —
+      -- turns red the moment the fix works, forcing whoever lands it to delete this marker.
+      -- That is a forcing function rather than a chore someone can forget.
+      --
+      -- The marker deliberately covers this case ALONE, and this case asserts *only* the thing
+      -- that is known-red. Everything that must hold today as well as after the fix — that the
+      -- scope filter never leaks a decoy, and that the captured plan describes the query that
+      -- was actually run — lives in 'testPlanCaptureIsFaithful', which is not marked. Otherwise
+      -- expectFail would swallow a genuine regression in those invariants and report it as the
+      -- failure it was already expecting.
+      --
+      -- The fix is docs/plans/19-fix-filtered-ann-starvation-in-vector-recall.md.
+      expectFail
+        (testCase "the vector channel does not starve on a selective scope" testVectorChannelDoesNotStarve)
     ]
+
+-- | The defect, stated as the behaviour we want.
+--
+-- The HNSW index is post-filtered: it picks candidates by distance alone, and the namespace,
+-- scope, and status predicates are applied afterwards, to rows it has already chosen. When the
+-- rows outside the scope are nearer the query than the in-scope answers — a small scope inside a
+-- large namespace, which is the normal shape of kioku data — the index can spend its entire
+-- budget on rows the filter then discards, and the vector channel returns nothing at all.
+--
+-- Nothing notices. Recall fuses its two channels by rank, so a vector channel that returns zero
+-- rows contributes zero ranks and the blended score degrades smoothly into pure keyword scoring:
+-- no error, no warning, and nothing in a @RecallHit@ recording that the semantic half of a
+-- "hybrid" search came back empty. The caller gets plausible keyword results and cannot tell.
+-- That silence is why this defect survived, and it is why this case exists.
+testVectorChannelDoesNotStarve :: IO ()
+testVectorChannelDoesNotStarve =
+  withStarvationCorpus \case
+    Nothing ->
+      putStrLn "  [skipped] no reachable pgvector on this cluster; re-enter the dev shell to exercise the vector path"
+    Just q -> do
+      assertBool
+        ("the vector channel starved.\n" <> describeRecallQuality q)
+        (q.rowsReturned > 0)
+      assertBool
+        ("the vector channel returned candidates, but missed most of the true nearest.\n" <> describeRecallQuality q)
+        (q.recallAtK >= 0.5)
+
+-- | The instrument's self-check, on the corpus that actually matters, plus the one invariant
+-- that must hold in every regime.
+--
+-- This is /not/ marked expected-to-fail, and that is deliberate. It asserts what must be true
+-- both before and after the starvation is fixed, so a regression in either property fails the
+-- suite immediately rather than hiding inside the expected failure next door.
+--
+-- The plan-agreement check earns its place. An @EXPLAIN@ whose SQL differs from the real
+-- statement in any way the planner cares about can choose a different plan and report a
+-- different answer — and the failure is silent and flattering. An earlier version of the harness
+-- selected @memory_id@ alone instead of recall's thirteen columns; the narrower row made the
+-- top-N sort look cheap, the planner took the exact plan, and the EXPLAIN cheerfully reported 50
+-- rows while the real query took the HNSW plan and returned zero. A measurement that disagrees
+-- with the thing it claims to measure is worse than no measurement, so it is now an assertion.
+testPlanCaptureIsFaithful :: IO ()
+testPlanCaptureIsFaithful =
+  withStarvationCorpus \case
+    Nothing ->
+      putStrLn "  [skipped] no reachable pgvector on this cluster; re-enter the dev shell to exercise the vector path"
+    Just q -> do
+      assertBool
+        ( "the captured plan produced "
+            <> show q.planTopRows
+            <> " rows but the query returned "
+            <> show q.rowsReturned
+            <> "; the EXPLAIN is describing a query nobody runs and every number built on it is void.\n"
+            <> Text.unpack q.planText
+        )
+        (planAgreesWithQuery q)
+      assertEqual
+        "an out-of-scope memory reached the caller: the scope filter is a correctness boundary, not a ranking hint"
+        0
+        q.decoysReturned
+
+-- | Seed 'defaultStarvationCorpus' and measure the vector channel against it, or report that
+-- the cluster has no pgvector. A silent skip is indistinguishable from a pass, and this module
+-- exists to make an invisible failure visible, so its own skips say so out loud.
+withStarvationCorpus :: (Maybe RecallQuality -> IO ()) -> IO ()
+withStarvationCorpus assertOn =
+  withRecallFixture \runEff -> do
+    result <- runEff do
+      available <- vectorTypeIsReachable
+      if not available
+        then pure Nothing
+        else do
+          corpus <- seedCorpus defaultStarvationCorpus
+          Just <$> measureRecallQuality corpus 10
+    case result of
+      Left err -> assertFailure ("store error: " <> show err)
+      Right measured -> assertOn measured
 
 -- | The instrument's own test, and the one that everything downstream rests on.
 --

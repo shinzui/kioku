@@ -145,6 +145,7 @@ test-suite kioku-test
     , shikumi
     , shikumi-trace
     , tasty                          >=1.5
+    , tasty-expected-failure         >=0.12
     , tasty-hunit                    >=0.10
     , temporary                      >=1.3
     , text                           >=2.1

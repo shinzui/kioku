@@ -59,9 +59,11 @@ module Kioku.RecallHarness
     explainVectorQuery,
     describeRecallQuality,
     usedHnswIndex,
+    planAgreesWithQuery,
   )
 where
 
+import Data.Char (isDigit)
 import Data.Foldable (traverse_)
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int32)
@@ -82,6 +84,7 @@ import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Recall (RecallRequest (..), RecallStrategy (..), selectVectorCandidates)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
+import Text.Read (readMaybe)
 
 -- * Geometry
 
@@ -276,9 +279,45 @@ data RecallQuality = RecallQuality
     decoysReturned :: !Int,
     -- | @EXPLAIN (ANALYZE, BUFFERS)@ for the query as it is actually issued. Carried so a
     -- failing case can print the cause rather than just @expected: True, got: False@.
-    planText :: !Text
+    planText :: !Text,
+    -- | The row count the captured plan's top node actually produced. If this disagrees with
+    -- 'rowsReturned', the EXPLAIN is describing a query nobody runs — see 'planAgreesWithQuery'.
+    planTopRows :: !(Maybe Int)
   }
   deriving stock (Eq, Show)
+
+-- | Does the captured plan describe the query that was actually measured?
+--
+-- This is the instrument's self-check, and it exists because the instrument got this wrong
+-- once. An @EXPLAIN@ whose SQL differs from the real statement in any way the planner cares
+-- about — notably the width of the select list, which sets the cost of the top-N sort the
+-- /exact/ plan needs — can choose a different plan and report a different result. The failure
+-- mode is silent and flattering: the EXPLAIN says "50 rows, all good" while the real query
+-- returns zero.
+--
+-- So: the plan's top node must have produced the same number of rows the query returned. If it
+-- did not, every conclusion drawn from 'planText' is void, and a case built on it must fail
+-- loudly rather than report a comfortable number.
+planAgreesWithQuery :: RecallQuality -> Bool
+planAgreesWithQuery q = maybe False (== q.rowsReturned) q.planTopRows
+
+-- | Pull @rows=N@ out of the @(actual time=… rows=N loops=1)@ segment of the plan's first line,
+-- which is its top node. Returns 'Nothing' if the plan has no @actual@ section, which would
+-- mean the EXPLAIN ran without @ANALYZE@ and is not a measurement at all.
+planActualTopRows :: Text -> Maybe Int
+planActualTopRows plan = do
+  firstLine <- case Text.lines plan of
+    l : _ -> Just l
+    [] -> Nothing
+  actual <- afterToken "actual" firstLine
+  rows <- afterToken "rows=" actual
+  readMaybe (Text.unpack (Text.takeWhile isDigit rows))
+  where
+    afterToken token haystack =
+      case Text.breakOn token haystack of
+        (_, rest)
+          | Text.null rest -> Nothing
+          | otherwise -> Just (Text.drop (Text.length token) rest)
 
 -- | Run the vector channel against a seeded corpus and score what it returned.
 --
@@ -302,7 +341,8 @@ measureRecallQuality corpus k = do
             else fromIntegral found / fromIntegral (length truth),
         k,
         decoysReturned = length (filter ("m_decoy_" `Text.isPrefixOf`) returned),
-        planText = plan
+        planText = plan,
+        planTopRows = planActualTopRows plan
       }
 
 -- | The request the vector channel is driven with. The query /text/ is irrelevant — the vector
@@ -339,27 +379,46 @@ explainVectorQuery corpus =
 explainPoolSize :: Int32
 explainPoolSize = 50
 
--- | The predicates, the @ORDER BY@, and the @LIMIT@ are copied verbatim from
--- 'Kioku.Recall.selectVectorCandidatesStmt'. @embedding IS NOT NULL@ is not decoration: the
--- HNSW index is partial on exactly that predicate, and without it restated here the planner
--- cannot prove the index applies and falls back to a sequential scan — which would look like
--- "the index is broken" and be entirely an artifact of the measurement.
+-- | The projection from 'Kioku.Recall.selectVectorCandidatesStmt', which does not export it.
+-- It is restated here because the row width it implies changes which plan Postgres picks — see
+-- 'explainVectorStmt'. If the two ever drift apart the captured plan stops describing the query
+-- under test, and the EXPLAIN becomes a confidently-wrong measurement rather than an error.
+-- 'planAgreesWithQuery' is the guard against exactly that.
+memoryRecordColumns :: Text
+memoryRecordColumns =
+  "memory_id, agent_id, session_id, namespace, scope_kind, scope_ref, memory_type, content, priority, confidence, tags::text, status, created_at "
+
+-- | Everything here is copied verbatim from 'Kioku.Recall.selectVectorCandidatesStmt' — the
+-- select list, the predicates, the @ORDER BY@, and the @LIMIT@ — and every part of it earns
+-- its place.
 --
--- The column list is @memory_id@ alone rather than the statement's full projection. Postgres
--- chooses this plan from the @WHERE@, the @ORDER BY@, and the @LIMIT@; the select list cannot
--- change an HNSW scan into anything else, and no index-only scan is available either way.
+-- @embedding IS NOT NULL@ is not decoration: the HNSW index is partial on exactly that
+-- predicate, and without it restated here the planner cannot prove the index applies and falls
+-- back to a sequential scan — which would look like "the index is broken" and be entirely an
+-- artifact of the measurement.
+--
+-- __The select list is load-bearing too, which is not obvious and was learned the hard way.__
+-- An earlier version of this function selected @memory_id@ alone, on the theory that Postgres
+-- chooses the plan from the @WHERE@, the @ORDER BY@ and the @LIMIT@, and that the projection
+-- could not turn an HNSW scan into anything else. That is false. The projection sets the row
+-- width, the width sets the cost of the top-N sort that the /exact/ plan needs, and that cost
+-- is exactly what the planner weighs against the HNSW scan. On the 2000-in-scope, 2000-decoy
+-- corpus the narrow projection made the sort look cheap, the planner took the exact plan, and
+-- the EXPLAIN reported 50 happy rows — while the real query, with its 13 real columns, took
+-- the HNSW plan and returned zero. The instrument was describing a query nobody runs.
 explainVectorStmt :: Statement (Text, Text, Maybe Text, Maybe Text, Int32) [Text]
 explainVectorStmt =
   preparable
-    "EXPLAIN (ANALYZE, BUFFERS) \
-    \SELECT memory_id \
-    \  FROM kiroku.kioku_memories \
-    \ WHERE status = 'active' \
-    \   AND namespace = $2 \
-    \   AND (($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4)) \
-    \   AND embedding IS NOT NULL \
-    \ ORDER BY embedding <=> $1::vector \
-    \ LIMIT $5"
+    ( "EXPLAIN (ANALYZE, BUFFERS) SELECT "
+        <> memoryRecordColumns
+        <> " FROM kiroku.kioku_memories \
+           \ WHERE status = 'active' \
+           \   AND namespace = $2 \
+           \   AND (($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4)) \
+           \   AND embedding IS NOT NULL \
+           \ ORDER BY embedding <=> $1::vector \
+           \ LIMIT $5"
+    )
     encoder
     (D.rowList (D.column (D.nonNullable D.text)))
   where
@@ -385,7 +444,17 @@ describeRecallQuality q =
         <> " = "
         <> Text.pack (show q.recallAtK)
         <> (if q.decoysReturned > 0 then " (!! " <> Text.pack (show q.decoysReturned) <> " out-of-scope decoys leaked)" else ""),
-      "plan:",
+      "plan: "
+        <> (if usedHnswIndex q then "HNSW (approximate)" else "exact")
+        <> ( if planAgreesWithQuery q
+               then ""
+               else
+                 " -- !! the captured plan produced "
+                   <> Text.pack (show q.planTopRows)
+                   <> " rows but the query returned "
+                   <> Text.pack (show q.rowsReturned)
+                   <> "; the EXPLAIN is describing a different query and cannot be trusted"
+           ),
       q.planText
     ]
 
