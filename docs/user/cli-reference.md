@@ -234,7 +234,7 @@ Run kioku's background workers. With no flags it runs **continuously**; the flag
 one-shot modes.
 
 ```bash
-kioku worker [--backfill] [--timers-once]
+kioku worker [--backfill | --timers-once]
 ```
 
 | Flag           | Description                                                                              |
@@ -242,6 +242,10 @@ kioku worker [--backfill] [--timers-once]
 | *(none)*       | Run continuously: the embedding worker (if pgvector is available) plus the distillation timer loop. |
 | `--backfill`   | Compute embeddings for any memories missing them, then exit. Reports the count.          |
 | `--timers-once`| Claim and fire at most one due distillation timer, then exit.                            |
+
+The two one-shot modes are **mutually exclusive** — they do unrelated work, so there is no
+combined meaning. Passing both is an error (``Invalid option `--timers-once'``). It used to be
+silent: `--timers-once` won and `--backfill` was ignored without a word.
 
 Behavior of the continuous worker depends on the detected vector capability:
 

@@ -11,6 +11,7 @@ import Kioku.Cli.Commands.Demo (DemoOptions (..), demoOptionsParser, demoScope)
 import Kioku.Cli.Commands.DemoSession (DemoSessionOptions (..), demoSessionOptionsParser)
 import Kioku.Cli.Commands.Distill (DistillOptions (..), distillOptionsParser)
 import Kioku.Cli.Commands.Recall (RecallOptions (..), recallOptionsParser)
+import Kioku.Cli.Commands.Worker (WorkerOptions (..), workerOptionsParser)
 import Kioku.Cli.Options (redactConnectionString)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Id (genMemoryId, genSessionId, idText)
@@ -26,7 +27,8 @@ tests =
       scopeTests,
       limitTests,
       demoGuardTests,
-      redactionTests
+      redactionTests,
+      workerModeTests
     ]
 
 -- | Run a parser against an argument list, rendering a failure the way the real CLI would.
@@ -185,3 +187,28 @@ redactionTests =
       testCase "a URI with no password is unchanged" do
         redactConnectionString "postgres://db:5432/kioku" @?= "postgres://db:5432/kioku"
     ]
+
+-- | The two one-shot worker modes are unrelated, so passing both is a mistake. It used to be a
+-- silent one: --timers-once was checked first and --backfill was ignored without a word.
+workerModeTests :: TestTree
+workerModeTests =
+  testGroup
+    "worker one-shot modes are mutually exclusive"
+    [ testCase "no flags means the continuous worker" do
+        parseWith workerOptionsParser [] @?= Right WorkerContinuous,
+      testCase "--backfill" do
+        parseWith workerOptionsParser ["--backfill"] @?= Right WorkerBackfill,
+      testCase "--timers-once" do
+        parseWith workerOptionsParser ["--timers-once"] @?= Right WorkerTimersOnce,
+      testCase "both flags is a parse error" do
+        assertConflict "--timers-once" (parseWith workerOptionsParser ["--backfill", "--timers-once"]),
+      testCase "both flags in the other order is also a parse error" do
+        assertConflict "--backfill" (parseWith workerOptionsParser ["--timers-once", "--backfill"])
+    ]
+  where
+    assertConflict rejected = \case
+      Right mode -> assertBool ("expected a conflict error, got: " <> show mode) False
+      Left err ->
+        assertBool
+          ("failure should name the conflicting flag " <> rejected <> ": " <> err)
+          (rejected `isInfixOf` err)

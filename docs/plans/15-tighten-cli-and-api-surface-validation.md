@@ -60,7 +60,7 @@ This section must always reflect the actual current state of the work.
 - [x] M2: Rewrite `parseScope` in `kioku-cli/src/Kioku/Cli/Scope.hs` to split on the first two colons only; add parser tests; update `--help` text and docs. — 2026-07-11 (14 tests pass; `scenes --scope 'ops:host:db.internal:5432'` now reaches the store)
 - [x] M3: Add `Kioku.Cli.Options` with `boundedIntReader`; bound `--limit` in Recall.hs (1–100) and Distill.hs (1–50); add tests; update docs. — 2026-07-11 (22 tests pass; `recall --limit -1` is now `LIMIT must be between 1 and 100 (got -1)`)
 - [x] M4: Demo guard: required `--yes-write-events` flag for `demo` and `demo-session`, `kioku_demo` namespace, preflight print with redacted connection string; add tests; update docs. — 2026-07-11 (31 tests pass; both bare invocations exit 1 with `Missing: --yes-write-events`, and the guarded path wrote to `kioku_demo/demo/demo` in the dev database — confirmed by recalling it back)
-- [ ] M5: Make `worker --backfill` / `--timers-once` mutually exclusive (`WorkerOptions` becomes a three-way sum); add tests; update docs. Check whether docs/plans/11 has landed first (soft dependency).
+- [x] M5: Make `worker --backfill` / `--timers-once` mutually exclusive (`WorkerOptions` becomes a three-way sum); add tests; update docs. Check whether docs/plans/11 has landed first (soft dependency). — 2026-07-11 (docs/plans/11 had landed; 36 tests pass; `worker --backfill --timers-once` exits 1 with ``Invalid option `--timers-once'``)
 - [ ] M6: Remove `embedBatched` (and its private helper `chunksOf`) from `kioku-core/src/Kioku/Memory/Embedding.hs`; remove `generic-lens` and `uuid` from `kioku-api/kioku-api.cabal` after re-verifying they are still unused; final docs sweep; full build and test.
 
 
@@ -89,6 +89,22 @@ implementation. Provide concise evidence.
   extra site announced itself immediately; recorded because it is the concrete form of the
   MasterPlan's warning that sibling plans reshape this plan's files under it. No behavior
   changed at any site.
+
+
+- (M5, 2026-07-11.) **The conflict error prints the top-level usage, not the worker's.** The
+  plan predicted `Usage: kioku worker [--backfill | --timers-once]` beneath ``Invalid option
+  `--timers-once'``; optparse-applicative actually prints `Usage: kioku COMMAND`, because the
+  unconsumed flag surfaces at the top-level subparser rather than inside the `worker` one. The
+  flag is still named correctly and the exit code is still 1, so the footgun is closed; the
+  mutual exclusion *is* rendered as `[--backfill | --timers-once]` in `kioku worker --help`.
+  Cosmetic, recorded only because the plan's Validation section asserts the exact text.
+
+- (EP-3 soft dependency, 2026-07-11.) EP-3 (docs/plans/11) had already landed and its
+  prediction held exactly: it restructured `runWorker`'s loops but left `WorkerOptions` and
+  `workerOptionsParser` byte-identical, so M5 applied with no rebase. M5 stayed inside the
+  options type, the parser, and the top-level dispatch, adding only a `withCapability` helper
+  to keep the capability-detection block shared between the two capability-needing modes; none
+  of EP-3's loop bodies were touched.
 
 
 ## Decision Log

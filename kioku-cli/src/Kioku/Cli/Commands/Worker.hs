@@ -25,23 +25,30 @@ import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..), exitWith)
 import System.IO (hPutStrLn, stderr)
 
-data WorkerOptions = WorkerOptions
-  { backfill :: !Bool,
-    timersOnce :: !Bool
-  }
+-- | The two one-shot modes are unrelated — an embedding backfill and firing one distillation
+-- timer — so there is no combined meaning to define. As two 'switch'es they were silently
+-- ordered: @--backfill --timers-once@ checked @timersOnce@ first and ignored @--backfill@
+-- without a word. As a sum parsed from mutually exclusive alternatives, passing both is a
+-- parse error.
+data WorkerOptions
+  = WorkerContinuous
+  | WorkerBackfill
+  | WorkerTimersOnce
   deriving stock (Eq, Show)
 
 workerOptionsParser :: Parser WorkerOptions
 workerOptionsParser =
-  WorkerOptions
-    <$> switch
-      ( long "backfill"
-          <> help "Run one embedding backfill pass and exit"
-      )
-    <*> switch
+  flag'
+    WorkerBackfill
+    ( long "backfill"
+        <> help "Run one embedding backfill pass and exit (conflicts with --timers-once)"
+    )
+    <|> flag'
+      WorkerTimersOnce
       ( long "timers-once"
-          <> help "Claim and fire at most one due kioku distillation timer, then exit"
+          <> help "Claim and fire at most one due kioku distillation timer, then exit (conflicts with --backfill)"
       )
+    <|> pure WorkerContinuous
 
 runWorker :: WorkerOptions -> IO ()
 runWorker opts = do
@@ -50,16 +57,19 @@ runWorker opts = do
   withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
     tr <- noopTracer
     let env = AppEnv {store = st, tracer = tr, metrics = Nothing}
-    if opts.timersOnce
-      then runTimerOnce env config
-      else do
-        result <- runAppIO env (detectVectorCapability config.dimensions)
-        capability <- case result of
-          Left storeErr -> ioError (userError ("kioku worker store error: " <> show storeErr))
-          Right cap -> pure cap
-        if opts.backfill
-          then runBackfill env capability config
-          else runContinuousWorker env st capability config
+    case opts of
+      WorkerTimersOnce -> runTimerOnce env config
+      WorkerBackfill -> withCapability env config \capability ->
+        runBackfill env capability config
+      WorkerContinuous -> withCapability env config \capability ->
+        runContinuousWorker env st capability config
+
+withCapability :: AppEnv -> EmbeddingConfig -> (VectorCapability -> IO a) -> IO a
+withCapability env config k = do
+  result <- runAppIO env (detectVectorCapability config.dimensions)
+  case result of
+    Left storeErr -> ioError (userError ("kioku worker store error: " <> show storeErr))
+    Right capability -> k capability
 
 -- | Merge candidates come from hybrid recall over the atom's own text, not from
 -- a priority-ordered scan prefix: a duplicate ranked below the scan window was
