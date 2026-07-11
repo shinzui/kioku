@@ -44,9 +44,9 @@ backfill pass, the drain behavior, and the loud non-zero exit when a pipeline di
 
 ## Progress
 
-- [ ] M1: add `Kioku.Worker.Failure` (transient/permanent `StoreError` classification, embedding retry-delay schedule).
-- [ ] M1: refactor `kioku-core/src/Kioku/Memory/Embedding/Worker.hs` — injectable embed function (`EmbeddingWorkerEnv`), `EmbedOutcome`, ack-decision mapping (retry / dead-letter / halt), `guardKirokuHandler` wrap, stderr logging.
-- [ ] M1: extend `kioku-core/test/Kioku/EmbeddingWorkerSpec.hs` with pure classification tests and Postgres-backed ack-decision tests (provider failure → `AckRetry`; decode failure → `AckDeadLetter`; dimension mismatch → `AckHalt`; success → `AckOk` and stored embedding).
+- [x] M1: add `Kioku.Worker.Failure` (transient/permanent `StoreError` classification, embedding retry-delay schedule). — 2026-07-11
+- [x] M1: refactor `kioku-core/src/Kioku/Memory/Embedding/Worker.hs` — injectable embed function (`EmbeddingWorkerEnv`), `EmbedOutcome`, ack-decision mapping (retry / dead-letter / halt), `guardKirokuHandler` wrap, stderr logging. — 2026-07-11
+- [x] M1: extend `kioku-core/test/Kioku/EmbeddingWorkerSpec.hs` with pure classification tests and Postgres-backed ack-decision tests (provider failure → `AckRetry`; decode failure → `AckDeadLetter`; dimension mismatch → `AckHalt`; success → `AckOk` and stored embedding). — 2026-07-11 (7 cases, all green under pgvector; 3 skip without it)
 - [ ] M2: add `kioku-core/src/Kioku/Distill/Timer/Outcome.hs` with `FireOutcome` and delay schedules; register in `kioku-core.cabal`.
 - [ ] M2: convert `fireL1Timer` (Timer/Worker.hs), `fireL2SceneTimer` (L2.hs), `fireL3PersonaTimer` (L3.hs) to return `FireOutcome`.
 - [ ] M2: add `applyFireOutcome`, switch to keiro `runTimerWorkerWith` with `maxAttempts = Just 8`, handle unknown process-manager timers, delete unused `runL1TimerWorkerLoop`/`runL1TimerWorkerOnce`.
@@ -106,6 +106,29 @@ statements in the master plan.
   with `requeueStuckTimer` (moves `firing` → `scheduled`, fire_at unchanged), this gives a
   two-step "reschedule with delay" using only public keiro API — the basis for
   retry-with-backoff on timers (see Decision Log entry 4).
+
+Found during implementation (2026-07-11):
+
+- **The M1 vector-gated tests cannot run in this repo's dev shell, and proving them
+  required building a pgvector-enabled PostgreSQL out-of-tree.** `nix/haskell.nix:29`
+  ships plain `pkgs.postgresql`, so `detectVectorCapability` reports
+  `VectorExtensionUnavailable` and three of the four database-backed cases skip. Building
+  `pkgs.postgresql.withPackages (ps: [ps.pgvector])` into a scratch out-link and putting
+  its `bin` first on `PATH` runs them for real: all 7 embedding-worker cases pass, and the
+  dimension-mismatch case produces exactly the predicted permanent error —
+  `UnexpectedServerError "22000" "expected 1536 dimensions, not 8"` → `AckHalt (HaltFatal ...)`.
+  Adding pgvector to the dev shell is docs/plans/13's M2, so the shell was left unchanged;
+  the gating stays so the suite is green either way.
+- **A pre-existing test asserts the *absence* of pgvector and will fail the moment
+  docs/plans/13 M2 lands.** `kioku-core/test/Kioku/DistillSpec.hs:465`
+  (`testRecallCandidateWindow`, added by docs/plans/9) asserts
+  `capability @?= VectorExtensionUnavailable`, and its comment states that this absence
+  "is what makes dummyEmbeddingModel safe" — with pgvector present, `recallCandidates`
+  would call the embedding endpoint at the dummy base URL `http://embedding.invalid`. So
+  docs/plans/13's pgvector work must also give that test an injected fake embedder rather
+  than relying on the degraded environment. Verified by running the suite against the
+  pgvector build: that one case fails (`expected: VectorExtensionUnavailable, but got:
+  VectorAvailable`) while every other case, including all seven new ones, passes.
 
 
 ## Decision Log
