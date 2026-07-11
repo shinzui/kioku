@@ -38,7 +38,6 @@ import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.ExpectedFailure (expectFail)
 import Test.Tasty.HUnit (assertBool, assertEqual, assertFailure, testCase)
 
 tests :: TestTree
@@ -57,22 +56,8 @@ tests =
       testCase "capability detection reads the column's real width" testDimensionDetection,
       testCase "the harness seeds the geometry it claims" testHarnessGeometry,
       testCase "the captured plan describes the query that was measured" testPlanCaptureIsFaithful,
-      -- KNOWN RED. Today's query starves on this corpus and returns zero rows, so this case is
-      -- marked expected-to-fail: it states the behaviour we want, keeps the suite green until
-      -- the fix lands, and then — because tasty reports an *unexpected pass* as a failure —
-      -- turns red the moment the fix works, forcing whoever lands it to delete this marker.
-      -- That is a forcing function rather than a chore someone can forget.
-      --
-      -- The marker deliberately covers this case ALONE, and this case asserts *only* the thing
-      -- that is known-red. Everything that must hold today as well as after the fix — that the
-      -- scope filter never leaks a decoy, and that the captured plan describes the query that
-      -- was actually run — lives in 'testPlanCaptureIsFaithful', which is not marked. Otherwise
-      -- expectFail would swallow a genuine regression in those invariants and report it as the
-      -- failure it was already expecting.
-      --
-      -- The fix is docs/plans/19-fix-filtered-ann-starvation-in-vector-recall.md.
-      expectFail
-        (testCase "the vector channel does not starve on a selective scope" testVectorChannelDoesNotStarve)
+      testCase "the vector channel does not starve on a selective scope" testVectorChannelDoesNotStarve,
+      testCase "a healthy scope never pays for the exact fallback" testHealthyScopeSkipsFallback
     ]
 
 -- | The defect, stated as the behaviour we want.
@@ -100,6 +85,58 @@ testVectorChannelDoesNotStarve =
       assertBool
         ("the vector channel returned candidates, but missed most of the true nearest.\n" <> describeRecallQuality q)
         (q.recallAtK >= 0.5)
+
+      -- The mechanism, pinned. Recall survives this corpus because the approximate pass starves
+      -- and the exact pass rescues it — not because the planner happened to choose kindly. If a
+      -- future change makes the approximate pass succeed here, that is good news, but it means
+      -- this case has stopped exercising the fallback it exists to prove, and the corpus needs to
+      -- be made harsher rather than the assertion relaxed.
+      assertBool
+        ( "the approximate pass did NOT starve on the starving corpus ("
+            <> show q.annRows
+            <> " rows), so this case is no longer exercising the fallback it was built to prove.\n"
+            <> describeRecallQuality q
+        )
+        (q.annRows < 50)
+      assertBool
+        "the exact fallback did not fire, so recall survived this corpus by luck rather than by mechanism"
+        q.exactFallbackFired
+
+-- | Bar (b) of the bake-off, as a test: a fix that trades a rare failure for a common one is not
+-- a fix. On a corpus with nothing out of scope there is nothing for the filter to discard, the
+-- approximate pass fills its pool, and the exact fallback must not run — because the fallback
+-- scans every embedded row in the caller's scope, and paying that on every healthy recall would
+-- be a worse bug than the one being fixed.
+--
+-- This also pins the @hnsw.ef_search@ setting. At pgvector's default (40, which is below the pool
+-- size of 50) the approximate pass returns only 40 rows even here, the fallback would fire on
+-- every single recall, and this case fails.
+testHealthyScopeSkipsFallback :: IO ()
+testHealthyScopeSkipsFallback =
+  withRecallFixture \runEff -> do
+    result <- runEff do
+      available <- vectorTypeIsReachable
+      if not available
+        then pure Nothing
+        else do
+          corpus <- seedCorpus defaultStarvationCorpus {inScopeCount = 2000, decoyCount = 0}
+          Just <$> measureRecallQuality corpus 10
+    case result of
+      Left err -> assertFailure ("store error: " <> show err)
+      Right Nothing ->
+        putStrLn "  [skipped] no reachable pgvector on this cluster; re-enter the dev shell to exercise the vector path"
+      Right (Just q) -> do
+        assertEqual
+          "the approximate pass did not fill the candidate pool on a corpus with nothing to filter out"
+          50
+          q.annRows
+        assertBool
+          ( "the exact fallback fired on a healthy scope, which would make every recall pay for a \
+            \full scan of its scope.\n"
+              <> describeRecallQuality q
+          )
+          (not q.exactFallbackFired)
+        assertEqual "a healthy scope still returns a full pool" 50 q.rowsReturned
 
 -- | The instrument's self-check, on the corpus that actually matters, plus the one invariant
 -- that must hold in every regime.

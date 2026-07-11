@@ -24,11 +24,21 @@ module Kioku.Recall
     selectFtsCandidates,
     selectVectorCandidates,
     vectorLiteral,
+    selectVectorCandidatesStmt,
+    selectVectorCandidatesExactStmt,
+    selectVectorCandidatesDiagnosed,
+    VectorChannelOutcome (..),
+    vectorChannelStarved,
+    VectorCandidateQuery,
+    vectorCandidateQuery,
+    memoryRecordColumns,
+    candidatePoolSize,
   )
 where
 
 import Baikai.Embedding (EmbeddingModel)
 import Data.Aeson qualified as Aeson
+import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as BL
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int32)
@@ -74,6 +84,17 @@ import Kiroku.Store.Transaction (runTransaction)
 -- Exported so the candidate SQL can be exercised directly against a real database
 -- (@Kioku.RecallSqlSpec@) rather than only through 'recall', which would drag in an
 -- embedding endpoint. They are not part of the intended public API.
+--
+-- 'selectVectorCandidatesStmt', 'vectorCandidateQuery', 'memoryRecordColumns' and
+-- 'candidatePoolSize' are exported for @Kioku.RecallHarness@, the recall-quality instrument. It
+-- needs the statement itself (rather than 'selectVectorCandidates', which wraps it in its own
+-- transaction) so that it can run it under a @SET LOCAL@, and it needs the projection and the
+-- pool size so that its @EXPLAIN@ describes the query that actually runs. That last one is not a
+-- nicety: the projection's row width sets the cost of the top-N sort the /exact/ plan needs, and
+-- that cost is what the planner weighs against the HNSW scan — so an @EXPLAIN@ carrying a
+-- different select list can silently choose a different plan and report a different answer.
+-- Restating them in the harness rather than exporting them is how the harness got that wrong
+-- once.
 
 data RecallStrategy = Keyword | Embedding | Hybrid
   deriving stock (Generic, Eq, Show)
@@ -229,16 +250,123 @@ selectFtsCandidates req =
       (candidateQuery req)
       selectFtsCandidatesStmt
 
+-- | What the vector channel did, so that a degraded semantic half stops being invisible.
+--
+-- This exists because of how the defect it describes survived. 'fuseRecallCandidates' blends the
+-- two channels by rank, so a vector channel that returns nothing contributes no ranks and the
+-- score decays smoothly into pure keyword scoring: no error, no warning, and nothing in a
+-- 'RecallHit' recording that the semantic half of a "hybrid" search came back empty. A caller
+-- looking at plausible keyword results had no way to know.
+data VectorChannelOutcome = VectorChannelOutcome
+  { -- | Rows the approximate (HNSW) pass returned.
+    annRows :: !Int,
+    -- | Whether the exact pass ran because the approximate one came back short of the pool.
+    exactFallbackFired :: !Bool,
+    -- | Rows finally handed to the fusion.
+    rowsReturned :: !Int
+  }
+  deriving stock (Generic, Eq, Show)
+
+-- | Did the approximate pass miss rows that were really there?
+--
+-- True exactly when the exact fallback found more than the ANN pass did — that is, when the ANN
+-- scan starved and the fallback rescued it. A host that wants a metric or a log line for the
+-- health of its semantic channel should count these.
+vectorChannelStarved :: VectorChannelOutcome -> Bool
+vectorChannelStarved outcome =
+  outcome.exactFallbackFired && outcome.rowsReturned > outcome.annRows
+
 selectVectorCandidates ::
   (Store :> es) =>
   RecallRequest ->
   Vector Double ->
   Eff es [MemoryRecord]
 selectVectorCandidates req queryVector =
-  runTransaction $
-    Tx.statement
-      (vectorCandidateQuery req queryVector)
-      selectVectorCandidatesStmt
+  snd <$> selectVectorCandidatesDiagnosed req queryVector
+
+-- | The vector channel, with a report of what it did. See 'VectorChannelOutcome'.
+--
+-- == Why there are two passes
+--
+-- The HNSW index is /post-filtered/: it picks candidates by distance alone, and the namespace,
+-- scope, and @status@ predicates are applied afterwards, to rows it has already chosen. When the
+-- memories nearest the query sit outside the caller's scope — a small scope inside a large
+-- namespace, which is the normal shape of kioku data — the index spends its whole budget on rows
+-- the filter then discards and the channel returns __nothing__.
+--
+-- So: run the approximate pass, and if it comes back short of the pool, run an exact pass that
+-- cannot starve. The trigger is "short of the pool" rather than "empty" because a partial
+-- starvation is a starvation too, and because the exact pass is cheap in precisely the case that
+-- makes it fire spuriously — a scope holding fewer than 'candidatePoolSize' embedded memories,
+-- where scanning all of them costs nothing.
+--
+-- == Why the exact pass rather than pgvector's own remedy
+--
+-- pgvector 0.8's @hnsw.iterative_scan@ is designed for exactly this, and it was measured across
+-- five freshly built indexes on a 20000-row starving corpus. It returned the right answer 2 times
+-- in 5 (@relaxed_order@) and 4 times in 5 (@strict_order@). HNSW construction is randomized, so
+-- whether the iterative scan reaches the in-scope rows within its budget depends on the graph it
+-- happened to get. A remedy that works 40% of the time is not a remedy — and, worse, it passes
+-- any single test run. The exact pass returned the right answer 5 times in 5, needs no minimum
+-- pgvector version, and cannot starve by construction.
+--
+-- == The cost, honestly
+--
+-- The exact pass scans every embedded row in the caller's scope: about 7ms per 2000 rows on the
+-- measurement machine, growing linearly. That cost is paid only when the approximate pass came
+-- back short, and it is bounded by the size of the scope the caller asked about — which is the
+-- set they wanted searched anyway. On a large scope with no selective filter the approximate pass
+-- fills the pool and the fallback never fires, so the common path is unchanged.
+selectVectorCandidatesDiagnosed ::
+  (Store :> es) =>
+  RecallRequest ->
+  Vector Double ->
+  Eff es (VectorChannelOutcome, [MemoryRecord])
+selectVectorCandidatesDiagnosed req queryVector =
+  runTransaction do
+    -- The HNSW scan visits at most @hnsw.ef_search@ candidates, and the default (40) is below the
+    -- pool size (50) — so even with nothing for the filter to discard, the pool never fills and
+    -- the channel silently under-delivers by 20%. Measured: 40 rows returned for a LIMIT of 50 on
+    -- a 2000-row corpus with no out-of-scope rows at all.
+    --
+    -- (The comment that used to live at 'candidatePoolSize' claimed pgvector searches with
+    -- @ef = max(ef_search, LIMIT)@ so the pool fills at the default. On pgvector 0.8.2 it does
+    -- not. That claim was inherited, plausible, and false.)
+    --
+    -- Raising it to exactly the pool size fills the pool at no measurable cost (0.149ms vs
+    -- 0.138ms) and does not move the planner off the HNSW path. Raising it far higher — the
+    -- remedy a previous plan prescribed — /does/ move the planner, onto an ANN scan that then
+    -- starves, which is how this defect was originally mis-diagnosed.
+    Tx.sql efSearchSetting
+    annRows <- Tx.statement query selectVectorCandidatesStmt
+    if length annRows >= fromIntegral candidatePoolSize
+      then
+        pure
+          ( VectorChannelOutcome
+              { annRows = length annRows,
+                exactFallbackFired = False,
+                rowsReturned = length annRows
+              },
+            annRows
+          )
+      else do
+        exactRows <- Tx.statement query selectVectorCandidatesExactStmt
+        pure
+          ( VectorChannelOutcome
+              { annRows = length annRows,
+                exactFallbackFired = True,
+                rowsReturned = length exactRows
+              },
+            exactRows
+          )
+  where
+    query = vectorCandidateQuery req queryVector
+
+-- | @SET LOCAL@, so it lives exactly as long as the transaction the query runs in and cannot
+-- leak into the rest of the connection.
+efSearchSetting :: ByteString
+efSearchSetting =
+  TE.encodeUtf8 ("SET LOCAL hnsw.ef_search = " <> Text.pack (show candidatePoolSize))
 
 candidateQuery :: RecallRequest -> RecallCandidateQuery
 candidateQuery req =
@@ -450,6 +578,42 @@ selectVectorCandidatesStmt =
     vectorCandidateQueryEncoder
     (D.rowList memoryRecordDecoder)
 
+-- | The exact vector scan: every embedded row in the caller's scope, ranked by distance, top-N.
+-- It cannot starve, because the filter is applied /before/ the ranking rather than after it.
+--
+-- The @OFFSET 0@ is the whole mechanism and must not be "tidied away". It is an optimisation
+-- fence: it stops Postgres from pulling the subquery up into the outer query, which in turn stops
+-- the outer @ORDER BY embedding <=> …@ from reaching the HNSW index. Without it the planner
+-- flattens the two levels back into 'selectVectorCandidatesStmt' and we are measuring — and
+-- shipping — the very query we are trying to avoid.
+--
+-- A @MATERIALIZED@ CTE would also fence it, and was rejected: materialising forces every in-scope
+-- row's 1536-dimension embedding into memory (about 6KB each, so ~120MB for a 20000-row scope),
+-- whereas the fence streams and the top-N sort holds only 50 rows.
+--
+-- The predicates are identical to 'selectVectorCandidatesStmt''s, including @embedding IS NOT
+-- NULL@ — here it is a correctness filter rather than an index-matching one, but it must stay
+-- either way, since a NULL embedding has no distance to anything.
+selectVectorCandidatesExactStmt :: Statement VectorCandidateQuery [MemoryRecord]
+selectVectorCandidatesExactStmt =
+  preparable
+    ( "SELECT "
+        <> memoryRecordColumns
+        <> """
+            FROM (SELECT *
+                    FROM kiroku.kioku_memories
+                   WHERE status = 'active'
+                     AND namespace = $2
+                     AND (($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4))
+                     AND embedding IS NOT NULL
+                  OFFSET 0) AS scoped
+           ORDER BY embedding <=> $1::vector
+           LIMIT $5
+           """
+    )
+    vectorCandidateQueryEncoder
+    (D.rowList memoryRecordDecoder)
+
 recallCandidateQueryEncoder :: E.Params RecallCandidateQuery
 recallCandidateQueryEncoder =
   ((\q -> q.query) >$< E.param (E.nonNullable E.text))
@@ -527,21 +691,42 @@ vectorLiteral values =
 
 -- | How many candidates each channel contributes to the RRF fusion.
 --
--- Do not "fix" the vector channel by raising @hnsw.ef_search@ to cover this pool. That was
--- tried, on the theory that the 40 default sits below this 50 and so could never fill it, and
--- measurement refuted it twice over. First, pgvector already searches with
--- @ef = max(ef_search, LIMIT)@, so the pool fills at the default. Second, raising it is
--- actively harmful: with 1536-dimension vectors, 2000 rows in the target namespace and 2000
--- nearer rows in another, @SET hnsw.ef_search = 200@ flipped the planner from an exact plan
--- (bitmap scan on the scope index, top-N sort, 50 correct rows) onto an HNSW scan that spent
--- its whole budget on rows the namespace filter then discarded — 1648 removed, __zero__
--- returned. The default kept the exact plan.
+-- == Filtered-ANN starvation, and how it is handled
 --
--- The underlying hazard is real and predates this code: the HNSW scan is post-filtered, so a
--- selective predicate that correlates with distance can starve the pool. pgvector 0.8's
--- @hnsw.iterative_scan@ is the intended remedy, but it is not a drop-in — @relaxed_order@
--- returned zero rows on the same probe — and it would pin a minimum pgvector version. It
--- needs its own investigation rather than a hopeful @SET@.
+-- The HNSW index is /post-filtered/: it covers the embedding column alone, so it picks its
+-- candidates by distance and the namespace, scope and @status@ predicates are applied afterwards,
+-- to rows it has already chosen. When the memories nearest the query sit outside the caller's
+-- scope — a small scope inside a large namespace, which is the normal shape of kioku data — the
+-- scan spends its entire budget on rows the filter then discards and the vector channel returns
+-- __nothing__. Measured: 2000 in-scope memories and 2000 nearer ones in another namespace, at
+-- default settings, returned zero rows every time.
+--
+-- 'selectVectorCandidatesDiagnosed' handles this by running an exact pass whenever the
+-- approximate pass comes back short of this pool. Read its Haddock for the mechanism; the summary
+-- is that the approximate pass is fast and can starve, the exact pass cannot starve and costs a
+-- scan of the caller's scope, and the second only runs when the first came back short.
+--
+-- == Two claims that used to live here and are false
+--
+-- This comment previously asserted that pgvector searches with @ef = max(ef_search, LIMIT)@, so
+-- that this pool fills at the default @hnsw.ef_search@ of 40. __It does not.__ On pgvector 0.8.2,
+-- a corpus of 2000 in-scope rows with /nothing/ out of scope — nothing for the filter to discard
+-- at all — returned 40 rows against this LIMIT of 50. The vector channel was silently
+-- under-delivering by 20% in the healthy case. 'selectVectorCandidatesDiagnosed' now sets
+-- @hnsw.ef_search@ to exactly this pool size, which fills it at no measurable cost.
+--
+-- It also warned against raising @hnsw.ef_search@ at all, on the evidence that
+-- @SET hnsw.ef_search = 200@ flipped the planner onto an HNSW scan that starved. That evidence
+-- was real but the conclusion was too broad: at 200 the planner does flip, and at 50 (this pool
+-- size) it does not, while the pool fills. The distinction is measured, not argued.
+--
+-- == What is still not fixed
+--
+-- pgvector 0.8's @hnsw.iterative_scan@ is the vendor's own remedy for starvation and it was
+-- rejected on evidence, not on principle: across five freshly built indexes on a 20000-row
+-- starving corpus it returned the right answer 2 times in 5 (@relaxed_order@) and 4 times in 5
+-- (@strict_order@). HNSW construction is randomized, so it is a lottery. Do not reach for it
+-- again without a sample size — a single passing run says nothing.
 candidatePoolSize :: Int32
 candidatePoolSize = 50
 

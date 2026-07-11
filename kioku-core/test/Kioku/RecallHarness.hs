@@ -56,10 +56,13 @@ module Kioku.RecallHarness
     -- * Measurement
     RecallQuality (..),
     measureRecallQuality,
+    measureRecallQualityWith,
     explainVectorQuery,
+    explainVectorQueryWith,
     describeRecallQuality,
     usedHnswIndex,
     planAgreesWithQuery,
+    runDdl,
   )
 where
 
@@ -81,7 +84,16 @@ import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
-import Kioku.Recall (RecallRequest (..), RecallStrategy (..), selectVectorCandidates)
+import Kioku.Recall
+  ( RecallRequest (..),
+    RecallStrategy (..),
+    VectorChannelOutcome (..),
+    candidatePoolSize,
+    memoryRecordColumns,
+    selectVectorCandidatesDiagnosed,
+    selectVectorCandidatesStmt,
+    vectorCandidateQuery,
+  )
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
 import Text.Read (readMaybe)
@@ -277,6 +289,10 @@ data RecallQuality = RecallQuality
     -- | How many of the returned rows were decoys. Must always be zero: the scope filter is a
     -- correctness boundary, and a non-zero value here means something far worse than starvation.
     decoysReturned :: !Int,
+    -- | Rows the approximate (HNSW) pass returned, before any exact fallback.
+    annRows :: !Int,
+    -- | Whether the exact fallback ran because the approximate pass came back short.
+    exactFallbackFired :: !Bool,
     -- | @EXPLAIN (ANALYZE, BUFFERS)@ for the query as it is actually issued. Carried so a
     -- failing case can print the cause rather than just @expected: True, got: False@.
     planText :: !Text,
@@ -298,8 +314,14 @@ data RecallQuality = RecallQuality
 -- So: the plan's top node must have produced the same number of rows the query returned. If it
 -- did not, every conclusion drawn from 'planText' is void, and a case built on it must fail
 -- loudly rather than report a comfortable number.
+--
+-- The comparison is against 'annRows', not 'rowsReturned', because 'planText' captures the
+-- /approximate/ statement, and the channel may then run an exact fallback whose rows the ANN plan
+-- naturally does not account for. Comparing against the final count would make this check fail
+-- precisely when the fallback is doing its job — which would be a false alarm, and a false alarm
+-- that fires every time is a check nobody keeps.
 planAgreesWithQuery :: RecallQuality -> Bool
-planAgreesWithQuery q = maybe False (== q.rowsReturned) q.planTopRows
+planAgreesWithQuery q = maybe False (== q.annRows) q.planTopRows
 
 -- | Pull @rows=N@ out of the @(actual time=… rows=N loops=1)@ segment of the plan's first line,
 -- which is its top node. Returns 'Nothing' if the plan has no @actual@ section, which would
@@ -326,24 +348,59 @@ planActualTopRows plan = do
 -- silently keep testing a query that no longer runs in production.
 measureRecallQuality :: (Store :> es) => SeededCorpus -> Int -> Eff es RecallQuality
 measureRecallQuality corpus k = do
-  rows <- selectVectorCandidates (vectorRequest corpus) queryVector
+  (outcome, rows) <- selectVectorCandidatesDiagnosed (vectorRequest corpus) queryVector
   plan <- explainVectorQuery corpus
-  let returned = (\row -> row.memoryId) <$> rows
-      returnedSet = Set.fromList returned
-      truth = take k corpus.trueNearestInScope
-      found = length (filter (`Set.member` returnedSet) truth)
-  pure
-    RecallQuality
-      { rowsReturned = length rows,
-        recallAtK =
-          if null truth
-            then 0
-            else fromIntegral found / fromIntegral (length truth),
-        k,
-        decoysReturned = length (filter ("m_decoy_" `Text.isPrefixOf`) returned),
-        planText = plan,
-        planTopRows = planActualTopRows plan
-      }
+  pure (scoreRecallQuality corpus k rows plan outcome.annRows outcome.exactFallbackFired)
+
+-- | 'measureRecallQuality', but with @SET LOCAL@ settings applied to the transaction the vector
+-- statement runs in — the seam the bake-off in
+-- docs/plans/19-fix-filtered-ann-starvation-in-vector-recall.md needs.
+--
+-- Two details make this a real measurement rather than a plausible one.
+--
+-- First, the settings and the query must share a transaction. @SET LOCAL@ lasts exactly as long
+-- as the surrounding transaction, so issuing it in one @runTransaction@ and the query in another
+-- is a no-op that silently measures the baseline while claiming to measure the candidate — and
+-- reports a confident number either way. Both go in the single transaction below.
+--
+-- Second, the query is 'Kioku.Recall.selectVectorCandidatesStmt' itself, not a copy, and the
+-- @EXPLAIN@ runs under the same settings in its own transaction. 'planAgreesWithQuery' still
+-- guards the pair.
+measureRecallQualityWith ::
+  (Store :> es) =>
+  -- | @SET LOCAL@ statements, e.g. @["SET LOCAL hnsw.iterative_scan = 'strict_order'"]@.
+  [Text] ->
+  SeededCorpus ->
+  Int ->
+  Eff es RecallQuality
+measureRecallQualityWith settings corpus k = do
+  rows <- runTransaction do
+    traverse_ (Tx.sql . encodeUtf8) settings
+    Tx.statement (vectorCandidateQuery (vectorRequest corpus) queryVector) selectVectorCandidatesStmt
+  plan <- explainVectorQueryWith settings corpus
+  -- This drives the raw ANN statement, with no fallback, so the ANN pass *is* the whole channel.
+  pure (scoreRecallQuality corpus k rows plan (length rows) False)
+
+scoreRecallQuality :: SeededCorpus -> Int -> [MemoryRecord] -> Text -> Int -> Bool -> RecallQuality
+scoreRecallQuality corpus k rows plan annPassRows fallbackFired =
+  RecallQuality
+    { rowsReturned = length rows,
+      recallAtK =
+        if null truth
+          then 0
+          else fromIntegral found / fromIntegral (length truth),
+      k,
+      decoysReturned = length (filter ("m_decoy_" `Text.isPrefixOf`) returned),
+      annRows = annPassRows,
+      exactFallbackFired = fallbackFired,
+      planText = plan,
+      planTopRows = planActualTopRows plan
+    }
+  where
+    returned = (\row -> row.memoryId) <$> rows
+    returnedSet = Set.fromList returned
+    truth = take k corpus.trueNearestInScope
+    found = length (filter (`Set.member` returnedSet) truth)
 
 -- | The request the vector channel is driven with. The query /text/ is irrelevant — the vector
 -- statement never reads it — but 'RecallRequest' requires one.
@@ -359,34 +416,23 @@ vectorRequest corpus =
 -- | @EXPLAIN (ANALYZE, BUFFERS)@ for the vector candidate query, run with the same five
 -- parameters recall passes, so Postgres plans it the way it plans the real one.
 explainVectorQuery :: (Store :> es) => SeededCorpus -> Eff es Text
-explainVectorQuery corpus =
-  Text.unlines
-    <$> runTransaction
-      ( Tx.statement
-          ( Text.pack (show (Vector.toList queryVector)),
-            scopeNamespaceText corpus.targetScope,
-            scopeKindText corpus.targetScope,
-            scopeRefText corpus.targetScope,
-            explainPoolSize
-          )
-          explainVectorStmt
+explainVectorQuery = explainVectorQueryWith []
+
+-- | 'explainVectorQuery' with @SET LOCAL@ settings applied to the same transaction. They must
+-- share a transaction: @SET LOCAL@ lasts exactly as long as the surrounding one, so a setting
+-- issued separately would silently EXPLAIN the baseline while claiming to EXPLAIN the candidate.
+explainVectorQueryWith :: (Store :> es) => [Text] -> SeededCorpus -> Eff es Text
+explainVectorQueryWith settings corpus =
+  Text.unlines <$> runTransaction do
+    traverse_ (Tx.sql . encodeUtf8) settings
+    Tx.statement
+      ( Text.pack (show (Vector.toList queryVector)),
+        scopeNamespaceText corpus.targetScope,
+        scopeKindText corpus.targetScope,
+        scopeRefText corpus.targetScope,
+        candidatePoolSize
       )
-
--- | 'Kioku.Recall.candidatePoolSize' is not exported, so it is restated here. If the two ever
--- disagree the EXPLAIN describes a query nobody runs — but note that 'rowsReturned' and
--- 'recallAtK' are measured through the real 'selectVectorCandidates' and so use the real pool
--- size regardless. Only the plan text depends on this copy.
-explainPoolSize :: Int32
-explainPoolSize = 50
-
--- | The projection from 'Kioku.Recall.selectVectorCandidatesStmt', which does not export it.
--- It is restated here because the row width it implies changes which plan Postgres picks — see
--- 'explainVectorStmt'. If the two ever drift apart the captured plan stops describing the query
--- under test, and the EXPLAIN becomes a confidently-wrong measurement rather than an error.
--- 'planAgreesWithQuery' is the guard against exactly that.
-memoryRecordColumns :: Text
-memoryRecordColumns =
-  "memory_id, agent_id, session_id, namespace, scope_kind, scope_ref, memory_type, content, priority, confidence, tags::text, status, created_at "
+      explainVectorStmt
 
 -- | Everything here is copied verbatim from 'Kioku.Recall.selectVectorCandidatesStmt' — the
 -- select list, the predicates, the @ORDER BY@, and the @LIMIT@ — and every part of it earns
@@ -465,3 +511,12 @@ describeRecallQuality q =
 -- thing that matters.
 usedHnswIndex :: RecallQuality -> Bool
 usedHnswIndex q = "kioku_memories_embedding_hnsw" `isInfixOf` Text.unpack q.planText
+
+-- | Run arbitrary DDL against the seeded corpus and re-@ANALYZE@ — the seam the bake-off needs
+-- to prototype an /index/ candidate without shipping a migration for it. Each statement is its
+-- own committed transaction, because a rebuilt index that the planner cannot see is the same
+-- confidently-wrong measurement as an uncommitted row.
+runDdl :: (Store :> es) => [Text] -> Eff es ()
+runDdl statements = do
+  traverse_ (runTransaction . Tx.sql . encodeUtf8) statements
+  runTransaction (Tx.sql "ANALYZE kioku_memories")
