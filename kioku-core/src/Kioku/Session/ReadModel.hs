@@ -616,6 +616,10 @@ selectAwaitingByCorrelationKeyStmt =
     )
     (D.rowList sessionRowDecoder)
 
+-- | @(session_id, turn_index)@ is the turn's identity; @turn_id@ is an idempotency token
+-- that travels with it. The conflict clause updates @turn_id@ as well, so rebuilding the
+-- projection from the event stream cannot leave a superseded turn's id attached to the
+-- winning event's content.
 insertTurnStmt :: Statement TurnRow ()
 insertTurnStmt =
   preparable
@@ -624,6 +628,7 @@ insertTurnStmt =
       (turn_id, session_id, turn_index, role, content, tool_summary, prompt_tokens, output_tokens, recorded_at)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     ON CONFLICT (session_id, turn_index) DO UPDATE SET
+      turn_id = EXCLUDED.turn_id,
       role = EXCLUDED.role,
       content = EXCLUDED.content,
       tool_summary = EXCLUDED.tool_summary,

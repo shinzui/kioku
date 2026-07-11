@@ -44,7 +44,7 @@ import Kioku.Session.ReadModel
     SessionsByNamespaceQuery (..),
     SessionsByScopeQuery (..),
     SessionsByStartedRangeQuery (..),
-    TurnRow,
+    TurnRow (..),
     TurnsBySessionQuery (..),
     awaitingSessionsByCorrelationKeyReadModel,
     sessionByIdReadModel,
@@ -375,18 +375,77 @@ recordInteractive cmdData = do
   where
     interactiveMismatch = mismatchOf sessionInteractiveFields cmdData
 
+-- | Record one turn of a running session.
+--
+-- Turn identity is @(sessionId, turnIndex)@; @turnId@ is an idempotency token that travels
+-- with it. A re-delivery of an identical turn succeeds without appending an event; the same
+-- index carrying different content, or the same @turnId@ reappearing at a different index,
+-- is a conflict. The aggregate independently enforces that indexes strictly increase.
+--
+-- Reusing a @turnId@ across two /different sessions/ remains a raw primary-key violation
+-- surfaced as @StoreFailed@: turn ids are host-generated, so a cross-session collision is a
+-- caller bug, and mapping that specific SQL error from inside keiro's projection
+-- transaction is not worth the machinery.
 recordTurn ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   RecordTurnData ->
   Eff es (Either SessionWriteError SessionId)
-recordTurn cmdData = do
-  existing <- getById cmdData.sessionId
-  case existing of
-    Left err -> pure (Left (SessionReadFailed err))
-    Right Nothing -> pure (Left SessionNotFound)
-    Right (Just row)
-      | row.status /= "running" -> pure (Left SessionNotRunning)
-      | otherwise -> runSessionCommand cmdData.sessionId (RecordTurn cmdData)
+recordTurn cmdData =
+  withExistingSession cmdData.sessionId \_row status ->
+    case status of
+      StatusRunning -> do
+        turns <- getTurns cmdData.sessionId
+        case turns of
+          Left err -> pure (Left (SessionReadFailed err))
+          Right existingTurns ->
+            case turnVerdict cmdData existingTurns of
+              Just verdict -> pure verdict
+              Nothing ->
+                runSessionCommand cmdData.sessionId (RecordTurn cmdData)
+                  >>= acceptRejectedTurnIfMatches cmdData
+      _ -> pure (Left SessionNotRunning)
+
+-- | The turns-table counterpart of 'acceptRejectedIfMatches': a concurrent duplicate that
+-- lost the optimistic-concurrency race converges to the winner's success.
+acceptRejectedTurnIfMatches ::
+  (IOE :> es, Store :> es) =>
+  RecordTurnData ->
+  Either SessionWriteError SessionId ->
+  Eff es (Either SessionWriteError SessionId)
+acceptRejectedTurnIfMatches d = \case
+  Left err@(SessionCommandRejected CommandRejected) -> do
+    turns <- getTurns d.sessionId
+    pure case turns of
+      Right rows
+        | Just row <- find (\row -> row.turnIndex == d.turnIndex) rows,
+          turnRowMatches d row ->
+            Right d.sessionId
+      _ -> Left err
+  other -> pure other
+
+-- | 'Just' a final answer if an existing turn row already decides this request;
+-- 'Nothing' if the command should run.
+turnVerdict :: RecordTurnData -> [TurnRow] -> Maybe (Either SessionWriteError SessionId)
+turnVerdict d existingTurns
+  | Just row <- sameIndex =
+      Just
+        if turnRowMatches d row
+          then Right d.sessionId
+          else Left (SessionConflict ("recordTurn: turn " <> Text.pack (show d.turnIndex) <> " already recorded with different content"))
+  | any (\row -> row.turnId == d.turnId) existingTurns =
+      Just (Left (SessionConflict ("recordTurn: turnId " <> d.turnId <> " is already used at a different turn index")))
+  | otherwise = Nothing
+  where
+    sameIndex = find (\row -> row.turnIndex == d.turnIndex) existingTurns
+
+turnRowMatches :: RecordTurnData -> TurnRow -> Bool
+turnRowMatches d row =
+  row.turnId == d.turnId
+    && row.role == d.role
+    && row.content == d.content
+    && row.toolSummary == d.toolSummary
+    && row.promptTokens == d.promptTokens
+    && row.outputTokens == d.outputTokens
 
 getById ::
   (IOE :> es, Store :> es) =>

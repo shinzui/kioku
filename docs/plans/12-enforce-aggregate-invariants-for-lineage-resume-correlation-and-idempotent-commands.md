@@ -74,10 +74,10 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [x] M2: Lineage validation in `Session.start` (self-reference, negative/inconsistent/capped delegation depth) with `SessionInvalidLineage`.
 - [x] M2: Cycle-proof `selectSessionChainStmt` (path-array guard + depth cap).
 - [x] M2: Tests — validation rejections, raw-SQL cycle proof under a tasty timeout. — 2026-07-11 (`ed5b768`), 7 new cases; suite 55 → 62 passing.
-- [ ] M3: `SessionStatus` sum type and payload-matching idempotent accepts for `start`, `recordInteractive`, `awaitInput`, `resume`, `complete`, `failSession` with `SessionConflict`.
-- [ ] M3: Payload-matching idempotent accepts for `Memory.record`, `supersede`, `archive`, `merge` with `MemoryConflict`.
-- [ ] M3: Post-rejection re-read fallback so a concurrent duplicate loser gets the idempotent success.
-- [ ] M3: Tests — duplicate-vs-conflict for every accept listed above.
+- [x] M3: `SessionStatus` sum type and payload-matching idempotent accepts for `start`, `recordInteractive`, `awaitInput`, `resume`, `complete`, `failSession` with `SessionConflict`.
+- [x] M3: Payload-matching idempotent accepts for `Memory.record`, `supersede`, `archive`, `merge` with `MemoryConflict`.
+- [x] M3: Post-rejection re-read fallback so a concurrent duplicate loser gets the idempotent success.
+- [x] M3: Tests — duplicate-vs-conflict for every accept listed above. — 2026-07-11 (`cd23156`), 17 new cases in `kioku-core/test/Kioku/IdempotencySpec.hs`; suite 62 → 79 passing.
 - [x] M4: Run the turn-index monotonicity audit (Concrete Steps, step 0) and record the result here. — 2026-07-11, **Audit B passed**: zero rows returned (no session stream has a non-increasing `turnIndex` in stream order). The strict `lastTurnIndex` register guard ships as designed; no fallback to the command-layer-only contract is needed.
 - [ ] M4: `lastTurnIndex` register + strictly-increasing guard on the `RecordTurn` edge; command-layer turn dedup in `Session.recordTurn`; projection updates `turn_id` on `(session_id, turn_index)` conflict.
 - [ ] M4: Tests — idempotent re-record, conflicting re-record, turn-id reuse at a different index, aggregate rejection of a non-increasing index.
@@ -145,6 +145,32 @@ Discovered during implementation:
   application's. With the path-array guard the same test returns in milliseconds. Evidence:
   the fail-before run was killed at exit 144 with no OK/FAIL line ever printed; the
   pass-after suite completes in 9.63s.
+- **The plan's timestamp decision was wrong, and an existing test proved it within minutes.**
+  The Decision Log had caller-supplied timestamps participate in conflict detection, on the
+  premise that "a genuine retry re-delivers the identical record value (ids and timestamps
+  are caller-generated in these APIs)". That premise is false in kioku itself:
+  `kioku-core/src/Kioku/Distill/L1.hs` `recordAtom` derives a **deterministic** memory id
+  (EP-1's whole idempotency mechanism) but stamps `recordedAt = now` at each pass. So an
+  idle-timer re-fire — precisely the regime EP-1 exists to survive — re-records the same
+  atom with a later clock, and the strict comparison classified it as a hard
+  `MemoryConflict`. `DistillSpec`'s "merge with a missing target drops it and stays
+  convergent" failed with
+  `L1MemoryWriteFailed (MemoryConflict "record: recordedAt differs from the recorded memory")`.
+  **Resolution:** call-time timestamps (`recordedAt`, `startedAt`, `completedAt`,
+  `failedAt`, `resumedAt`) are excluded from conflict detection; the id is the identity, and
+  a retry that re-reads the clock is the normal shape of a retry. Every semantic field is
+  still compared, so the review's actual complaint (a reused id with different *content*
+  reporting success) is still fixed. `awaitingDeadline` stays compared — it is a payload the
+  caller *asked for*, not a record of when it called. A regression test ("a record retried
+  with a fresh clock is a duplicate") pins the contract. Note the plan had already carved out
+  exactly this exception for `merge`; the mistake was not seeing that `record` has the same
+  shape.
+- **The suite flaked once under parallelism and it was not the code.** A `-j` run failed one
+  case while a serial run passed all 79. Cause: the killed-but-still-running Postgres backend
+  from the fail-before cycle experiment was saturating CPU (that run took 61s; clean parallel
+  runs take ~15s). Two subsequent parallel runs passed. If a database-backed case flakes
+  after a deliberately-hung query experiment, check for stray backends before suspecting the
+  diff.
 - **`mkTimeout` is exported from `Test.Tasty`**, not `Test.Tasty.Runners` (which the plan's
   Concrete Steps implied) and not `Test.Tasty.Options`.
 - **The pinned keiro really does take a bare `EventStream`**, as the plan's Interfaces
@@ -208,6 +234,32 @@ Record every decision made while working on the plan.
   `Kioku.Memory.merge`, so its idempotency check matches on `supersededBy` (the merge
   target) only.
   Date: 2026-07-07
+  **SUPERSEDED 2026-07-11 during M3 — the parenthesized premise is false.** See the
+  replacement decision immediately below.
+
+- Decision (supersedes the above, 2026-07-11): **Call-time timestamps do not participate in
+  conflict detection. The entity id is the identity; every *semantic* field is compared.**
+  Excluded: `recordedAt`, `startedAt`, `completedAt`, `failedAt`, `resumedAt` (and, as
+  before, `merge`'s `mergedAt` and `supersede`/`archive`'s `supersededAt`/`archivedAt`).
+  Still compared: content, scope, memory type, priority, confidence, tags, `supersedes`,
+  the merge/supersession target, agent, focus, subject, lineage, awaiting reason/key, and
+  `awaitingDeadline` (a deadline is a payload the caller *asked for*, not a record of when
+  it called).
+  Rationale: the original premise — that a retry re-delivers the identical timestamp — is
+  contradicted by kioku's own most important `record` caller.
+  `kioku-core/src/Kioku/Distill/L1.hs` `recordAtom` derives a deterministic memory id
+  (EP-1's entire idempotency mechanism) but stamps `recordedAt = now` on every pass, so an
+  idle-timer re-fire — the exact regime EP-1 was built to survive — re-records the same atom
+  under a later clock. Comparing the timestamp turned that into a hard `MemoryConflict`,
+  which `DistillSpec`'s "merge with a missing target drops it and stays convergent" caught
+  immediately. Generalizing: any host retrying a write after a transient failure will
+  naturally re-read its clock, so a timestamp comparison converts routine retries into hard
+  failures — the opposite of what an idempotency contract is for. The plan had already
+  carved out this exception for `merge`; the error was not seeing that `record` and the
+  session writes have the same shape. The review's actual finding — a reused id with
+  different *content* reporting success — remains fixed, and a regression test pins the new
+  contract.
+  Date: 2026-07-11
 
 - Decision: **After a `CommandRejected` from the aggregate, the command layer re-reads the
   read model and returns the idempotent `Right` if the observed state now matches the

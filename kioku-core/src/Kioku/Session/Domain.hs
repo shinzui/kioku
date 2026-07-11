@@ -44,7 +44,14 @@ data SessionVertex = NotCreated | Running | Completed | Failed | Interactive | A
 -- @awaitedCorrelationKey@ is the key the session is currently parked on (set by
 -- @SessionAwaiting@, cleared by @SessionResumed@). It is what makes resume-correlation
 -- matching an aggregate invariant rather than a racy read-model precheck.
-type SessionRegs = '[ '("awaitedCorrelationKey", Maybe Text)]
+--
+-- @lastTurnIndex@ is the highest turn index committed so far (-1 before any turn), which
+-- makes @RecordTurn@'s strictly-increasing index contract enforceable in the state machine
+-- rather than only at the command layer.
+type SessionRegs =
+  '[ '("awaitedCorrelationKey", Maybe Text),
+     '("lastTurnIndex", Int)
+   ]
 
 data StartSessionData = StartSessionData
   { sessionId :: !SessionId,
@@ -292,9 +299,10 @@ sessionTransducer =
   B.buildTransducer NotCreated emptyRegFile isTerminal do
     B.from NotCreated do
       B.onCmd inCtorStartSession $ \d -> B.do
-        -- 'emptyRegFile' binds every slot to a deferred error, so the only path into
-        -- Awaiting (Running, via this edge) must initialize the register first.
+        -- 'emptyRegFile' binds every slot to a deferred error, so this edge — the only way
+        -- into Running, and thus into Awaiting and RecordTurn — must initialize both.
         B.slot @"awaitedCorrelationKey" =: lit Nothing
+        B.slot @"lastTurnIndex" =: lit (-1)
         B.emit
           wireSessionStarted
           SessionStartedTermFields
@@ -346,6 +354,12 @@ sessionTransducer =
         B.goto Failed
 
       B.onCmd inCtorRecordTurn $ \d -> B.do
+        -- Turn identity: (sessionId, turnIndex). Indexes must strictly increase, so a
+        -- re-delivered or out-of-order turn cannot silently overwrite a committed one.
+        -- 'turnIndex' is already in the event payload, so replay recovers it and existing
+        -- strictly-increasing streams rehydrate unchanged (verified by Audit B).
+        B.requireGt d.turnIndex (B.reg @"lastTurnIndex")
+        B.slot @"lastTurnIndex" =: d.turnIndex
         B.emit
           wireTurnRecorded
           TurnRecordedTermFields

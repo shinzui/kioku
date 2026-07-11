@@ -7,7 +7,7 @@ module Kioku.SessionInvariantsSpec (tests) where
 import Control.Monad (void)
 import Data.Aeson (Value, object, toJSON, (.=))
 import Data.Text (Text)
-import Data.Time (UTCTime, getCurrentTime)
+import Data.Time (UTCTime (..), fromGregorian, getCurrentTime)
 import Data.Vector qualified as Vector
 import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
@@ -22,6 +22,7 @@ import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain
   ( AwaitInputData (..),
+    RecordTurnData (..),
     ResumeSessionData (..),
     SessionAwaitingData (..),
     SessionCommand (..),
@@ -58,7 +59,14 @@ tests =
       testCase "a keyed resume of a keyless wait is rejected" testKeyedResumeOfKeylessWait,
       testCase "re-park clears the previous resume input" testReparkClearsResumeInput,
       testCase "pre-force keyless resume events still hydrate" testHydratesLegacyKeylessResume,
-      testCase "pre-force keyed resume events still hydrate" testHydratesLegacyKeyedResume
+      testCase "pre-force keyed resume events still hydrate" testHydratesLegacyKeyedResume,
+      testGroup
+        "turn identity"
+        [ testCase "an identical re-record is a duplicate" testTurnReRecordIsDuplicate,
+          testCase "the same index with different content is a conflict" testTurnSameIndexConflict,
+          testCase "the same turn id at a different index is a conflict" testTurnIdReuseConflict,
+          testCase "the aggregate rejects a non-increasing index" testAggregateRejectsNonIncreasingTurn
+        ]
     ]
 
 -- | The core proof: with the session parked on @k1@, a @ResumeSession@ carrying @k2@ is
@@ -269,6 +277,100 @@ hydrateLegacyStream resumedKey =
         "the new event landed on top of the replayed history"
         ["SessionStarted", "SessionAwaiting", "SessionResumed", "SessionAwaiting"]
         (eventName <$> events)
+
+-- * Turn identity
+
+testTurnReRecordIsDuplicate :: Assertion
+testTurnReRecordIsDuplicate =
+  withApp do
+    sid <- startFixture
+    let turn = turnData sid "turn-a" 0 "hello"
+    void (liftEither "first recordTurn" =<< Session.recordTurn turn)
+    void (liftEither "duplicate recordTurn" =<< Session.recordTurn turn)
+    events <- readSessionEvents sid
+    liftIO $
+      assertEqual
+        "the duplicate appended no second TurnRecorded"
+        1
+        (length [() | TurnRecorded _ <- events])
+    turns <- liftEither "getTurns" =<< Session.getTurns sid
+    liftIO $ assertEqual "exactly one turn row" 1 (length turns)
+
+testTurnSameIndexConflict :: Assertion
+testTurnSameIndexConflict =
+  withApp do
+    sid <- startFixture
+    void (liftEither "first recordTurn" =<< Session.recordTurn (turnData sid "turn-a" 0 "hello"))
+    result <- Session.recordTurn (turnData sid "turn-a" 0 "something else")
+    liftIO $ assertConflict "same index, different content" result
+    events <- readSessionEvents sid
+    liftIO $
+      assertEqual "no second TurnRecorded" 1 (length [() | TurnRecorded _ <- events])
+
+testTurnIdReuseConflict :: Assertion
+testTurnIdReuseConflict =
+  withApp do
+    sid <- startFixture
+    void (liftEither "first recordTurn" =<< Session.recordTurn (turnData sid "turn-a" 0 "hello"))
+    result <- Session.recordTurn (turnData sid "turn-a" 1 "a new turn reusing the id")
+    liftIO $ assertConflict "turn id reused at a different index" result
+    events <- readSessionEvents sid
+    liftIO $
+      assertEqual "no second TurnRecorded" 1 (length [() | TurnRecorded _ <- events])
+
+-- | The command layer's dedup is a convenience; this proves the state machine enforces the
+-- strictly-increasing index on its own, with every precheck bypassed.
+testAggregateRejectsNonIncreasingTurn :: Assertion
+testAggregateRejectsNonIncreasingTurn =
+  withApp do
+    sid <- startFixture
+    void (liftEither "recordTurn 0" =<< Session.recordTurn (turnData sid "turn-a" 0 "hello"))
+    void (liftEither "recordTurn 1" =<< Session.recordTurn (turnData sid "turn-b" 1 "again"))
+    now <- liftIO getCurrentTime
+    result <-
+      runSessionCommandDirect
+        sid
+        ( RecordTurn
+            RecordTurnData
+              { sessionId = sid,
+                turnId = "turn-c",
+                turnIndex = 1,
+                role = "user",
+                content = "a stale index",
+                toolSummary = Nothing,
+                promptTokens = Nothing,
+                outputTokens = Nothing,
+                recordedAt = now
+              }
+        )
+    liftIO $ assertRejected "non-increasing turn index" result
+    events <- readSessionEvents sid
+    liftIO $
+      assertEqual "still only the two committed turns" 2 (length [() | TurnRecorded _ <- events])
+
+turnData :: SessionId -> Text -> Int -> Text -> RecordTurnData
+turnData sid turnId turnIndex content =
+  RecordTurnData
+    { sessionId = sid,
+      turnId,
+      turnIndex,
+      role = "user",
+      content,
+      toolSummary = Nothing,
+      promptTokens = Nothing,
+      outputTokens = Nothing,
+      recordedAt = fixedRecordedAt
+    }
+
+-- | Turn recording compares semantic fields, not the clock (see 'Kioku.Session.mismatchOf'),
+-- but pinning the timestamp keeps these fixtures obviously identical.
+fixedRecordedAt :: UTCTime
+fixedRecordedAt = UTCTime (fromGregorian 2026 7 11) 0
+
+assertConflict :: String -> Either Session.SessionWriteError SessionId -> Assertion
+assertConflict label = \case
+  Left (Session.SessionConflict _) -> pure ()
+  other -> assertFailure (label <> ": expected SessionConflict, got " <> show other)
 
 -- | The @SessionResumed@ JSON exactly as it was written before this plan: no @force@ key.
 legacyResumedPayload :: SessionId -> Maybe Text -> UTCTime -> Value
