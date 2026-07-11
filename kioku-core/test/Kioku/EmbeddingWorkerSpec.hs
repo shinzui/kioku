@@ -107,7 +107,7 @@ testProviderFailureRetries =
 testUndecodablePayloadDeadLetters :: Assertion
 testUndecodablePayloadDeadLetters =
   withEmbeddingEnv \appEnv -> do
-    capability <- runOrFail appEnv detectVectorCapability
+    capability <- runOrFail appEnv (detectVectorCapability embeddingDims)
     decision <- runOrFail appEnv do
       (_, recorded) <- recordFixtureMemory "corrupt payload memory"
       let env = mkTestEnv (failingEmbed EmbedEmpty)
@@ -238,7 +238,7 @@ mkIngested recorded attemptN =
 withVectorEnv :: String -> (AppEnv -> VectorCapability -> IO ()) -> Assertion
 withVectorEnv label action =
   withEmbeddingEnv \appEnv -> do
-    capability <- runOrFail appEnv detectVectorCapability
+    capability <- runOrFail appEnv (detectVectorCapability embeddingDims)
     case capability of
       VectorAvailable -> action appEnv capability
       _ ->

@@ -56,8 +56,8 @@ even if it requires splitting a partially completed task into two ("done" vs. "r
 - [x] M3: fix the vector candidate ORDER BY — **and deliberately NOT add the `SET LOCAL hnsw.ef_search` over-fetch, which measurement showed is a recall regression** (see Decision Log supersession)
 - [x] M3: export test seams (`selectFtsCandidates`, `selectVectorCandidates`, `vectorLiteral`) and add `RecallSqlSpec` DB tests — 6 cases; the vector round-trip is proven to genuinely run under pgvector and to skip loudly without it
 - [x] M3: capture before/after `EXPLAIN` transcripts (below) — the real defect is narrower than the plan claimed
-- [ ] M4: extend the capability probe with dimension validation (`VectorDimensionMismatch`)
-- [ ] M4: fail fast in the worker CLI on mismatch; add capability tests
+- [x] M4: extend the capability probe with dimension validation (`VectorDimensionMismatch`) — **and change the extension probe from `pg_extension` to `to_regtype('vector')`**, the search-path-aware question recall actually asks
+- [x] M4: fail fast in the worker CLI on mismatch; add capability tests — verified live: `--backfill` exits 1 before touching an event, the continuous worker stays up and keeps firing timers
 - [ ] M5: add `Kioku.Distill.ScopeIdentity` (escaped identity, hash-suffixed slug) and rewire L2/L3
 - [ ] M5: add `mkNamespace`/`mkScopeKind` validators in `kioku-api` and use them in the CLI scope parser
 - [ ] M5: mint the id-recompute migration for ambiguous scene/persona rows and touch `Migrations.hs`

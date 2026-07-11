@@ -11,7 +11,7 @@ import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Distill.L1 (L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
 import Kioku.Id (SessionId, idText, parseIdAnyPrefix)
-import Kioku.Memory.Embedding (resolveEmbeddingConfig, toEmbeddingModel)
+import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Recall.Capability (detectVectorCapability)
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
 import Options.Applicative
@@ -78,7 +78,7 @@ runDistill opts = do
       finder <-
         case (opts.candidateSource, recallConfig) of
           (CandidateRecall, Just config) -> do
-            capability <- detectVectorCapability
+            capability <- detectVectorCapability config.dimensions
             pure (recallCandidates (toEmbeddingModel config) capability opts.candidateLimit)
           _ ->
             pure (scopedScanCandidates opts.candidateLimit)

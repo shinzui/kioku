@@ -53,7 +53,7 @@ runWorker opts = do
     if opts.timersOnce
       then runTimerOnce env config
       else do
-        result <- runAppIO env detectVectorCapability
+        result <- runAppIO env (detectVectorCapability config.dimensions)
         capability <- case result of
           Left storeErr -> ioError (userError ("kioku worker store error: " <> show storeErr))
           Right cap -> pure cap
@@ -79,6 +79,12 @@ mergeCandidateLimit = 8
 
 runBackfill :: AppEnv -> VectorCapability -> EmbeddingConfig -> IO ()
 runBackfill env capability config = do
+  -- Refuse before any event is touched: a backfill under a mismatched dimension count would
+  -- embed every memory in the store and fail the ::vector cast on every single one.
+  case capability of
+    VectorDimensionMismatch configured actual ->
+      dieWorker (dimensionMismatchMessage configured actual)
+    _ -> pure ()
   let model = toEmbeddingModel config
   result <- runAppIO env (backfillMissingEmbeddings capability model config.dimensions)
   case result of
@@ -129,6 +135,21 @@ runContinuousWorker env store capability config = do
     VectorColumnsUnavailable missing -> do
       putStrLn ("pgvector columns are missing (" <> Text.unpack (Text.intercalate ", " missing) <> "); running kioku timer worker only.")
       runTimerLoop env capability config
+    -- Loud, but not fatal. Every embedding write would fail on the ::vector cast, so there
+    -- is no point starting the embedding host — but distillation timers have nothing to do
+    -- with embeddings, and killing the whole worker would stop them too.
+    VectorDimensionMismatch configured actual -> do
+      hPutStrLn stderr ("kioku worker: " <> dimensionMismatchMessage configured actual <> "; running kioku timer worker only.")
+      runTimerLoop env capability config
+
+-- | A dimension mismatch would otherwise be discovered one failed event at a time, forever.
+dimensionMismatchMessage :: Int -> Int -> String
+dimensionMismatchMessage configured actual =
+  "embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS="
+    <> show configured
+    <> " but kiroku.kioku_memories.embedding is vector("
+    <> show actual
+    <> "); fix the env var or migrate the column"
 
 -- | Recover embeddings lost to an outage that outlasted the retry window.
 -- Idempotent, so it is safe on every start. A failure here is only a warning:
@@ -153,7 +174,7 @@ runTimerOnce env config = do
   rt <- newDistillRuntime
   now <- getCurrentTime
   result <- runAppIO env do
-    capability <- detectVectorCapability
+    capability <- detectVectorCapability config.dimensions
     runKiokuTimerWorkerOnce Nothing rt (mergeCandidateFinder config capability) now
   case result of
     Left storeErr -> ioError (userError ("kioku timer worker store error: " <> show storeErr))

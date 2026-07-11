@@ -148,6 +148,11 @@ planRecallExecution capability strategy =
       keywordExecutionPlan
     VectorColumnsUnavailable _ ->
       keywordExecutionPlan
+    -- A dimension mismatch is a configuration error, not a missing feature, but recall's
+    -- response is the same: the vector channel cannot work, so degrade to keyword rather
+    -- than fail. The worker is where it is reported loudly.
+    VectorDimensionMismatch {} ->
+      keywordExecutionPlan
 
 keywordExecutionPlan :: RecallExecutionPlan
 keywordExecutionPlan =

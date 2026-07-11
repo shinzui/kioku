@@ -11,7 +11,7 @@ import Kioku.Api.Scope (MemoryScope)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Cli.Scope (parseScope)
-import Kioku.Memory.Embedding (resolveEmbeddingConfig, toEmbeddingModel)
+import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Recall (RecallHit (..), RecallRequest (..), RecallStrategy (..), recall)
 import Kioku.Recall.Capability (detectVectorCapability)
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
@@ -73,7 +73,7 @@ runRecall opts = do
               maxResults = opts.limit
             }
     result <- runAppIO env do
-      capability <- detectVectorCapability
+      capability <- detectVectorCapability config.dimensions
       recall model capability request
     case result of
       Left storeErr -> ioError (userError ("kioku recall store error: " <> show storeErr))

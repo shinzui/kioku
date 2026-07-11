@@ -20,6 +20,7 @@ import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.App (AppEffects, AppEnv (..), noopTracer, runAppIO)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Recall (RecallRequest (..), RecallStrategy (..), selectFtsCandidates, selectVectorCandidates, vectorLiteral)
+import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Error (StoreError)
@@ -39,8 +40,31 @@ tests =
           testCase "unbalanced quotes and bare operators" (assertQueryDoesNotThrow "\"unbalanced OR AND"),
           testCase "punctuation only" (assertQueryDoesNotThrow "-- ; ()")
         ],
-      testCase "a vector round-trip ranks the nearest embedding first" testVectorRoundTrip
+      testCase "a vector round-trip ranks the nearest embedding first" testVectorRoundTrip,
+      testCase "capability detection reads the column's real width" testDimensionDetection
     ]
+
+-- | The migrated schema declares @embedding vector(1536)@, so a process configured for 512
+-- is misconfigured and every embedding write it attempts would fail on the @::vector@ cast.
+-- Detection reports it once, at startup, instead of once per event forever.
+testDimensionDetection :: IO ()
+testDimensionDetection =
+  withRecallFixture \runEff -> do
+    result <- runEff do
+      available <- vectorTypeIsReachable
+      if not available
+        then pure Nothing
+        else do
+          mismatched <- detectVectorCapability 512
+          matched <- detectVectorCapability 1536
+          pure (Just (mismatched, matched))
+    case result of
+      Left err -> assertFailure ("store error: " <> show err)
+      Right Nothing ->
+        putStrLn "  [skipped] no reachable pgvector on this cluster; re-enter the dev shell to exercise dimension detection"
+      Right (Just (mismatched, matched)) -> do
+        assertEqual "a 512-dimension config against a vector(1536) column is a mismatch" (VectorDimensionMismatch 512 1536) mismatched
+        assertEqual "the configured width matching the column is simply available" VectorAvailable matched
 
 -- | Recall's scope predicate is @(($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND
 -- scope_ref = $4))@: for a global scope both parameters are NULL, the first disjunct is

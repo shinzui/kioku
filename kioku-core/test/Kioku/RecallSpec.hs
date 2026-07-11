@@ -9,7 +9,7 @@ import Data.Time (UTCTime, addUTCTime)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Recall
-import Kioku.Recall.Capability (VectorCapability (..))
+import Kioku.Recall.Capability (CapabilityProbe (..), VectorCapability (..), classifyProbe)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, testCase, (@?=))
 
@@ -20,7 +20,8 @@ tests =
     [ testCase "RRF fusion favors a memory present in both lists" testRrfFusion,
       testCase "signal blending maps recency priority and confidence" testSignalBlending,
       testCase "character budgets truncate and stop before total cap" testBudgets,
-      testCase "execution plan fails open to keyword when vectors are unavailable" testFailOpenPlan
+      testCase "execution plan fails open to keyword when vectors are unavailable" testFailOpenPlan,
+      testCase "capability classification names the reason vectors are unusable" testCapabilityClassification
     ]
 
 testRrfFusion :: Assertion
@@ -68,6 +69,33 @@ testFailOpenPlan = do
     @?= RecallExecutionPlan {runFts = True, runVector = False, needsQueryEmbedding = False}
   planRecallExecution (VectorColumnsUnavailable ["embedding"]) Embedding
     @?= RecallExecutionPlan {runFts = True, runVector = False, needsQueryEmbedding = False}
+  -- A mismatch is a configuration error, not a missing feature, but recall's response is the
+  -- same: the vector channel cannot work, so degrade rather than fail on every query.
+  planRecallExecution (VectorDimensionMismatch 512 1536) Hybrid
+    @?= RecallExecutionPlan {runFts = True, runVector = False, needsQueryEmbedding = False}
+
+testCapabilityClassification :: Assertion
+testCapabilityClassification = do
+  classifyProbe 1536 healthyProbe @?= VectorAvailable
+  -- The type must be nameable on *this* connection's search_path, not merely installed
+  -- somewhere in the database: recall casts with a bare `$1::vector`.
+  classifyProbe 1536 healthyProbe {hasVectorType = False} @?= VectorExtensionUnavailable
+  classifyProbe 1536 healthyProbe {hasEmbedding = False, embeddingTypmod = Nothing}
+    @?= VectorColumnsUnavailable ["embedding"]
+  classifyProbe 512 healthyProbe @?= VectorDimensionMismatch 512 1536
+  -- A column declared without a width constrains nothing, so there is nothing to disagree
+  -- with; -1 is what pgvector reports for `vector` with no dimension.
+  classifyProbe 512 healthyProbe {embeddingTypmod = Just (-1)} @?= VectorAvailable
+  where
+    healthyProbe =
+      CapabilityProbe
+        { hasVectorType = True,
+          hasEmbedding = True,
+          hasEmbeddingModel = True,
+          hasDimensions = True,
+          hasContentHash = True,
+          embeddingTypmod = Just 1536
+        }
 
 row :: Text -> UTCTime -> Text -> MemoryRecord
 row memoryId createdAt content =
