@@ -1,10 +1,13 @@
 module Kioku.SessionLineageSpec (tests) where
 
 import Control.Monad (void)
+import Data.List (sort)
 import Data.Text (Text)
+import Data.Text.Encoding (encodeUtf8)
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
+import Hasql.Transaction qualified as Tx
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
 import Kioku.App (AppEnv (..), noopTracer, runAppIO)
 import Kioku.Id (SessionId, genSessionId, idText)
@@ -15,14 +18,29 @@ import Kioku.Session.ReadModel (SessionRow (..))
 import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Error (StoreError)
-import Test.Tasty (TestTree, testGroup)
+import Kiroku.Store.Transaction (runTransaction)
+import Test.Tasty (TestTree, localOption, mkTimeout, testGroup)
 import Test.Tasty.HUnit (assertEqual, assertFailure, testCase)
 
 tests :: TestTree
 tests =
   testGroup
     "Session.Lineage"
-    [ testCase "child sessions record parent id and delegation depth" testDelegationLineage
+    [ testCase "child sessions record parent id and delegation depth" testDelegationLineage,
+      testGroup
+        "start rejects malformed lineage"
+        [ testCase "a session that is its own predecessor" (assertInvalidLineage selfPrevious),
+          testCase "a session that is its own parent" (assertInvalidLineage selfParent),
+          testCase "a negative delegation depth" (assertInvalidLineage negativeDepth),
+          testCase "a delegation depth past the cap" (assertInvalidLineage depthPastCap),
+          testCase "a delegated session at depth 0" (assertInvalidLineage parentAtDepthZero),
+          testCase "a root session at depth 1" (assertInvalidLineage rootAtDepthOne)
+        ],
+      -- A cycle cannot be built through the API any more, so this one manufactures corrupt
+      -- data directly. Before the CTE carried a path array, getChain looped until the
+      -- timeout fired; it now returns in milliseconds.
+      localOption (mkTimeout 10_000_000) $
+        testCase "getChain terminates on a cyclic chain" testChainTerminatesOnCycle
     ]
 
 data LineageResult = LineageResult
@@ -57,6 +75,49 @@ testDelegationLineage =
           assertEqual "children carry depth 1" [1, 1] (rowDelegationDepth <$> children)
           assertEqual "previous-session chain follows previousSessionId, not parentSessionId" [idText child1, idText child2] (rowSessionId <$> childChain)
 
+-- | A malformed-lineage case, built from the session's own id (so the self-reference cases
+-- can point a field at it) and an unrelated id (so the depth cases can name a parent
+-- without tripping the self-parent rule first).
+type LineageCase = SessionId -> SessionId -> UTCTime -> StartSessionData
+
+baseStart :: LineageCase
+baseStart sid _other startedAt =
+  StartSessionData
+    { sessionId = sid,
+      agentId = "test-agent",
+      focus = "delegation lineage",
+      scope = ScopeGlobal (Namespace "kioku-test"),
+      subjectRef = Nothing,
+      previousSessionId = Nothing,
+      parentSessionId = Nothing,
+      delegationDepth = 0,
+      startedAt
+    }
+
+selfPrevious, selfParent, negativeDepth, depthPastCap, parentAtDepthZero, rootAtDepthOne :: LineageCase
+selfPrevious sid o t = (baseStart sid o t) {previousSessionId = Just sid}
+selfParent sid o t = (baseStart sid o t) {parentSessionId = Just sid, delegationDepth = 1}
+negativeDepth sid o t = (baseStart sid o t) {delegationDepth = -1}
+depthPastCap sid o t = (baseStart sid o t) {parentSessionId = Just o, delegationDepth = 65}
+parentAtDepthZero sid o t = (baseStart sid o t) {parentSessionId = Just o, delegationDepth = 0}
+rootAtDepthOne sid o t = (baseStart sid o t) {delegationDepth = 1}
+
+assertInvalidLineage :: LineageCase -> IO ()
+assertInvalidLineage mkCommand =
+  withKiokuMigratedDatabase \connStr ->
+    withStore (defaultConnectionSettings connStr) \st -> do
+      tracer <- noopTracer
+      sid <- genSessionId
+      other <- genSessionId
+      now <- getCurrentTime
+      let env = AppEnv {store = st, tracer, metrics = Nothing}
+      result <- runAppIO env (Session.start (mkCommand sid other now))
+      case result of
+        Left storeErr -> assertFailure ("store error: " <> show storeErr)
+        Right (Left (Session.SessionInvalidLineage _)) -> pure ()
+        Right other' ->
+          assertFailure ("expected SessionInvalidLineage, got " <> show other')
+
 startFixture ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
@@ -81,6 +142,48 @@ startFixture sid agent previous parent depth startedAt = do
           startedAt
         }
   void (liftEither "Session.start" result)
+
+-- | Insert two sessions that name each other as predecessor, bypassing 'Session.start'
+-- (which now refuses to create a cycle), then walk the chain. The assertion is simply that
+-- the query returns at all — and returns each session exactly once, rather than looping.
+testChainTerminatesOnCycle :: IO ()
+testChainTerminatesOnCycle =
+  withKiokuMigratedDatabase \connStr ->
+    withStore (defaultConnectionSettings connStr) \st -> do
+      tracer <- noopTracer
+      a <- genSessionId
+      b <- genSessionId
+      let env = AppEnv {store = st, tracer, metrics = Nothing}
+      result <-
+        runAppIO env do
+          insertCyclicPair a b
+          Session.getChain a >>= liftEither "getChain"
+      case result of
+        Left storeErr -> assertFailure ("store error: " <> show storeErr)
+        Right chain -> do
+          assertEqual "the cyclic chain returns both sessions" 2 (length chain)
+          assertEqual
+            "each session appears exactly once"
+            (sort [idText a, idText b])
+            (sort (rowSessionId <$> chain))
+
+insertCyclicPair ::
+  (IOE :> es, Store :> es) =>
+  SessionId ->
+  SessionId ->
+  Eff es ()
+insertCyclicPair a b =
+  runTransaction . Tx.sql . encodeUtf8 $
+    "INSERT INTO kioku_sessions (session_id, agent_id, focus, namespace, delegation_depth, status, started_at, previous_session_id) VALUES "
+      <> "('"
+      <> idText a
+      <> "','t','f','kioku-test',0,'completed',NOW(),'"
+      <> idText b
+      <> "'),('"
+      <> idText b
+      <> "','t','f','kioku-test',0,'completed',NOW() - interval '1 second','"
+      <> idText a
+      <> "')"
 
 liftEither :: (Show e, IOE :> es) => String -> Either e a -> Eff es a
 liftEither label = \case

@@ -65,12 +65,12 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 
 - [x] M1: Run the pre-implementation data audit for `SessionResumed` correlation keys (see Concrete Steps, step 0) and record the result here. — 2026-07-11, **Audit A passed**: the `kioku` dev database holds 4 session streams (`SessionStarted` ×4, `SessionCompleted` ×4, `TurnRecorded` ×4) and **zero** `SessionAwaiting`/`SessionResumed` events, so no stream can carry a mismatched correlation key and the new guard cannot brick any existing stream. Guard is safe to ship.
-- [ ] M1: Add the `awaitedCorrelationKey` register to `SessionRegs` and initialize/set/clear it on the Start/AwaitInput/Resume edges in `kioku-core/src/Kioku/Session/Domain.hs`.
-- [ ] M1: Add `force :: Bool` to `ResumeSessionData` (command) and `SessionResumedData` (event) with the backward-compatible `FromJSON` default.
-- [ ] M1: Add the correlation guard to the `ResumeSession` edge.
-- [ ] M1: Update `Kioku.Session.resume` (drop the omitted-key bypass) and add `Kioku.Session.forceResume`.
-- [ ] M1: Null `resume_input` in `updateSessionAwaitingStmt` (re-park fix).
-- [ ] M1: Tests — aggregate-level mismatch rejection, force resume, keyless wait resume, re-park clears `resume_input`, replay of a pre-`force` event stream (raw JSON append).
+- [x] M1: Add the `awaitedCorrelationKey` register to `SessionRegs` and initialize/set/clear it on the Start/AwaitInput/Resume edges in `kioku-core/src/Kioku/Session/Domain.hs`.
+- [x] M1: Add `force :: Bool` to `ResumeSessionData` (command) and `SessionResumedData` (event) with the backward-compatible `FromJSON` default.
+- [x] M1: Add the correlation guard to the `ResumeSession` edge.
+- [x] M1: Update `Kioku.Session.resume` (drop the omitted-key bypass) and add `Kioku.Session.forceResume`.
+- [x] M1: Null `resume_input` in `updateSessionAwaitingStmt` (re-park fix).
+- [x] M1: Tests — aggregate-level mismatch rejection, force resume, keyless wait resume, re-park clears `resume_input`, replay of a pre-`force` event stream (raw JSON append). — 2026-07-11 (`77682c7`), 8 new cases in `kioku-core/test/Kioku/SessionInvariantsSpec.hs`; suite 47 → 55 passing.
 - [ ] M2: Lineage validation in `Session.start` (self-reference, negative/inconsistent/capped delegation depth) with `SessionInvalidLineage`.
 - [ ] M2: Cycle-proof `selectSessionChainStmt` (path-array guard + depth cap).
 - [ ] M2: Tests — validation rejections, raw-SQL cycle proof under a tasty timeout.

@@ -21,6 +21,7 @@ module Kioku.Session
   )
 where
 
+import Data.Text qualified as Text
 import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError, defaultRunCommandOptions)
@@ -65,18 +66,53 @@ data SessionWriteError
   | SessionNotRunning
   | SessionNotAwaiting
   | SessionCorrelationMismatch
+  | SessionInvalidLineage !Text
   deriving stock (Generic, Show)
+
+-- | The deepest delegation chain a session may declare. Far above any legitimate agent
+-- hierarchy; it exists to bound absurd input, not to express a product limit.
+maxDelegationDepth :: Int
+maxDelegationDepth = 64
 
 start ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   StartSessionData ->
   Eff es (Either SessionWriteError SessionId)
-start cmdData = do
-  existing <- getById cmdData.sessionId
-  case existing of
-    Left err -> pure (Left (SessionReadFailed err))
-    Right (Just _) -> pure (Right cmdData.sessionId)
-    Right Nothing -> runSessionCommand cmdData.sessionId (StartSession cmdData)
+start cmdData =
+  case validateLineage cmdData of
+    Just reason -> pure (Left (SessionInvalidLineage reason))
+    Nothing -> do
+      existing <- getById cmdData.sessionId
+      case existing of
+        Left err -> pure (Left (SessionReadFailed err))
+        Right (Just _) -> pure (Right cmdData.sessionId)
+        Right Nothing -> runSessionCommand cmdData.sessionId (StartSession cmdData)
+
+-- | Pure, command-time lineage checks: 'Just' a reason means reject.
+--
+-- Deliberately does /not/ check that the referenced sessions exist. Existence checks would
+-- be read-model reads with their own races, and they would forbid legitimate out-of-order
+-- ingestion; a dangling pointer is harmless to the chain query, which simply stops walking.
+-- Because existence is unchecked a cycle can still be constructed (write A→B before B
+-- exists, then B→A), which is why 'selectSessionChainStmt' carries its own cycle guard.
+--
+-- These run only here, never during replay, so no historical event can be made
+-- unreplayable by tightening them.
+validateLineage :: StartSessionData -> Maybe Text
+validateLineage d
+  | d.previousSessionId == Just d.sessionId =
+      Just "previousSessionId must not be the session's own id"
+  | d.parentSessionId == Just d.sessionId =
+      Just "parentSessionId must not be the session's own id"
+  | d.delegationDepth < 0 =
+      Just "delegationDepth must not be negative"
+  | d.delegationDepth > maxDelegationDepth =
+      Just ("delegationDepth must not exceed " <> Text.pack (show maxDelegationDepth))
+  | isJust d.parentSessionId && d.delegationDepth < 1 =
+      Just "a delegated session (parentSessionId present) must have delegationDepth >= 1"
+  | isNothing d.parentSessionId && d.delegationDepth /= 0 =
+      Just "a root session (no parentSessionId) must have delegationDepth 0"
+  | otherwise = Nothing
 
 complete ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>

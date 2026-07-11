@@ -422,6 +422,15 @@ selectSessionsByStartedRangeStmt =
     )
     (D.rowList sessionRowDecoder)
 
+-- | Walk a session's continuation chain backwards through @previous_session_id@.
+--
+-- The @path@ array makes revisiting a session impossible, so the walk terminates on any
+-- data — including a cycle, which 'Kioku.Session.start' now refuses to create but which
+-- unchecked lineage (see @validateLineage@) still permits to be constructed out of order.
+-- With a plain @UNION ALL@ and no guard, a cycle loops until timeout or OOM. The depth cap
+-- is defense in depth, far above any legitimate chain.
+--
+-- The final @SELECT@ omits @depth@/@path@, so 'sessionRowDecoder' is unchanged.
 selectSessionChainStmt :: Statement Text [SessionRow]
 selectSessionChainStmt =
   preparable
@@ -430,16 +439,20 @@ selectSessionChainStmt =
       SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
              previous_session_id, parent_session_id, delegation_depth, status, started_at,
              completed_at, model_used, summary, error_message,
-           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
+             awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input,
+             1 AS depth, ARRAY[session_id] AS path
       FROM kioku_sessions
       WHERE session_id = $1
       UNION ALL
       SELECT s.session_id, s.agent_id, s.focus, s.namespace, s.scope_kind, s.scope_ref, s.subject_ref,
              s.previous_session_id, s.parent_session_id, s.delegation_depth, s.status, s.started_at,
              s.completed_at, s.model_used, s.summary, s.error_message,
-             s.awaiting_reason, s.awaiting_correlation_key, s.awaiting_deadline, s.resume_input
+             s.awaiting_reason, s.awaiting_correlation_key, s.awaiting_deadline, s.resume_input,
+             c.depth + 1, c.path || s.session_id
       FROM kioku_sessions s
       INNER JOIN chain c ON s.session_id = c.previous_session_id
+      WHERE NOT s.session_id = ANY (c.path)
+        AND c.depth < 10000
     )
     SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
            previous_session_id, parent_session_id, delegation_depth, status, started_at,
