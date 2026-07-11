@@ -4,7 +4,6 @@ module Kioku.Memory.Embedding
     resolveEmbeddingConfig,
     toEmbeddingModel,
     embedWithRetry,
-    embedBatched,
     sha256Hex,
   )
 where
@@ -71,22 +70,12 @@ embedWithRetry model maxAttempts input = go 1
               threadDelay (attemptDelayMicros attempt)
               go (attempt + 1)
 
-embedBatched :: EmbeddingModel -> Int -> [Text] -> IO [Either EmbedError (Vector Double)]
-embedBatched model batchSize =
-  fmap concat . traverse (traverse (embedWithRetry model 3)) . chunksOf (max 1 batchSize)
-
 sha256Hex :: Text -> Text
 sha256Hex content =
   Text.pack (show (Hash.hash (TE.encodeUtf8 content) :: Digest SHA256))
 
 attemptDelayMicros :: Int -> Int
 attemptDelayMicros attempt = 200000 * (2 ^ max 0 (attempt - 1))
-
-chunksOf :: Int -> [a] -> [[a]]
-chunksOf _ [] = []
-chunksOf n xs =
-  let (chunk, rest) = splitAt n xs
-   in chunk : chunksOf n rest
 
 envText :: String -> Text -> IO Text
 envText name fallback =
