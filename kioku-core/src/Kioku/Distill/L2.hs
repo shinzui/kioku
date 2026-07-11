@@ -51,6 +51,7 @@ import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarke
 import Kioku.Id (MemoryId, idText)
 import Kioku.Memory.Domain
   ( MemoryArchivedData (..),
+    MemoryConfidenceUpdatedData (..),
     MemoryEvent (..),
     MemoryMergedData (..),
     MemoryRecordedData (..),
@@ -60,6 +61,7 @@ import Kioku.Prelude
 import Kioku.Recall qualified as Recall
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
+import Kiroku.Store.Types (EventId (..), RecordedEvent (..))
 import Shikumi.Schema.Types (field, unField)
 import System.Directory (createDirectoryIfMissing, doesFileExist, getCurrentDirectory, removeFile)
 import System.FilePath ((</>))
@@ -104,45 +106,74 @@ l2SceneTimerScheduleProjection :: InlineProjection MemoryEvent
 l2SceneTimerScheduleProjection =
   InlineProjection
     { name = "kioku-l2-scene-timer-schedule",
-      apply = \event _recorded -> scheduleSceneTimersForEvent event
+      apply = scheduleSceneTimersForEvent
     }
 
--- | Every event that changes which memories a scope's scene is built from must
--- schedule a regeneration. Forgetting is such a change: without this, archived,
--- superseded, and merged content survives in the scene row and its plaintext
--- mirror until some unrelated memory happens to be recorded in the same scope.
-scheduleSceneTimersForEvent :: MemoryEvent -> Tx.Transaction ()
-scheduleSceneTimersForEvent = \case
+-- | Every event that changes which memories a scope's scene is built from, or what
+-- those memories say, must schedule a regeneration. Forgetting is such a change:
+-- without this, archived, superseded, and merged content survives in the scene row
+-- and its plaintext mirror until some unrelated memory happens to be recorded in
+-- the same scope. So is a confidence change, for the same reason.
+scheduleSceneTimersForEvent :: MemoryEvent -> RecordedEvent -> Tx.Transaction ()
+scheduleSceneTimersForEvent event recorded = case event of
   MemoryRecorded d ->
     scheduleTimerTx $
       l2SceneTimerRequest
         d.scope
         (idText (d.memoryId :: MemoryId))
         (addUTCTime sceneDebounceSeconds d.recordedAt)
-  MemoryArchived d -> scheduleForgetTimerTx d.memoryId "archived" d.archivedAt
-  MemorySuperseded d -> scheduleForgetTimerTx d.memoryId "superseded" d.supersededAt
-  MemoryMerged d -> scheduleForgetTimerTx d.memoryId "merged" d.mergedAt
+  MemoryArchived d ->
+    scheduleScopedSceneTimerTx d.memoryId (kindSourceId d.memoryId "archived") d.archivedAt
+  MemorySuperseded d ->
+    scheduleScopedSceneTimerTx d.memoryId (kindSourceId d.memoryId "superseded") d.supersededAt
+  MemoryMerged d ->
+    scheduleScopedSceneTimerTx d.memoryId (kindSourceId d.memoryId "merged") d.mergedAt
+  -- Confidence is in the scene's source hash ('atomSource') and in the LLM prompt
+  -- ('renderAtom'), so changing it makes the scene stale exactly as forgetting does.
+  --
+  -- The source id must carry the event id. Unlike the forget events, which are
+  -- terminal, confidence can change repeatedly on one memory — and keiro re-arms a
+  -- conflicting timer only while it is still @scheduled@ (see 'scheduleScopedSceneTimerTx').
+  -- A fixed @\<memoryId\>:confidence@ would therefore be silently dropped on every
+  -- change after the first, which would look fixed and be worse than the bug. The
+  -- event id is stable across replay, so it cannot double-schedule either.
+  MemoryConfidenceUpdated d ->
+    scheduleScopedSceneTimerTx
+      d.memoryId
+      (idText d.memoryId <> ":confidence:" <> eventIdText recorded.eventId)
+      d.updatedAt
+  -- Tags are in neither 'atomSource' nor 'renderAtom', so a tag change cannot alter
+  -- the scene. Scheduling here would spend an LLM call to rewrite a byte-identical row.
   MemoryTagsUpdated _ -> pure ()
-  MemoryConfidenceUpdated _ -> pure ()
 
--- | The forget events carry no scope, so it is read back from the read-model row
--- inside this same transaction. The row is guaranteed present: the aggregate only
--- accepts a forget command from @Active@, which implies a committed
--- @MemoryRecorded@ whose inline projection upserted the row.
+-- | Schedule a scene regeneration for a memory whose event does not carry its scope.
 --
--- The source id is suffixed with the event kind rather than reusing the record
--- path's bare memory id, because keiro's 'scheduleTimerTx' re-arms a conflicting
--- timer only while it is still @scheduled@ — reusing the record-time id would be
--- silently dropped once that timer has fired, which by then it almost always has.
-scheduleForgetTimerTx :: MemoryId -> Text -> UTCTime -> Tx.Transaction ()
-scheduleForgetTimerTx memoryId kind occurredAt = do
+-- The scope is read back from the read-model row inside this same transaction. The
+-- row is guaranteed present: the aggregate only accepts these commands for an
+-- @Active@ memory, which implies a committed @MemoryRecorded@ whose inline
+-- projection upserted the row.
+--
+-- The caller supplies the source id rather than reusing the record path's bare
+-- memory id, because keiro's 'scheduleTimerTx' re-arms a conflicting timer only
+-- while it is still @scheduled@ — reusing the record-time id would be silently
+-- dropped once that timer has fired, which by then it almost always has.
+scheduleScopedSceneTimerTx :: MemoryId -> Text -> UTCTime -> Tx.Transaction ()
+scheduleScopedSceneTimerTx memoryId sourceId occurredAt = do
   scopeCols <- Tx.statement (idText memoryId) selectMemoryScopeColumnsStmt
   for_ scopeCols \(ns, sk, sr) ->
     scheduleTimerTx $
       l2SceneTimerRequest
         (scopeFromColumns ns sk sr)
-        (idText memoryId <> ":" <> kind)
+        sourceId
         (addUTCTime sceneDebounceSeconds occurredAt)
+
+-- | The forget events are terminal, so one timer per (memory, event kind) is both
+-- unique and stable across replay.
+kindSourceId :: MemoryId -> Text -> Text
+kindSourceId memoryId kind = idText memoryId <> ":" <> kind
+
+eventIdText :: EventId -> Text
+eventIdText (EventId uuid) = UUID.toText uuid
 
 l2SceneTimerRequest :: MemoryScope -> Text -> UTCTime -> TimerRequest
 l2SceneTimerRequest scope sourceId fireAt =

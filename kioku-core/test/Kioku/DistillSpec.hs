@@ -45,7 +45,13 @@ import Kioku.Distill.Timer (idleFlushSeconds, l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Worker (runKiokuTimerWorkerOnce)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText, parseIdLenient)
 import Kioku.Memory qualified as Memory
-import Kioku.Memory.Domain (ArchiveMemoryData (..), RecordMemoryData (..), SupersedeMemoryData (..))
+import Kioku.Memory.Domain
+  ( ArchiveMemoryData (..),
+    RecordMemoryData (..),
+    SupersedeMemoryData (..),
+    UpdateMemoryConfidenceData (..),
+    UpdateMemoryTagsData (..),
+  )
 import Kioku.Memory.Embedding (EmbeddingConfig (..), toEmbeddingModel)
 import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
@@ -85,6 +91,7 @@ tests =
       testCase "a session accumulates one idle timer however many turns" testIdleTimerCollapse,
       testCase "recall candidates find a duplicate outside the scan window" testRecallCandidateWindow,
       forgetPropagationTests,
+      confidencePropagationTests,
       validationTests
     ]
 
@@ -99,6 +106,194 @@ forgetPropagationTests =
       testCase "the timer worker propagates an archive to every artifact" testWorkerPropagatesArchive,
       testCase "supersede and merge propagate like archive" testWorkerPropagatesSupersedeAndMerge
     ]
+
+-- | A memory's confidence is part of what its scope's scene is built from: it is
+-- hashed into the scene's source hash ('atomSource') and written into the LLM's
+-- prompt ('renderAtom'). Changing it must therefore refresh the scene, exactly as
+-- forgetting does — otherwise an agent that downgrades a belief to @low@ goes on
+-- reading a scene that asserts it at @high@.
+confidencePropagationTests :: TestTree
+confidencePropagationTests =
+  testGroup
+    "Confidence propagation"
+    [ testCase "two confidence changes schedule two distinct scene timers" testConfidenceSchedulesDistinctSceneTimers,
+      testCase "a tag change schedules nothing, because tags are not in the scene" testTagsUpdateSchedulesNoSceneTimer,
+      testCase "a confidence change refreshes the scene, the persona, and the mirrors" testWorkerPropagatesConfidence
+    ]
+
+-- | The case that guards the trap. A naive fix gives the confidence timer a fixed
+-- source id of @\<memoryId\>:confidence@, which derives the same UUIDv5 timer id
+-- every time — and keiro's scheduling upsert only re-arms a conflicting timer
+-- @WHERE status = 'scheduled'@, so the second change would update zero rows and be
+-- silently dropped. That fix would refresh the scene on the first change and never
+-- again: it would look fixed, and be worse than the bug. The delta-count below is
+-- the only thing standing between that mistake and production, so it asserts the
+-- count rises on *both* changes, not just the first.
+--
+-- The walk is genuinely @high -> medium -> low@ on purpose: 'Memory.updateConfidence'
+-- refuses to emit an event when the confidence is unchanged, so re-applying the same
+-- value would schedule nothing and pass this test for the wrong reason.
+--
+-- No session is written, so every timer counted here is an L2 scene timer.
+testConfidenceSchedulesDistinctSceneTimers :: Assertion
+testConfidenceSchedulesDistinctSceneTimers = withDistillEnv \env -> do
+  now <- getCurrentTime
+  memoryId <- genMemoryId
+  let scope = forgetScope "intention_confidence_timers"
+      -- Timers are debounced 5 seconds past their event time; an hour out makes
+      -- every one of them due.
+      horizon = addUTCTime 3600 now
+  result <-
+    runAppIO env do
+      recordForgetFixture memoryId scope "Content for the confidence timer test" now
+      afterRecord <- countDueTimers horizon
+
+      lowered <-
+        Memory.updateConfidence
+          UpdateMemoryConfidenceData {memoryId, confidence = MediumConfidence, updatedAt = now}
+      void (liftIO (expectRight "Memory.updateConfidence to medium" lowered))
+      afterFirst <- countDueTimers horizon
+
+      loweredAgain <-
+        Memory.updateConfidence
+          UpdateMemoryConfidenceData {memoryId, confidence = LowConfidence, updatedAt = now}
+      void (liftIO (expectRight "Memory.updateConfidence to low" loweredAgain))
+      afterSecond <- countDueTimers horizon
+      pure (afterRecord, afterFirst, afterSecond)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (afterRecord, afterFirst, afterSecond) -> do
+      afterRecord @?= 1
+      afterFirst @?= 2
+      afterSecond @?= 3
+
+-- | Tags are in neither 'atomSource' (the scene's source hash) nor 'renderAtom'
+-- (the LLM prompt), so a tag change cannot alter the scene. Scheduling a
+-- regeneration for one would spend an LLM call to rewrite a byte-identical row.
+-- This case pins that reasoning so a future reader does not "complete" the
+-- confidence fix by adding an arm for 'MemoryTagsUpdated' too.
+testTagsUpdateSchedulesNoSceneTimer :: Assertion
+testTagsUpdateSchedulesNoSceneTimer = withDistillEnv \env -> do
+  now <- getCurrentTime
+  memoryId <- genMemoryId
+  let scope = forgetScope "intention_tags_timers"
+      horizon = addUTCTime 3600 now
+  result <-
+    runAppIO env do
+      recordForgetFixture memoryId scope "Content for the tags timer test" now
+      afterRecord <- countDueTimers horizon
+
+      -- A genuinely different tag set: 'Memory.updateTags' short-circuits on an
+      -- unchanged one, which would make this pass for the wrong reason.
+      retagResult <-
+        Memory.updateTags
+          UpdateMemoryTagsData {memoryId, tags = Set.fromList ["retagged"], updatedAt = now}
+      void (liftIO (expectRight "Memory.updateTags" retagResult))
+      afterRetag <- countDueTimers horizon
+      pure (afterRecord, afterRetag)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (afterRecord, afterRetag) -> do
+      afterRecord @?= 1
+      afterRetag @?= 1
+
+-- | The whole pipeline, with nothing called by hand: lowering a memory's confidence
+-- schedules a timer through the inline projection, the worker claims and fires it
+-- exactly as @kioku worker@ does, and the scene row, the persona row, and the
+-- plaintext mirror a host agent actually reads all follow.
+testWorkerPropagatesConfidence :: Assertion
+testWorkerPropagatesConfidence = withDistillWorkspaceEnv \env workspace -> do
+  calls <- newDistillCalls
+  runtime <- echoingRuntime calls <$> replayRuntimeIn workspace
+  memoryId <- genMemoryId
+  now <- getCurrentTime
+  let scope = forgetScope "intention_confidence_worker"
+  result <-
+    runAppIO env do
+      -- 'recordForgetFixture' records at 'HighConfidence'.
+      recordForgetFixture memoryId scope confidenceContent now
+      void (drainTimers runtime)
+      builtScene <- getScenesByScope scope >>= liftIO . expectOneScene "the initial distillation"
+      builtPersona <-
+        getPersonaByScope scope >>= liftIO . expectJust "a persona after the initial distillation"
+      personaRunsBefore <- liftIO (readIORef calls.personaCalls)
+
+      lowered <-
+        Memory.updateConfidence
+          UpdateMemoryConfidenceData {memoryId, confidence = LowConfidence, updatedAt = now}
+      void (liftIO (expectRight "Memory.updateConfidence" lowered))
+      void (drainTimers runtime)
+
+      refreshedScene <-
+        getScenesByScope scope >>= liftIO . expectOneScene "after lowering the confidence"
+      refreshedPersona <-
+        getPersonaByScope scope >>= liftIO . expectJust "a persona after lowering the confidence"
+      personaRunsAfter <- liftIO (readIORef calls.personaCalls)
+      mirror <- liftIO (TextIO.readFile (sceneMirrorPath workspace refreshedScene))
+
+      -- Timer firing is at-least-once, so another pass must change nothing.
+      refired <- drainTimers runtime
+      pure
+        ( builtScene,
+          refreshedScene,
+          builtPersona,
+          refreshedPersona,
+          personaRunsBefore,
+          personaRunsAfter,
+          mirror,
+          refired
+        )
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (builtScene, refreshedScene, builtPersona, refreshedPersona, personaRunsBefore, personaRunsAfter, mirror, refired) -> do
+      -- The crisp, LLM-independent proof that the scene was genuinely rebuilt: the
+      -- source hash is computed over 'atomSource', which contains the confidence.
+      assertBool
+        ("the scene kept its stale source hash: " <> Text.unpack refreshedScene.sourceHash)
+        (refreshedScene.sourceHash /= builtScene.sourceHash)
+
+      -- The prompt the scene distiller actually saw. 'renderAtom' formats each
+      -- memory as "- <id> (<type>, <confidence>): <content>".
+      atoms <- latestSceneAtoms calls
+      assertBool
+        ("the scene LLM still saw the old confidence: " <> Text.unpack atoms)
+        (not (highNeedle `Text.isInfixOf` atoms))
+      assertBool
+        ("the scene LLM never saw the new confidence: " <> Text.unpack atoms)
+        (lowNeedle `Text.isInfixOf` atoms)
+
+      -- ...and, the point of the whole plan, the plaintext file on disk.
+      assertBool
+        ("the scene mirror still asserts the old confidence: " <> Text.unpack mirror)
+        (not (highNeedle `Text.isInfixOf` mirror))
+      assertBool
+        ("the scene mirror never learned the new confidence: " <> Text.unpack mirror)
+        (lowNeedle `Text.isInfixOf` mirror)
+
+      -- The persona cascades off the scene write. Persona bodies are built from
+      -- scene titles and bodies, so they inherit the confidence transitively; the
+      -- observable here is the fact of regeneration, not persona text saying "low".
+      assertBool
+        "the persona was not regenerated after the scene changed"
+        (personaRunsAfter > personaRunsBefore)
+      assertBool
+        "the persona row was not rewritten after the scene changed"
+        (refreshedPersona.updatedAt >= builtPersona.updatedAt)
+
+      refired @?= 0
+
+confidenceContent :: Text
+confidenceContent = "The user prefers tabs over spaces."
+
+-- | 'renderAtom' renders "- <id> (<type>, <confidence>): <content>", and
+-- 'recordForgetFixture' records a 'MemoryPreference'. Matching the parenthesised
+-- pair rather than a bare "high"/"low" keeps the assertion from colliding with
+-- any occurrence of those words in the memory's content.
+highNeedle :: Text
+highNeedle = "(preference, high)"
+
+lowNeedle :: Text
+lowNeedle = "(preference, low)"
 
 alphaContent :: Text
 alphaContent = "The alpha secret is that the launch slipped to March."
