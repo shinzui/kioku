@@ -111,8 +111,8 @@ This section must always reflect the actual current state of the work.
 - [x] (2026-07-12T04:16:35Z) Add `kioku-migrations/CHANGELOG.md` documenting the breaking runner API replacement, stable migration identities, history importer, and signature-preserving test support; include it in the source package.
 - [x] (2026-07-12T04:16:35Z) Validate Kioku's source distribution includes the changelog, history lock, migration SQL/manifest, and exact pre-cutover rehearsal fixtures.
 - [x] (2026-07-12T04:16:35Z) Ship byte-identical copies of the two upstream ledger fixups and Keiro relocation under `kioku-migrations/codd-upgrade/`, point the runbook and rehearsal at those operator artifacts, and remove the runbook's dependency on sibling source checkouts.
-- [x] (2026-07-12T04:10:33Z) Fill in Outcomes & Retrospective with the delivered behavior, evidence, lessons, and two remaining publication gaps.
-- [ ] Commit the portable Kioku implementation with the ExecPlan trailer, then run the final post-commit completion audit.
+- [x] (2026-07-12T04:10:33Z) Fill in Outcomes & Retrospective with the delivered behavior, evidence, lessons, and publication progress.
+- [x] (2026-07-12T04:30:59Z) Commit the portable Kioku implementation as `27d566265d029a5a8aa5ef079d5bf4069b0e95f8` with the ExecPlan trailer, then complete the post-commit audit: clean build, all tests, live 35-row status/verify/no-op up, source-distribution contents, 100% SQL renames, lock hashes, byte-identical operator scripts, removed Codd configuration, 19 read-model schemas, validated streams, and exact upstream remote heads all pass.
 
 
 ## Surprises & Discoveries
@@ -415,7 +415,8 @@ The two upstream prerequisites were published and pinned: Keiro
 `3187e9b345c27af077fcbbe122abfae6ad8ba67d` ships its embedded lock, and pg-migrate
 `29d036e47bc3e07f5f44846be2c34725ba100246` provides validator-aware partial manifests. Cabal fetched
 both exact commits and the full build/test/live-database validation passed with no local project
-override. The remaining work is the final Kioku commit and completion audit.
+override. Kioku commit `27d566265d029a5a8aa5ef079d5bf4069b0e95f8` contains the portable
+implementation, and the post-commit audit reproduced every acceptance gate. No planned work remains.
 
 
 ## Context and Orientation
@@ -1238,3 +1239,7 @@ mixed checksum/state-evidence design, the exact downstream rehearsal, corrected 
 test-fixture schema qualification, validation results, and the two dependency publication gaps.
 Recorded the locally prepared Keiro and pg-migrate commit SHAs so a future continuation can publish
 and pin them without reconstructing the upstream work.
+
+2026-07-12: Finalized the plan after publishing and pinning both upstream fixes, shipping the
+operator SQL inside Kioku's source distribution, committing the portable implementation, and
+re-running the requirement-by-requirement completion audit against the committed tree.
