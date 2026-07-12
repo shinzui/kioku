@@ -46,10 +46,19 @@ recall. Tags and confidence can be updated in place while a memory is active. Th
 are exposed as library functions (`record`, `supersede`, `archive`, `updateTags`,
 `updateConfidence`, `merge`) — see [Library API](library-api.md).
 
+**Forgetting propagates.** Superseding, archiving, or merging a memory — and changing a memory's
+**confidence** — schedules a regeneration of its scope's scene, so forgotten or downgraded content
+does not survive in the scene, in the persona, or in the `.kioku/` mirror files. Changing only a
+memory's **tags** does not, deliberately: tags feed neither the scene's source hash nor its prompt.
+
+When the last active memory in a scope is forgotten, the scope's scene and persona rows **and their
+mirror files are deleted**. The event log keeps the history; the derived artifacts do not.
+
 > **Idempotency.** A duplicate write that matches what already happened succeeds; a *conflicting*
 > one is rejected. Recording a memory id that already exists is a no-op only when the request
-> carries the same content, scope, type, priority, confidence, and tags — recording different
-> content under an existing id returns `MemoryConflict`. Likewise, superseding a memory that was
+> carries the same agent id, session id, content, scope, type, priority, confidence, tags, and
+> `supersedes` — recording different content under an existing id returns `MemoryConflict`.
+> Likewise, superseding a memory that was
 > already superseded is a no-op only when the winner is the same; naming a different winner
 > conflicts, as does archiving a memory that was superseded.
 >
@@ -76,13 +85,33 @@ NAMESPACE                 →  global scope        e.g.  mori
 NAMESPACE:KIND:REF         →  entity scope        e.g.  rei:intention:intention_abc
 ```
 
-- **namespace** — the host: `rei`, `mori`, `shikigami`, or your own.
-- **kind** — the entity category: `intention`, `habit`, `repo`, `group`, `agent`, …
-- **ref** — the specific entity id.
+- **namespace** — the host: `rei`, `mori`, `shikigami`, or your own. May not contain `%`, `/`, or
+  `:`.
+- **kind** — the entity category: `intention`, `habit`, `repo`, `group`, `agent`, … Same
+  restriction.
+- **ref** — the specific entity id. Host free text: it **may** contain `:` and `/`. The CLI splits
+  on the first two colons only, so `ops:host:db.internal:5432` is the entity scope `ops` / `host` /
+  `db.internal:5432`, and `mori:repo:shinzui/kikan` is a valid repo ref.
 
-Recall and distillation always operate **within a scope**. An entity scope query matches only
-memories with that exact `namespace`/`kind`/`ref`; a global scope query matches that namespace's
-global memories. See [Scopes & Integrations](integrations.md) for per-host conventions.
+### Global scope means different things to recall and to reads
+
+An **entity** scope is exact everywhere: it matches only that exact `namespace`/`kind`/`ref`, and
+never sees the namespace's global memories.
+
+A **global** scope is where people get caught out, because it is not symmetric:
+
+| You call                                | `ScopeGlobal ns` means | You get                                                        |
+|-----------------------------------------|------------------------|----------------------------------------------------------------|
+| `recall` / `kioku recall --scope ns`     | *no scope filter*      | every active memory in the namespace, **entity-scoped rows included** |
+| `getActiveByScope`, `getGlobal`, and distillation | *the global bucket*    | only rows recorded with **no** entity scope                     |
+
+In one line: **recall searches namespace-wide for a global scope; scoped reads and distillation are
+exact-scope.** So a memory under `mori:repo:web` *is* returned by `kioku recall --scope mori`, but
+it does *not* feed `mori`'s scene or persona. For the read-side equivalent of recall's breadth, use
+`getActiveInNamespace`.
+
+Full detail: [Recall](recall.md#global-scope-namespace-wide-recall-vs-exact-scope-reads). See
+[Scopes & Integrations](integrations.md) for per-host conventions.
 
 ## Session
 
@@ -172,15 +201,20 @@ context:
 
 - **L0 → L1 (Extract + Consolidate).** An LLM program reads recent session evidence and extracts
   candidate **atoms**. For each atom, a second program decides how it interacts with existing
-  memory: **store**, **update**, **merge**, or **skip**. The decision is recorded as events.
-- **L1 → L2 (Scenes).** Active atoms in a scope are summarized into readable markdown **scene**
-  blocks, each with a title and a narrative body.
+  memory: **store**, **update**, **merge**, or **skip**. The resulting memory changes are events;
+  the decision itself is written to an audit table.
+- **L1 → L2 (Scenes).** Active atoms in a scope are summarized into a readable markdown **scene**
+  with a title and a narrative body.
 - **L2 → L3 (Persona).** Scenes for a scope are distilled into a single **persona** document —
   the durable profile of who/what this scope is about.
 
 L2 and L3 are also **mirrored to the workspace** as files (`.kioku/scenes/*.md` and
-`.kioku/persona/*.md`) so a coding agent can read them directly. Distillation is driven by
-**timers** (idle-flush after a session goes quiet) and can be run on demand from the CLI.
+`.kioku/persona/*.md`) so a coding agent can read them directly.
+
+Distillation is driven by **timers**, not by every write. L1 runs on a ramp during a live session,
+on session completion, and after the session goes idle; L2 and L3 regenerate when the memories
+underneath them change. The LLM programs call **Anthropic** (`ANTHROPIC_API_KEY`) — a different
+credential from the embeddings endpoint.
 
 The full pyramid — extraction prompts, consolidation actions, timers, and mirroring — is
 documented in **[The Distillation Pyramid](distillation.md)**.

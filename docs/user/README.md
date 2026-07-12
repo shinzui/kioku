@@ -55,9 +55,11 @@ Start here, in order:
         └───────────────────┬────────────────────────────┘
                             │
         ┌───────────────────┴────────────────────────────┐
-        │   Postgres (schema: kiroku)                     │
-        │   event streams  ·  read-model rows  ·          │
-        │   tsvector FTS   ·  pgvector embeddings         │
+        │   Postgres                                      │
+        │   schema kiroku: kioku_* tables · event streams  │
+        │     · tsvector FTS · pgvector embeddings         │
+        │   schema keiro:  framework tables (timers,       │
+        │     read-model registry)                         │
         └─────────────────────────────────────────────────┘
 ```
 
@@ -67,12 +69,15 @@ Start here, in order:
 # 1. Point kioku at a Postgres database with the kiroku schema migrated.
 export PG_CONNECTION_STRING='host=localhost dbname=kioku user=me'
 
-# 2. Write a memory and read it back. The events are permanent (kioku has no
-#    delete), so the demo requires an explicit opt-in.
+# 2. Write a memory and read it back. The event log is append-only — there is no
+#    way to delete an event — so the demo requires an explicit opt-in.
 kioku demo --yes-write-events
 
 # 3. Recall memories relevant to a query within a scope.
 kioku recall "how does the user like answers" --scope kioku_demo:demo:demo
 ```
+
+> Distillation additionally needs an **Anthropic** key (`ANTHROPIC_API_KEY`), which is a separate
+> credential from the embeddings endpoint. See [Configuration](configuration.md).
 
 See **[Getting Started](getting-started.md)** for the full setup.

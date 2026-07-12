@@ -4,15 +4,19 @@ This guide takes you from an empty checkout to writing and recalling your first 
 
 ## Prerequisites
 
-- **PostgreSQL** reachable from your machine. kioku stores everything in a database under the
-  `kiroku` schema (event streams + read-model projections). For semantic recall you also want
-  the **`pgvector`** extension available; without it kioku degrades gracefully to full-text-only
+- **PostgreSQL** reachable from your machine. kioku's tables live in the `kiroku` schema (event
+  streams + read-model projections), alongside keiro's framework tables. For semantic recall you
+  also want the **`pgvector`** extension; without it kioku degrades gracefully to full-text-only
   recall (see [Recall](recall.md)).
 - The **Nix dev shell** (recommended). kioku is a kikan project; the flake provides GHC, Cabal,
-  `psql`, `process-compose`, and the `PG*` environment variables used by the `Justfile`.
-- An **OpenAI-compatible embedding endpoint** if you want semantic recall and the distillation
-  pyramid. By default kioku calls `https://api.openai.com` with `text-embedding-3-small`
-  (1536 dimensions). See [Configuration](configuration.md).
+  `psql`, `process-compose`, a Postgres that **ships with pgvector**, and the `PG*` /
+  `PG_CONNECTION_STRING` environment variables used by the `Justfile`.
+- An **OpenAI-compatible embedding endpoint** if you want semantic recall. By default kioku calls
+  `https://api.openai.com` with `text-embedding-3-small` (1536 dimensions — the embedding column is
+  fixed at that width). See [Configuration](configuration.md).
+- An **`ANTHROPIC_API_KEY`** if you want the distillation pyramid. Distillation calls Claude, which
+  is a **separate credential** from the embedding endpoint — setting up embeddings does not set up
+  distillation. This trips people up constantly.
 
 ## 1. Enter the dev shell
 
@@ -52,8 +56,13 @@ The migrations create three things you care about:
 - The distillation tables for scenes (L2) and personas (L3).
 
 > **pgvector note.** The embedding column and vector index are created only when the `pgvector`
-> extension is installable. kioku detects this at runtime (`VectorCapability`) and adapts. If
-> pgvector is missing, recall runs full-text only and the embedding worker is skipped.
+> extension is installable. kioku detects this at runtime (`VectorCapability`) and adapts: if
+> pgvector is missing, recall runs full-text only and the embedding worker is skipped. A database
+> migrated *before* pgvector was installed used to be permanently degraded; a heal migration now
+> re-attempts the DDL, so installing pgvector and re-running `just migrate` fixes it. Note that
+> kioku looks for the extension on its own `search_path`, so a `vector` extension installed into
+> `public` reports as *unavailable* — see
+> [Troubleshooting](troubleshooting.md#pgvector-is-installed-but-reports-as-not-available).
 
 ## 3. Point the CLI at your database
 
@@ -70,9 +79,10 @@ or local Postgres exposes.
 
 The `demo` command records one memory in the scope `kioku_demo:demo:demo` and reads it back.
 
-kioku is event-sourced and has no delete, so this writes **permanent** events to the database
-at `PG_CONNECTION_STRING`. The command therefore requires an explicit `--yes-write-events`, and
-prints what it is about to write, and where, before writing it:
+kioku is event-sourced and its event log is append-only — there is no way to delete an event — so
+this writes **permanent** events to the database at `PG_CONNECTION_STRING`. The command therefore
+requires an explicit `--yes-write-events`, and prints what it is about to write, and where, before
+writing it:
 
 ```bash
 kioku demo --yes-write-events
@@ -124,8 +134,13 @@ kioku demo-session --yes-write-events
 To turn a session's evidence into memory atoms (L1 distillation), run:
 
 ```bash
+export ANTHROPIC_API_KEY='sk-ant-…'          # distillation calls Claude
 kioku distill session <SESSION_ID>
 ```
+
+The session id must carry the `kioku_session` prefix; any other prefix is rejected. Re-running a
+session with no new turns prints `Session already distilled (no new turns); use --force to re-run.`
+— L1 is watermarked, so it does not pay for an LLM call it doesn't need.
 
 To run the background workers that compute embeddings and fire distillation timers
 continuously:
@@ -133,6 +148,10 @@ continuously:
 ```bash
 kioku worker
 ```
+
+The worker is built to be **supervised**: it exits non-zero if either pipeline stops, rather than
+lingering half-dead. Run it from the workspace you want scene/persona files mirrored into — they
+land in the worker's working directory.
 
 See [The Distillation Pyramid](distillation.md) for the full flow, and the
 [CLI Reference](cli-reference.md) for every flag.

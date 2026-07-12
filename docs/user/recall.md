@@ -22,7 +22,7 @@ embedding endpoint. `embedding` is pure semantic similarity.
 
 1. **Plan.** kioku inspects the runtime **vector capability**. If pgvector is unavailable, the
    plan is rewritten to keyword-only regardless of the requested strategy (see
-   [Degradation](#degradation)).
+   [Degradation](#degradation-when-pgvector-is-missing)).
 2. **Embed the query** (if the plan needs it). The query is embedded via the configured
    embedding endpoint, with retries. If embedding fails, recall falls back to keyword-only for
    that request rather than erroring.
@@ -89,6 +89,11 @@ size of the scope you asked about, which is the set you wanted searched anyway.
   this is a genuine gap rather than a proof.
 - **Ordering within the returned candidates is the approximate pass's ordering** when the fallback
   does not fire. That is the normal, intended behaviour of approximate search.
+- **For a global scope, "the scope you asked about" is the whole namespace.** Recall's scope filter
+  vanishes for a global scope (see [Global scope](#global-scope-namespace-wide-recall-vs-exact-scope-reads)),
+  so if the approximate pass starves — which it still can, since the `namespace` and `status`
+  predicates are *also* applied after the index picks — the exact pass scans every embedded row in
+  the namespace.
 
 **Seeing it.** `Kioku.Recall.selectVectorCandidatesDiagnosed` returns a `VectorChannelOutcome`
 alongside the rows, recording how many candidates the approximate pass produced, whether the exact
@@ -96,6 +101,12 @@ fallback fired, and how many rows were finally returned. `vectorChannelStarved` 
 fallback found rows the approximate pass had missed. A host that wants a metric or a log line for
 the health of its semantic channel should count those; kioku does not emit one itself, because
 `Kioku.Recall` has no access to the host's tracer or metrics handle.
+
+**`--show-scores` does not show it.** `Kioku.Recall.recall` — which is what the CLI calls — uses the
+undiagnosed wrapper and discards the `VectorChannelOutcome`; a `RecallHit` carries only `score`,
+`ftsRank`, and `vecRank`. So a `vec=-` in `--show-scores` means only "this hit was not in the vector
+pool"; it is **not** a starvation signal, and no CLI flag reports one. Observability here is a
+*library* affordance: call `selectVectorCandidatesDiagnosed` yourself if you want the metric.
 
 **A note for anyone tempted by `hnsw.iterative_scan`.** pgvector 0.8 ships its own remedy for
 starvation, and kioku does not use it. It was measured across five freshly built indexes on a
@@ -171,7 +182,8 @@ recent, important, and trusted each memory is.
 
 After ranking, kioku enforces two budgets so recall output fits into an agent's context window:
 
-- **Per-memory cap:** 2000 characters. Longer content is truncated with an `…` ellipsis.
+- **Per-memory cap:** 2000 characters. Longer content is cut to 1997 characters plus a trailing
+  `...` (three ASCII periods, not `…`), so the marker is spent from the cap rather than added to it.
 - **Total cap:** 12000 characters across all returned hits. Hits are added until the next one
   would exceed the total; the rest are dropped.
 
@@ -181,17 +193,26 @@ memories first.
 
 ## Degradation when pgvector is missing
 
-kioku detects one of three vector capabilities at runtime:
+kioku detects one of four vector capabilities at runtime:
 
 | Capability                    | Recall behavior                                            |
 |-------------------------------|------------------------------------------------------------|
 | **available**                 | Full hybrid: FTS + vector + RRF.                          |
 | **extension unavailable**     | Keyword-only. `embedding`/`hybrid` silently become FTS.   |
 | **columns unavailable**       | Keyword-only (the embedding column/index isn't present).  |
+| **dimension mismatch**        | Keyword-only. `KIOKU_EMBEDDING_DIMENSIONS` disagrees with the declared width of the `embedding` column. |
 
 In the keyword fallback the `vec` rank shows as `-` in `--show-scores` output, and the
 embedding/distillation workers skip vector work. Recall keeps working — it just loses the
 semantic channel.
+
+A **dimension mismatch** is a *configuration* error rather than a missing feature, and the rest of
+the system is louder about it than recall is: `kioku worker` prints
+`embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=N but kiroku.kioku_memories.embedding is
+vector(M)` to stderr and runs distillation timers only, and `kioku worker --backfill` refuses to
+start rather than embed every memory into a cast that must fail. Recall itself degrades quietly.
+Fix the environment variable, or migrate the column — see
+[Configuration](configuration.md#embeddings).
 
 ### Healing a degraded schema
 
@@ -258,4 +279,4 @@ See the [CLI Reference](cli-reference.md#kioku-recall) for all flags.
 `Kioku.Recall.recall` runs a request; the scope-scan helpers (`getActiveByScope`,
 `getActiveInNamespace`, `getGlobal`, `getById`, `getBySession`, `getByType`) fetch active
 memories without ranking when you just want everything in a scope. See
-[Library API](library-api.md#recall).
+[Library API](library-api.md#recall-kiokurecall).
