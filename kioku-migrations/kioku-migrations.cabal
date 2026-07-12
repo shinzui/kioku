@@ -3,9 +3,8 @@ name:               kioku-migrations
 version:            0.1.0.0
 synopsis:           Schema migrations for kioku
 description:
-  Owns kioku schema evolution. Calls the kiroku-store-migrations and
-  keiro-migrations libraries directly, then embeds kioku read-model
-  migrations through codd.
+  Owns kioku schema evolution as a native pg-migrate component and composes
+  it with the kiroku and keiro migration components.
 
 license:            BSD-3-Clause
 author:             Nadeem Bitar
@@ -13,7 +12,16 @@ maintainer:         nadeem@gmail.com
 copyright:          2026 Nadeem Bitar
 category:           Database
 build-type:         Simple
-extra-source-files: sql-migrations/*.sql
+extra-doc-files:
+  CHANGELOG.md
+  codd-upgrade/README.md
+
+extra-source-files:
+  codd-upgrade/*.sql
+  migrations/*.sql
+  migrations/manifest
+  migrations.lock
+  test/fixtures/*.sql
 
 common shared
   default-language:   GHC2024
@@ -27,16 +35,28 @@ common shared
 library
   import:          shared
   hs-source-dirs:  src
-  exposed-modules: Kioku.Migrations
+  exposed-modules:
+    Kioku.Migrations
+    Kioku.Migrations.History.Codd
+
+  other-modules:
+    Kioku.Migrations.Internal.Definition
+    Kioku.Migrations.Internal.EmbedFile
+
   build-depends:
-    , base                     >=4.18   && <5
-    , bytestring               >=0.11   && <0.13
-    , codd                     >=0.1.8  && <0.2
-    , codd-extras
-    , file-embed               >=0.0.15 && <0.0.17
+    , aeson                    >=2.1      && <2.3
+    , base                     >=4.18     && <5
+    , bytestring               >=0.11     && <0.13
+    , containers               >=0.6      && <0.8
+    , hasql                    >=1.10     && <1.11
+    , hasql-transaction        >=1.2      && <1.3
     , keiro-migrations
     , kiroku-store-migrations
-    , time                     >=1.12   && <1.15
+    , pg-migrate               ^>=1.0.0.0
+    , pg-migrate-embed         ^>=1.0.0.0
+    , pg-migrate-import-codd   ^>=1.0.0.0
+    , template-haskell         >=2.20     && <2.24
+    , text                     >=2.0      && <2.2
 
 library test-support
   import:          shared
@@ -44,12 +64,12 @@ library test-support
   hs-source-dirs:  test-support
   exposed-modules: Kioku.Migrations.TestSupport
   build-depends:
-    , base                   >=4.18 && <5
-    , codd-extras
-    , codd-extras:ephemeral
+    , base                     >=4.18     && <5
+    , ephemeral-pg             >=0.2      && <0.3
+    , hasql                    >=1.10     && <1.11
     , kioku-migrations
-    , text                   >=2.0  && <2.2
-    , time                   >=1.12 && <1.15
+    , pg-migrate-test-support  ^>=1.0.0.0
+    , text                     >=2.0      && <2.2
 
 test-suite kioku-migrations-test
   import:         shared
@@ -58,13 +78,13 @@ test-suite kioku-migrations-test
   hs-source-dirs: test
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-    , base                           >=4.18 && <5
-    , bytestring                     >=0.11 && <0.13
-    , directory                      >=1.3
-    , filepath                       >=1.4
+    , base                           >=4.18     && <5
     , hasql                          >=1.6
     , kioku-migrations
     , kioku-migrations:test-support
+    , pg-migrate                     ^>=1.0.0.0
+    , pg-migrate-embed               ^>=1.0.0.0
+    , pg-migrate-import-codd         ^>=1.0.0.0
     , tasty                          >=1.5
     , tasty-hunit                    >=0.10
-    , text                           >=2.0  && <2.2
+    , text                           >=2.0      && <2.2

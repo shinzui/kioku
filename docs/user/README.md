@@ -38,6 +38,8 @@ Start here, in order:
 8. **[Scopes & Integrations](integrations.md)** — namespace conventions for rei, mori,
    shikigami, and your own host.
 9. **[Troubleshooting & FAQ](troubleshooting.md)** — common errors and how to resolve them.
+10. **[Upgrading from Codd](upgrading-to-pg-migrate.md)** — the backup-first, zero-replay
+    cutover for existing data-bearing databases.
 
 ## At a glance
 

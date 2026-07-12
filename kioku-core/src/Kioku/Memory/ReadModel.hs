@@ -123,6 +123,7 @@ memoryByIdReadModel :: ReadModel MemoryByIdQuery (Maybe MemoryRow)
 memoryByIdReadModel =
   ReadModel
     { name = "kioku-memory-by-id",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,
@@ -135,6 +136,7 @@ memoriesByNamespaceReadModel :: ReadModel MemoriesByNamespaceQuery [MemoryRecord
 memoriesByNamespaceReadModel =
   ReadModel
     { name = "kioku-memories-by-namespace",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,
@@ -147,6 +149,7 @@ memoriesByNamespaceRowsReadModel :: ReadModel MemoriesByNamespaceQuery [MemoryRo
 memoriesByNamespaceRowsReadModel =
   ReadModel
     { name = "kioku-memory-rows-by-namespace",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,
@@ -159,6 +162,7 @@ memoriesByScopeReadModel :: ReadModel MemoriesByScopeQuery [MemoryRecord]
 memoriesByScopeReadModel =
   ReadModel
     { name = "kioku-memories-by-scope",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,
@@ -171,6 +175,7 @@ memoriesByScopeRowsReadModel :: ReadModel MemoriesByScopeQuery [MemoryRow]
 memoriesByScopeRowsReadModel =
   ReadModel
     { name = "kioku-memory-rows-by-scope",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,
@@ -183,6 +188,7 @@ memoriesBySessionReadModel :: ReadModel MemoriesBySessionQuery [MemoryRecord]
 memoriesBySessionReadModel =
   ReadModel
     { name = "kioku-memories-by-session",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,
@@ -195,6 +201,7 @@ memoriesBySessionRowsReadModel :: ReadModel MemoriesBySessionQuery [MemoryRow]
 memoriesBySessionRowsReadModel =
   ReadModel
     { name = "kioku-memory-rows-by-session",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,
@@ -207,6 +214,7 @@ memoriesByTypeReadModel :: ReadModel MemoriesByTypeQuery [MemoryRecord]
 memoriesByTypeReadModel =
   ReadModel
     { name = "kioku-memories-by-type",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,
@@ -219,6 +227,7 @@ memoriesByTypeRowsReadModel :: ReadModel MemoriesByTypeQuery [MemoryRow]
 memoriesByTypeRowsReadModel =
   ReadModel
     { name = "kioku-memory-rows-by-type",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,
@@ -231,6 +240,7 @@ memorySupersessionChainReadModel :: ReadModel MemorySupersessionChainQuery [Memo
 memorySupersessionChainReadModel =
   ReadModel
     { name = "kioku-memory-supersession-chain",
+      schema = "kiroku",
       tableName = "kioku_memories",
       subscriptionName = "kioku-memory-inline",
       version = 1,

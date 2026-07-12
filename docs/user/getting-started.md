@@ -45,7 +45,13 @@ To do it by hand instead:
 just create-database   # createdb (idempotent) + just migrate
 # or, if the database already exists:
 just migrate           # apply kiroku/keiro/kioku embedded migrations
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- status
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
+
+The migration ledger records the stable `component/name` identity and SHA-256 checksum of all
+35 migrations (kiroku 8, keiro 17, kioku 10). `verify` is read-only and fails if applied SQL no
+longer matches the bytes compiled into the executable.
 
 The migrations create three things you care about:
 

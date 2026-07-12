@@ -227,11 +227,11 @@ on `just migrate`.** It is idempotent — a no-op on a healthy database and on o
 has no pgvector.
 
 For a database that has *already applied* every migration and only then gained the
-extension, codd will not re-run anything. Apply the same file by hand; it is the identical
-SQL, so it cannot drift from the migration:
+extension, pg-migrate correctly treats the checksummed history as immutable and will not
+re-run it. Apply the same checked-in file by hand:
 
 ```bash
-psql -d "$PGDATABASE" -f kioku-migrations/sql-migrations/2026-07-11-17-45-43-kioku-embedding-schema-heal.sql
+psql -d "$PGDATABASE" -f kioku-migrations/migrations/0009-kioku-embedding-schema-heal.sql
 ```
 
 Then confirm:

@@ -69,7 +69,7 @@ library
     , baikai
     , baikai-claude
     , baikai-effectful
-    , base                    >=4.21 && <5
+    , base                    >=4.21    && <5
     , bytestring              >=0.11
     , containers              >=0.6
     , contravariant           >=1.5
@@ -91,7 +91,7 @@ library
     , kiroku-store
     , lens                    >=5.2
     , mmzk-typeid             >=0.7
-    , shibuya-core
+    , shibuya-core            >=0.8.0.1 && <0.9
     , shibuya-kiroku-adapter
     , shikumi
     , shikumi-trace
@@ -125,7 +125,7 @@ test-suite kioku-test
   build-depends:
     , aeson                          >=2.2
     , baikai
-    , base                           >=4.21 && <5
+    , base                           >=4.21    && <5
     , bytestring                     >=0.11
     , containers                     >=0.6
     , contravariant                  >=1.5
@@ -141,7 +141,7 @@ test-suite kioku-test
     , kioku-migrations:test-support
     , kiroku-store
     , lens                           >=5.2
-    , shibuya-core
+    , shibuya-core                   >=0.8.0.1 && <0.9
     , shikumi
     , shikumi-trace
     , tasty                          >=1.5

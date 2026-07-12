@@ -14,6 +14,7 @@ import Keiki.Core (HsPred)
 import Keiki.Generics (emptyRegFile)
 import Keiro.Codec (Codec (..), EventType (..))
 import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
+import Keiro.EventStream.Validate (ValidatedEventStream, mkEventStreamOrThrow)
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
@@ -27,8 +28,12 @@ type SessionEventStream =
 sessionStream :: SessionId -> Stream SessionEventStream
 sessionStream sid = Stream.entityStream (Stream.categoryUnsafe "kioku_session") (idText sid)
 
-sessionEventStream :: SessionEventStream
+sessionEventStream :: ValidatedEventStream (HsPred SessionRegs SessionCommand) SessionRegs SessionVertex SessionCommand SessionEvent
 sessionEventStream =
+  mkEventStreamOrThrow "kioku-session" sessionEventStreamDefinition
+
+sessionEventStreamDefinition :: SessionEventStream
+sessionEventStreamDefinition =
   EventStream
     { transducer = sessionTransducer,
       initialState = NotCreated,

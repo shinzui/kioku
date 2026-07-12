@@ -33,6 +33,16 @@ on an older kioku migration set. Run:
 just migrate
 ```
 
+Check the ledger afterwards:
+
+```bash
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- status
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
+```
+
+`MigrationChecksumMismatch` means an applied SQL file differs from the compiled history. Restore
+the reviewed migration bytes; do not edit the pg-migrate ledger to hide the mismatch.
+
 ### `read model … stale schema` / `ReadModelStaleSchema`
 
 A read model's registered version or shape hash no longer matches the one compiled into the

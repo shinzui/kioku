@@ -47,11 +47,11 @@ import Shibuya.Adapter.Kiroku
     guardKirokuHandler,
     kirokuAdapter,
   )
-import Shibuya.App (ProcessorId (..), QueueProcessor (..), SupervisionStrategy (..), runApp, waitApp)
+import Shibuya.App (ProcessorId (..), QueueProcessor (..), defaultAppConfig, runApp, waitApp)
 import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..))
-import Shibuya.Core.Ingested (Ingested (..))
+import Shibuya.Core.Ingested (Ingested (..), Message (..))
 import Shibuya.Core.Types (Envelope (..))
-import Shibuya.Policy (Concurrency (..), Ordering (..))
+import Shibuya.Policy (Concurrency (..), OrderingPolicy (..))
 import Shibuya.Telemetry.Effect (Tracing)
 import System.IO qualified as IO
 
@@ -119,7 +119,7 @@ runEmbeddingWorkerHost ::
   Eff es ()
 runEmbeddingWorkerHost store capability model dims = do
   processor <- embeddingWorkerProcessor capability model dims store
-  started <- runApp IgnoreFailures 100 [processor]
+  started <- runApp defaultAppConfig [processor]
   case started of
     Left appErr ->
       liftIO (ioError (userError ("kioku embedding worker failed to start: " <> show appErr)))
@@ -143,7 +143,7 @@ embeddingWorkerProcessor capability model dims store = do
           -- The kiroku bridge is ack-coupled: a synchronous exception escaping
           -- the handler leaves the ack unfinalized and blocks the subscription
           -- worker forever. The guard turns that into a one-second retry.
-          handler = guardKirokuHandler (embeddingHandler capability (mkEmbeddingWorkerEnv model dims)),
+          handler = guardKirokuHandler (embeddingMessageHandler capability (mkEmbeddingWorkerEnv model dims)),
           ordering = StrictInOrder,
           concurrency = Serial
         }
@@ -168,6 +168,24 @@ embeddingHandler ::
   Ingested es RecordedEvent ->
   Eff es AckDecision
 embeddingHandler capability env ingested =
+  handleEmbeddingEnvelope capability env ingested.envelope
+
+embeddingMessageHandler ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  VectorCapability ->
+  EmbeddingWorkerEnv ->
+  Message es RecordedEvent ->
+  Eff es AckDecision
+embeddingMessageHandler capability env message =
+  handleEmbeddingEnvelope capability env message.envelope
+
+handleEmbeddingEnvelope ::
+  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  VectorCapability ->
+  EmbeddingWorkerEnv ->
+  Envelope RecordedEvent ->
+  Eff es AckDecision
+handleEmbeddingEnvelope capability env envelope =
   EffError.catchError @StoreError run \_callStack storeErr ->
     if isTransientStoreError storeErr
       then do
@@ -177,10 +195,10 @@ embeddingHandler capability env ingested =
         logWorker ("fatal store error, halting: " <> Text.pack (show storeErr))
         pure (AckHalt (HaltFatal ("kioku embedding worker store error: " <> Text.pack (show storeErr))))
   where
-    retryDelay = embeddingRetryDelay ingested.envelope.attempt
+    retryDelay = embeddingRetryDelay envelope.attempt
 
     run =
-      case decodeRecorded memoryCodec ingested.envelope.payload of
+      case decodeRecorded memoryCodec envelope.payload of
         Left codecErr -> do
           logWorker ("undecodable event, dead-lettering: " <> Text.pack (show codecErr))
           pure (AckDeadLetter (InvalidPayload (Text.pack (show codecErr))))

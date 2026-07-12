@@ -1,0 +1,10 @@
+bfc4fc77978588405f0f697a4831ca12a4972ab8f0e5fe320561a7e34122fb94  2026-06-24-00-00-00-kioku-base.sql
+11b42d976d146b61023e102b8633fce0df445ebe2ef4f2b9fedd51e8ad93e349  2026-06-24-01-00-00-kioku-memory-embeddings.sql
+a4dcaf496976a1d206c8c5c903f3e18a768eca62bc32c09a01822e32d5aeebae  2026-06-24-02-00-00-kioku-distillation.sql
+70ca30dc4737ef5048a9b241ad87ed0d71f0f0c32527f442e9a0ffbf2047f7ba  2026-06-27-20-35-00-kioku-session-delegation-lineage.sql
+d849d7d8a2581ce25475542828462534d56454ab620522251adec5bc95ab1792  2026-06-27-21-10-35-kioku-awaiting-session-state.sql
+76c3e43144ee7d158a73088fe38edee771994a38d796cc7dadf6ebd83b122542  2026-07-03-14-37-18-kioku-session-readmodel-registry-bump.sql
+2f5bce34b92de0e306dbba7dc978ebb531e5f7f09edb18a0fcc758daa2319a45  2026-07-10-14-41-38-kioku-l1-watermarks.sql
+c6b734e2ba1aacf4736a6714ef218ed26c89cbfb7ce02552af46d220a0be42ae  2026-07-11-17-35-11-kioku-schema-hardening.sql
+26b42f4fc265fb214ff3ab6b312be893eb447223322ac4bdb09d4ee1a649ece8  2026-07-11-17-45-43-kioku-embedding-schema-heal.sql
+c88ad236c4d6ad54e8ad6c4b51821f72772d58ff2d028d60d9e4d32a5c3cb125  2026-07-11-18-18-36-kioku-scope-identity-recompute.sql

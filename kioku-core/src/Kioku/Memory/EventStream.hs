@@ -14,6 +14,7 @@ import Keiki.Core (HsPred)
 import Keiki.Generics (emptyRegFile)
 import Keiro.Codec (Codec (..), EventType (..))
 import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
+import Keiro.EventStream.Validate (ValidatedEventStream, mkEventStreamOrThrow)
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
@@ -27,8 +28,12 @@ type MemoryEventStream =
 memoryStream :: MemoryId -> Stream MemoryEventStream
 memoryStream mid = Stream.entityStream (Stream.categoryUnsafe "kioku_memory") (idText mid)
 
-memoryEventStream :: MemoryEventStream
+memoryEventStream :: ValidatedEventStream (HsPred MemoryRegs MemoryCommand) MemoryRegs MemoryVertex MemoryCommand MemoryEvent
 memoryEventStream =
+  mkEventStreamOrThrow "kioku-memory" memoryEventStreamDefinition
+
+memoryEventStreamDefinition :: MemoryEventStream
+memoryEventStreamDefinition =
   EventStream
     { transducer = memoryTransducer,
       initialState = NotCreated,

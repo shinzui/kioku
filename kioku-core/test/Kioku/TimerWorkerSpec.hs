@@ -212,7 +212,7 @@ forceAttemptsStmt :: Statement (UUID.UUID, Int64) ()
 forceAttemptsStmt =
   preparable
     """
-    UPDATE keiro_timers
+    UPDATE keiro.keiro_timers
     SET attempts = $2,
         fire_at = now() - interval '1 second'
     WHERE timer_id = $1
@@ -240,7 +240,7 @@ selectTimerStateStmt =
   preparable
     """
     SELECT status, attempts, fire_at, last_error, fired_event_id::text
-    FROM keiro_timers
+    FROM keiro.keiro_timers
     WHERE timer_id = $1
     """
     (E.param (E.nonNullable E.uuid))

@@ -27,9 +27,18 @@ database has a working vector path. You only need to set `PG_CONNECTION_STRING` 
 the dev shell.
 
 Migrations run through a **separate binary** (`kioku-migrate`, which is what `just migrate`
-invokes). It does not read `PG_CONNECTION_STRING`; it takes `CODD_CONNECTION` (a libpq keyword
-string) plus `CODD_SCHEMAS=kiroku`. The `Justfile` sets these from the dev-shell `PG*` variables,
-so inside the dev shell you never see them. Outside it, set `CODD_CONNECTION` yourself.
+invokes). It reads `DATABASE_URL`; the `Justfile` derives that value from the dev-shell `PG*`
+variables. Outside the dev shell, set it explicitly:
+
+```bash
+export DATABASE_URL="$PG_CONNECTION_STRING"
+cabal run kioku-migrate -- status
+cabal run kioku-migrate -- verify
+cabal run kioku-migrate -- up
+```
+
+`status` and `verify` do not reconcile or mutate read-model rows. A successful `up` applies pending
+migrations and then reconciles the compiled read-model registry.
 
 ## Embeddings
 

@@ -26,7 +26,7 @@
       # extension's .so/.control files are simply not on the server's library path. Plain
       # `pkgs.postgresql` leaves the dev database permanently degraded: the embedding
       # migration's guarded DO block finds no `vector` extension, skips the columns, and
-      # codd records it applied anyway. `extraDevPackages` cannot fix this — it is appended
+      # pg-migrate records the checksummed migration as applied. `extraDevPackages` cannot fix this — it is appended
       # after this list, so plain postgresql would still win the PATH.
       #
       # The `.withPackages` wrapper has a single `out` output, so it drops the `dev` output

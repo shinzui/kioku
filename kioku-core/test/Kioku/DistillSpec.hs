@@ -1453,7 +1453,7 @@ selectTimerKindsStmt =
   preparable
     """
     SELECT payload->>'kind', count(*), max(fire_at)
-    FROM keiro_timers
+    FROM keiro.keiro_timers
     WHERE process_manager_name = $1
       AND correlation_id = $2
     GROUP BY payload->>'kind'

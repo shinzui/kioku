@@ -117,7 +117,7 @@ testIdempotent =
 downgradeSessionByIdTo :: (Store :> es) => Int -> Text -> Eff es ()
 downgradeSessionByIdTo version shapeHash =
   runTransaction . Tx.sql . encodeUtf8 $
-    "UPDATE keiro_read_models SET version = "
+    "UPDATE keiro.keiro_read_models SET version = "
       <> Text.pack (show version)
       <> ", shape_hash = '"
       <> shapeHash

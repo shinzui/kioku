@@ -1,3 +1,5 @@
+{-# LANGUAGE MultilineStrings #-}
+
 -- | Tests for the migration machinery itself, as opposed to the schema it produces
 -- (that lives in @kioku-core@'s @Kioku.SchemaSpec@).
 --
@@ -9,11 +11,35 @@
 module Main where
 
 import Control.Exception (bracket)
-import Data.Char (isAsciiLower, isDigit)
+import Data.Foldable (toList)
 import Data.Int (Int64)
-import Data.List (sort, (\\))
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
-import Data.Text.Encoding qualified as Text
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text.Encoding
+import Data.Text.IO qualified as Text.IO
+import Database.PostgreSQL.Migrate
+  ( Confirmation (Confirmed),
+    EquivalentHistoryPolicy (AllowEquivalentHistory),
+    HistoryImportOutcome (AlreadyImported, Imported),
+    HistoryImportReport (..),
+    HistoryImportResult (..),
+    MigrationId,
+    MigrationOutcome (AlreadyApplied, AppliedNow),
+    MigrationReport (..),
+    MigrationResult (..),
+    VerificationReport (..),
+    connectionProviderFromSettings,
+    defaultImportOptions,
+    defaultRunOptions,
+    migrationId,
+    runMigrationPlan,
+    validateHistoryMappingTargets,
+    verifyMigrationPlan,
+    withEquivalentHistory,
+  )
+import Database.PostgreSQL.Migrate.Embed (checkMigrationManifest)
+import Database.PostgreSQL.Migrate.History.Codd (importCoddHistoryWithValidators)
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Hasql.Decoders qualified as D
@@ -21,10 +47,14 @@ import Hasql.Encoders qualified as E
 import Hasql.Session (Session)
 import Hasql.Session qualified as Session
 import Hasql.Statement (Statement, preparable)
-import Kioku.Migrations (embeddedKiokuMigrationFiles)
+import Kioku.Migrations (kiokuMigrationPlan)
+import Kioku.Migrations.History.Codd
+  ( cohortCoddHistoryMappings,
+    cohortCoddSourceConfig,
+    cohortCoddStateValidators,
+    kiokuCoddHistoryMappings,
+  )
 import Kioku.Migrations.TestSupport (withBareDatabase, withKiokuMigratedDatabase)
-import System.Directory (listDirectory)
-import System.FilePath (stripExtension, takeExtension)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
 
@@ -42,73 +72,28 @@ tests =
           testCase "public schema (long-lived dev databases)" (assertRegistryBump "public")
         ],
       testCase "the full migration chain applies to a fresh database" testFreshDatabase,
-      testGroup
-        "the embedded migration list matches the directory on disk"
-        [ testCase "no migration is missing from the binary" testEmbedIsCurrent,
-          testCase "every migration is named the way codd orders by" testMigrationNames
-        ]
+      testCase "the migration manifest is complete and valid" testManifestIntegrity,
+      testCase "the pinned Codd history maps 30 known plan targets" testHistoryMappings,
+      testCase "the pre-cutover Codd cohort imports 30 rows and applies only five forward migrations" testCoddCohortImport
     ]
 
--- * The embed guard
+-- * The manifest guard
 
--- | Template Haskell embeds @sql-migrations/@ at compile time, and @file-embed@ registers
--- as compilation dependencies only the files it /found/. A file newly ADDED to the
--- directory is therefore invisible to GHC's recompilation check: the module looks up to
--- date, the splice never re-runs, and the binary silently ships without the migration. No
--- TH-side trick can see the file it is precisely the gap that hides, so the guard has to
--- be a runtime comparison.
-testEmbedIsCurrent :: Assertion
-testEmbedIsCurrent = do
-  -- Cabal runs a test suite with the package root as its working directory — the same
-  -- relative path the splice used.
-  onDisk <- sort . filter isSqlFile <$> listDirectory "sql-migrations"
-  let embedded = sort (map fst embeddedKiokuMigrationFiles)
-  if onDisk == embedded
-    then pure ()
-    else
-      assertFailure
-        ( unlines
-            ( [ "The compiled-in migration list is stale.",
-                "",
-                "  missing from the binary: " <> show (onDisk \\ embedded),
-                "  embedded but not on disk: " <> show (embedded \\ onDisk),
-                "",
-                "Fix: EDIT kioku-migrations/src/Kioku/Migrations.hs (bump the",
-                "\"Last added\" comment) and rebuild. `touch` does not work —",
-                "GHC's recompilation check is content-based, so the file's bytes",
-                "must actually change. `just new-migration` does this for you."
-              ]
-            )
-        )
+testManifestIntegrity :: Assertion
+testManifestIntegrity = do
+  result <- checkMigrationManifest "migrations/manifest"
+  case result of
+    Left err -> assertFailure ("invalid migration manifest: " <> show err)
+    Right _ -> pure ()
 
--- | codd orders migrations by the UTC timestamp in the filename, so a mis-scaffolded name
--- does not fail — it silently runs in the wrong place.
-testMigrationNames :: Assertion
-testMigrationNames =
-  case filter (not . wellFormed) (map fst embeddedKiokuMigrationFiles) of
-    [] -> pure ()
-    bad ->
-      assertFailure
-        ( "migration filenames must be YYYY-MM-DD-HH-MM-SS-slug.sql, but found: "
-            <> show bad
-        )
-  where
-    wellFormed name =
-      case stripExtension ".sql" name of
-        Nothing -> False
-        Just stem ->
-          case splitAt 19 stem of
-            (stamp, '-' : slug) ->
-              map digitOrDash stamp == "dddd-dd-dd-dd-dd-dd"
-                && not (null slug)
-                && all (\c -> isAsciiLower c || isDigit c || c == '-') slug
-            _ -> False
-    digitOrDash c
-      | isDigit c = 'd'
-      | otherwise = c
-
-isSqlFile :: FilePath -> Bool
-isSqlFile = (== ".sql") . takeExtension
+testHistoryMappings :: Assertion
+testHistoryMappings = do
+  plan <- either (fail . show) pure kiokuMigrationPlan
+  length (toList kiokuCoddHistoryMappings) @?= 10
+  length (toList cohortCoddHistoryMappings) @?= 30
+  case validateHistoryMappingTargets plan cohortCoddHistoryMappings of
+    Left err -> assertFailure ("invalid Codd history mapping target: " <> show err)
+    Right () -> pure ()
 
 -- * The layout test
 
@@ -122,6 +107,7 @@ isSqlFile = (== ".sql") . takeExtension
 assertRegistryBump :: Text -> Assertion
 assertRegistryBump schema =
   withBareConnection \conn -> do
+    registryBumpMigration <- loadRegistryBumpMigration
     run conn (Session.script (bootstrapLayout schema))
     run conn (Session.script seedRegistryRows)
     run conn (Session.script registryBumpMigration)
@@ -181,18 +167,19 @@ selectRegistryRow schema =
 -- | The migration's bytes as they were compiled into this binary, so the test exercises
 -- exactly what ships. @-- codd:@ directives are ordinary SQL comments, so the whole file
 -- runs as one script.
-registryBumpMigration :: Text
-registryBumpMigration =
-  case lookup name embeddedKiokuMigrationFiles of
-    Nothing -> error ("no embedded migration named " <> name)
-    Just bytes -> Text.decodeUtf8 bytes
+loadRegistryBumpMigration :: IO Text
+loadRegistryBumpMigration = do
+  result <- checkMigrationManifest "migrations/manifest"
+  entries <- either (fail . show) pure result
+  case lookup name (toList entries) of
+    Nothing -> fail ("no manifest migration named " <> name)
+    Just bytes -> pure (Text.Encoding.decodeUtf8 bytes)
   where
-    name = "2026-07-03-14-37-18-kioku-session-readmodel-registry-bump.sql"
+    name = "0006-kioku-session-readmodel-registry-bump.sql"
 
 -- * The fresh-database test
 
--- | The rewritten body still applies inside the real codd chain, on the cohort this package
--- actually compiles against.
+-- | The rewritten body still applies inside the real pg-migrate chain.
 testFreshDatabase :: Assertion
 testFreshDatabase =
   withKiokuMigratedDatabase \connStr ->
@@ -203,9 +190,211 @@ testFreshDatabase =
 registryTableExists :: Statement () Bool
 registryTableExists =
   preparable
-    "SELECT to_regclass('kiroku.keiro_read_models') IS NOT NULL"
+    "SELECT to_regclass('keiro.keiro_read_models') IS NOT NULL"
     E.noParams
     (D.singleRow (D.column (D.nonNullable D.bool)))
+
+-- * The downstream Codd cutover rehearsal
+
+-- | Exercise the operator runbook against the exact 30 historical migration
+-- payloads from the pinned cohort. The fixture deliberately starts with Keiro's
+-- tables in @kiroku@ and sentinel Codd filenames, then runs the two filename
+-- fixups and schema relocation before importing history.
+testCoddCohortImport :: Assertion
+testCoddCohortImport =
+  withBareDatabase \connStr -> do
+    plan <- either (fail . show) pure kiokuMigrationPlan
+    fixture <- Text.IO.readFile "test/fixtures/pre-cutover-schema.sql"
+    let legacyNames = fixtureMigrationNames fixture
+        settings = Settings.connectionString connStr
+        provider = connectionProviderFromSettings settings
+    length legacyNames @?= 30
+
+    kirokuFixup <- Text.IO.readFile "codd-upgrade/realign-kiroku-migration-timestamps.sql"
+    keiroFixup <- Text.IO.readFile "codd-upgrade/realign-keiro-migration-timestamps.sql"
+    relocation <- Text.IO.readFile "codd-upgrade/relocate-keiro-tables-to-keiro-schema.sql"
+    withConnection connStr \conn -> do
+      run conn (Session.script fixture)
+      run conn (Session.script (coddV5Ledger legacyNames))
+      run conn (Session.script kirokuFixup)
+      run conn (Session.script keiroFixup)
+      run conn (Session.script relocation)
+      run conn (Session.script seedSessionRegistry)
+
+    beforeSource <- query connStr coddSnapshotStatement
+    beforeSchema <- query connStr cohortSchemaSnapshotStatement
+    query connStr forwardMigrationEffectCountStatement >>= (@?= 0)
+
+    sourceConfig <-
+      either
+        (assertFailure . show)
+        pure
+        (cohortCoddSourceConfig provider False "Codd cohort rehearsal" Confirmed)
+    first <-
+      importCoddHistoryWithValidators
+        (withEquivalentHistory AllowEquivalentHistory defaultImportOptions)
+        cohortCoddStateValidators
+        sourceConfig
+        provider
+        plan
+        cohortCoddHistoryMappings
+        >>= either (assertFailure . show) pure
+    importOutcomes first @?= replicate 30 Imported
+    query connStr importedLedgerCountsStatement >>= (@?= (30, 30))
+    query connStr coddSnapshotStatement >>= (@?= beforeSource)
+    query connStr cohortSchemaSnapshotStatement >>= (@?= beforeSchema)
+    query connStr forwardMigrationEffectCountStatement >>= (@?= 0)
+
+    second <-
+      importCoddHistoryWithValidators
+        (withEquivalentHistory AllowEquivalentHistory defaultImportOptions)
+        cohortCoddStateValidators
+        sourceConfig
+        provider
+        plan
+        cohortCoddHistoryMappings
+        >>= either (assertFailure . show) pure
+    importOutcomes second @?= replicate 30 AlreadyImported
+
+    migrated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
+    let MigrationReport {results = migratedResults} = migrated
+    appliedNow migrated @?= expectedForwardMigrationIds
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList migratedResults] @?= 30
+    query connStr forwardMigrationEffectCountStatement >>= (@?= 5)
+
+    verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
+    let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
+    verificationIssues @?= []
+    length appliedMigrations @?= 35
+    pendingMigrations @?= []
+    unknownMigrations @?= []
+
+    repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
+    let MigrationReport {results = repeatedResults} = repeated
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 35
+    length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
+
+fixtureMigrationNames :: Text -> [FilePath]
+fixtureMigrationNames =
+  fmap (Text.unpack . Text.takeWhile (/= ' '))
+    . mapMaybe (Text.stripPrefix "-- BEGIN ")
+    . Text.lines
+
+coddV5Ledger :: [FilePath] -> Text
+coddV5Ledger filenames =
+  Text.unlines
+    [ "CREATE SCHEMA codd;",
+      "CREATE TABLE codd.sql_migrations (",
+      "  id serial PRIMARY KEY,",
+      "  migration_timestamp timestamptz NOT NULL UNIQUE,",
+      "  applied_at timestamptz,",
+      "  name text NOT NULL UNIQUE,",
+      "  application_duration interval,",
+      "  num_applied_statements int,",
+      "  no_txn_failed_at timestamptz,",
+      "  txnid bigint,",
+      "  connid int",
+      ");",
+      "INSERT INTO codd.sql_migrations (migration_timestamp, applied_at, name, num_applied_statements)",
+      "SELECT timestamptz '2024-01-01 00:00:00+00' + ordinal * interval '1 second',",
+      "       timestamptz '2024-01-02 00:00:00+00' + ordinal * interval '1 second',",
+      "       name, 1",
+      "FROM unnest(ARRAY[" <> Text.intercalate "," (sqlString . Text.pack <$> filenames) <> "]::text[])",
+      "  WITH ORDINALITY AS historical(name, ordinal);"
+    ]
+
+sqlString :: Text -> Text
+sqlString value = "'" <> Text.replace "'" "''" value <> "'"
+
+seedSessionRegistry :: Text
+seedSessionRegistry =
+  """
+  INSERT INTO keiro.keiro_read_models (name, version, shape_hash, last_built_at, status)
+  SELECT name, 3, 'kioku-session-v3', now(), 'live'
+  FROM unnest(ARRAY[
+    'kioku-session-by-id',
+    'kioku-sessions-by-namespace',
+    'kioku-sessions-by-scope',
+    'kioku-sessions-by-focus',
+    'kioku-sessions-by-started-range',
+    'kioku-session-chain',
+    'kioku-session-delegation-children',
+    'kioku-sessions-awaiting-by-correlation-key'
+  ]) AS session_models(name)
+  ON CONFLICT (name) DO UPDATE
+    SET version = EXCLUDED.version,
+        shape_hash = EXCLUDED.shape_hash,
+        status = EXCLUDED.status;
+  """
+
+importOutcomes :: HistoryImportReport -> [HistoryImportOutcome]
+importOutcomes HistoryImportReport {importResults} = importOutcome <$> toList importResults
+
+appliedNow :: MigrationReport -> [MigrationId]
+appliedNow MigrationReport {results} =
+  [migration | MigrationResult {migration, outcome = AppliedNow} <- toList results]
+
+expectedForwardMigrationIds :: [MigrationId]
+expectedForwardMigrationIds =
+  expectRight
+    <$> [ migrationId "kiroku" "0007-stream-truncate-before",
+          migrationId "kiroku" "0008-schema-management-comment",
+          migrationId "keiro" "0015-keiro-outbox-claim-order-index",
+          migrationId "keiro" "0016-keiro-inbox-drop-received-idx",
+          migrationId "keiro" "0017-schema-management-comment"
+        ]
+
+expectRight :: (Show error) => Either error value -> value
+expectRight = either (error . show) id
+
+importedLedgerCountsStatement :: Statement () (Int64, Int64)
+importedLedgerCountsStatement =
+  preparable
+    "SELECT (SELECT count(*) FROM pgmigrate.migrations WHERE status = 'applied'), (SELECT count(*) FROM pgmigrate.history_imports)"
+    E.noParams
+    (D.singleRow ((,) <$> required D.int8 <*> required D.int8))
+  where
+    required = D.column . D.nonNullable
+
+coddSnapshotStatement :: Statement () (Int64, Text)
+coddSnapshotStatement =
+  preparable
+    "SELECT count(*), string_agg(name, ',' ORDER BY name) FROM codd.sql_migrations"
+    E.noParams
+    (D.singleRow ((,) <$> required D.int8 <*> required D.text))
+  where
+    required = D.column . D.nonNullable
+
+cohortSchemaSnapshotStatement :: Statement () Text
+cohortSchemaSnapshotStatement =
+  preparable
+    """
+    SELECT md5(string_agg(
+      table_schema || '.' || table_name || '.' || column_name || ':' || data_type || ':' || is_nullable || ':' || coalesce(column_default, ''),
+      E'\n' ORDER BY table_schema, table_name, ordinal_position))
+    FROM information_schema.columns
+    WHERE table_schema IN ('kiroku', 'keiro')
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
+
+forwardMigrationEffectCountStatement :: Statement () Int64
+forwardMigrationEffectCountStatement =
+  preparable
+    """
+    SELECT (
+      (EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'kiroku' AND table_name = 'streams' AND column_name = 'truncate_before'))::int
+      + (coalesce(obj_description(to_regnamespace('kiroku'), 'pg_namespace'), '') =
+          'Managed by pg-migrate component kiroku through 0008-schema-management-comment')::int
+      + (to_regclass('keiro.keiro_outbox_claim_order_idx') IS NOT NULL)::int
+      + (to_regclass('keiro.keiro_inbox_received_idx') IS NULL)::int
+      + (coalesce(obj_description(to_regnamespace('keiro'), 'pg_namespace'), '') =
+          'Managed by pg-migrate component keiro through 0017-schema-management-comment')::int
+    )::bigint
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.int8)))
 
 -- * Harness
 
@@ -224,3 +413,6 @@ run :: Connection.Connection -> Session a -> IO a
 run conn session =
   Connection.use conn session
     >>= either (\err -> assertFailure (show err)) pure
+
+query :: Text -> Statement () a -> IO a
+query connStr statement = withConnection connStr \conn -> run conn (Session.statement () statement)

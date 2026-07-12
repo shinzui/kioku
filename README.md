@@ -29,7 +29,7 @@ remember what agents learn, where that knowledge applies, and which session prod
 - `kioku-api/`: shared API types and identifiers.
 - `kioku-core/`: memory, session, recall, and distillation runtime library.
 - `kioku-cli/`: command-line interface for demos, recall, distillation, scenes, and workers.
-- `kioku-migrations/`: embedded database migrations and test support.
+- `kioku-migrations/`: manifest-ordered, checksummed pg-migrate component and test support.
 - `docs/user/`: user and integration documentation.
 - `docs/plans/`: ExecPlans for larger implementation work.
 
@@ -47,6 +47,7 @@ Common development commands:
 cabal build all
 cabal test all
 just migrate
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 The development shell is provided by Nix:

@@ -191,6 +191,7 @@ sessionByIdReadModel :: ReadModel SessionByIdQuery (Maybe SessionRow)
 sessionByIdReadModel =
   ReadModel
     { name = "kioku-session-by-id",
+      schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
       version = 3,
@@ -203,6 +204,7 @@ sessionsByNamespaceReadModel :: ReadModel SessionsByNamespaceQuery [SessionRow]
 sessionsByNamespaceReadModel =
   ReadModel
     { name = "kioku-sessions-by-namespace",
+      schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
       version = 3,
@@ -215,6 +217,7 @@ sessionsByScopeReadModel :: ReadModel SessionsByScopeQuery [SessionRow]
 sessionsByScopeReadModel =
   ReadModel
     { name = "kioku-sessions-by-scope",
+      schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
       version = 3,
@@ -227,6 +230,7 @@ sessionsByFocusReadModel :: ReadModel SessionsByFocusQuery [SessionRow]
 sessionsByFocusReadModel =
   ReadModel
     { name = "kioku-sessions-by-focus",
+      schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
       version = 3,
@@ -239,6 +243,7 @@ sessionsByStartedRangeReadModel :: ReadModel SessionsByStartedRangeQuery [Sessio
 sessionsByStartedRangeReadModel =
   ReadModel
     { name = "kioku-sessions-by-started-range",
+      schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
       version = 3,
@@ -251,6 +256,7 @@ sessionChainReadModel :: ReadModel SessionChainQuery [SessionRow]
 sessionChainReadModel =
   ReadModel
     { name = "kioku-session-chain",
+      schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
       version = 3,
@@ -263,6 +269,7 @@ sessionDelegationChildrenReadModel :: ReadModel SessionDelegationChildrenQuery [
 sessionDelegationChildrenReadModel =
   ReadModel
     { name = "kioku-session-delegation-children",
+      schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
       version = 3,
@@ -275,6 +282,7 @@ awaitingSessionsByCorrelationKeyReadModel :: ReadModel AwaitingSessionsByCorrela
 awaitingSessionsByCorrelationKeyReadModel =
   ReadModel
     { name = "kioku-sessions-awaiting-by-correlation-key",
+      schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
       version = 3,
@@ -287,6 +295,7 @@ turnsBySessionReadModel :: ReadModel TurnsBySessionQuery [TurnRow]
 turnsBySessionReadModel =
   ReadModel
     { name = "kioku-turns-by-session",
+      schema = "kiroku",
       tableName = "kioku_turns",
       subscriptionName = "kioku-session-inline",
       version = 1,

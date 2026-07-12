@@ -35,7 +35,7 @@ import Kioku.Id (MemoryId, SessionId)
 import Kioku.Prelude
 
 data MemoryVertex = NotCreated | Active | Superseded | Merged | Archived
-  deriving stock (Eq, Show, Enum, Bounded)
+  deriving stock (Eq, Ord, Show, Enum, Bounded)
 
 type MemoryRegs = '[]
 

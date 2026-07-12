@@ -37,7 +37,7 @@ import Kioku.Id (SessionId)
 import Kioku.Prelude
 
 data SessionVertex = NotCreated | Running | Completed | Failed | Interactive | Awaiting
-  deriving stock (Eq, Show, Enum, Bounded)
+  deriving stock (Eq, Ord, Show, Enum, Bounded)
 
 -- | Replayed aggregate state carried alongside the vertex.
 --

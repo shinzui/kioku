@@ -17,8 +17,8 @@
 -- registry can never disagree with the code. The @kioku-migrate@ executable runs
 -- it immediately after applying migrations, which is why a read-model version
 -- bump needs no hand-written registry SQL. A host that applies migrations as a
--- library (via @Kioku.Migrations.runKiokuMigrations@) must call it itself; see
--- @docs\/user\/library-api.md@.
+-- library (by running @Kioku.Migrations.kiokuMigrationPlan@ through pg-migrate)
+-- must call it itself; see @docs\/user\/library-api.md@.
 --
 -- Because Kioku guarantees its read-model migrations leave the table data correct
 -- for the current version, advancing the registry guard is safe here without a

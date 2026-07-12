@@ -488,9 +488,11 @@ operator or host input; **`parseIdLenient`** exists for legacy streams only and 
 
 ## Migrations (`kioku-migrations`)
 
-kioku ships its schema as embedded migrations applied via codd. A host composes kioku's
-migrations with its own. In this repo, `just migrate` runs `kioku-migrate` against the
-dev-shell database. See the [Getting Started](getting-started.md) setup steps.
+kioku ships a native pg-migrate component whose ordered SQL manifest is embedded and checksummed at
+compile time. `kiokuMigrations` is the component named `kioku` (depending on `keiro`), while
+`kiokuMigrationPlan` composes kiroku, keiro, and kioku in validated dependency order. A downstream
+host composes `kiokuMigrations` with its own components; this repo's `kioku-migrate` mounts the
+standard `plan`, `list`, `check`, `status`, `verify`, `up`, `repair`, and `new` commands.
 
 ### Applying migrations as a library: reconcile the read-model registry
 
@@ -502,17 +504,18 @@ own: `registerReadModel` only ever *inserts*, so an existing row stays pinned at
 version forever. A kioku upgrade that bumps a read model's version therefore takes every
 query for that model down until the registry catches up.
 
-`kioku-migrate` does this for you — it reconciles the registry immediately after applying
-migrations, and a version bump needs no extra work. **A host that instead calls
-`runKiokuMigrations` or `runKiokuMigrationsNoCheck` directly must call
-`Kioku.ReadModel.reconcileReadModelRegistry` afterwards**, on a `Store`, or it will hit that
-outage on the next kioku upgrade:
+`kioku-migrate up` does this for you after pg-migrate succeeds; read-only commands never write the
+registry. **A host that runs a composed plan directly must call
+`Kioku.ReadModel.reconcileReadModelRegistry` afterwards**, on a `Store`, or it will hit that outage
+on the next kioku upgrade:
 
 ```haskell
-import Kioku.Migrations (runKiokuMigrationsNoCheck)
+import Database.PostgreSQL.Migrate (defaultRunOptions, runMigrationPlan)
+import Kioku.Migrations (kiokuMigrationPlan)
 import Kioku.ReadModel (reconcileReadModelRegistry)
 
-_ <- runKiokuMigrationsNoCheck settings (secondsToDiffTime 5)
+plan <- either (fail . show) pure kiokuMigrationPlan
+_ <- runMigrationPlan defaultRunOptions migrationSettings plan >>= either (fail . show) pure
 withStore (defaultConnectionSettings connStr) \store -> do
   tracer <- noopTracer
   result <-
@@ -529,10 +532,8 @@ to write the registry on boot.
 
 ### Adding a migration
 
-Use `just new-migration <slug>`. It mints a codd-ordered `YYYY-MM-DD-HH-MM-SS-slug.sql`
-filename *and* edits `kioku-migrations/src/Kioku/Migrations.hs`, which is load-bearing: the
-migrations are embedded by Template Haskell, and a file added since the last compile is not
-one of GHC's registered dependencies, so the module would not recompile and the binary would
-silently ship without the migration. `touch` does not help — GHC's recompilation check is
-content-based, so the module's bytes must actually change. If you create a migration by
-hand, `cabal test kioku-migrations-test` fails and tells you exactly this.
+Use `just new-migration <slug>`. It delegates to pg-migrate-cli, creates the next
+`NNNN-<slug>.sql` file exclusively, and appends it to `kioku-migrations/migrations/manifest`
+atomically. The manifest and every listed SQL file are compilation dependencies. A stray `.sql`
+file or missing manifest entry makes the build fail with `UnlistedSqlFiles` instead of silently
+shipping an incomplete component.

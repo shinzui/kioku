@@ -1,0 +1,10 @@
+0001-kioku-base.sql
+0002-kioku-memory-embeddings.sql
+0003-kioku-distillation.sql
+0004-kioku-session-delegation-lineage.sql
+0005-kioku-awaiting-session-state.sql
+0006-kioku-session-readmodel-registry-bump.sql
+0007-kioku-l1-watermarks.sql
+0008-kioku-schema-hardening.sql
+0009-kioku-embedding-schema-heal.sql
+0010-kioku-scope-identity-recompute.sql
