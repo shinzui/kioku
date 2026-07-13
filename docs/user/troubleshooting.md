@@ -23,10 +23,9 @@ The command reached Postgres but a query failed. Usual causes:
 
 ### Missing columns, or a missing table
 
-If a command mentions missing columns — `parent_session_id`, `delegation_depth`,
-`awaiting_reason`, `awaiting_correlation_key`, `awaiting_deadline`, `resume_input` (session
-lineage and park-and-resume), `embedding`, `embedding_model`, `dimensions`, `content_hash`
-(embeddings) — or a missing `kiroku.kioku_l1_watermarks` table (L1 idempotency), the database is
+If a command mentions `parent_session_id`, `delegation_depth`, `awaiting_reason`,
+`awaiting_correlation_key`, `awaiting_deadline`, `resume_input` (session lineage and
+park-and-resume), or a missing `kiroku.kioku_l1_watermarks` table (L1 idempotency), the database is
 on an older kioku migration set. Run:
 
 ```bash
@@ -42,6 +41,11 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 
 `MigrationChecksumMismatch` means an applied SQL file differs from the compiled history. Restore
 the reviewed migration bytes; do not edit the pg-migrate ledger to hide the mismatch.
+
+Missing `embedding`, `embedding_model`, `dimensions`, or `content_hash` columns can instead mean
+that the embedding DDL was deliberately skipped when pgvector was unavailable. Follow
+["columns are missing"](#columns-are-missing) below; whether another `up` is sufficient depends on
+whether the heal migration is still pending.
 
 ### `read model … stale schema` / `ReadModelStaleSchema`
 
@@ -93,26 +97,55 @@ kioku embedding worker started. Press Ctrl+C to stop.
 
 This is the most common false alarm. kioku connects with `search_path = kiroku, pg_catalog`, so an
 extension installed into `public` — the usual operator default — **cannot be named** and reports as
-unavailable even though `CREATE EXTENSION vector` succeeded. Move it and re-migrate:
+unavailable even though `CREATE EXTENSION vector` succeeded. Move it, then follow the healing
+procedure below:
 
 ```bash
 psql "$PG_CONNECTION_STRING" -c 'ALTER EXTENSION vector SET SCHEMA kiroku;'
-just migrate
-kioku worker --backfill
 ```
 
 ### "columns are missing"
 
-The database was migrated while the server had no pgvector, so the embedding DDL was skipped. This
-used to be permanent. Install pgvector, then re-run `just migrate` — a heal migration re-attempts
-the DDL — and backfill:
+The database was migrated while the server had no pgvector, so the embedding DDL was skipped. The
+heal migration `kioku/0009-kioku-embedding-schema-heal` re-attempts it. First install pgvector in
+the `kiroku` schema (or move an existing extension there), then inspect the ledger:
 
 ```bash
-just migrate
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- status
+```
+
+If 0009 is **pending**, the normal migration run applies it:
+
+```bash
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- up
+```
+
+If 0009 is already **applied**, pg-migrate correctly will not replay it. Apply the same idempotent
+checked-in SQL manually instead:
+
+```bash
+psql "$PG_CONNECTION_STRING" --set=ON_ERROR_STOP=1 \
+  --file=kioku-migrations/migrations/0009-kioku-embedding-schema-heal.sql
+```
+
+Then populate vectors:
+
+```bash
 kioku worker --backfill
 ```
 
 The Nix dev shell now ships pgvector, so a fresh dev database is fine.
+
+Capability detection checks the vector type and required columns, but **not** the HNSW index. If
+vector recall works but is unexpectedly slow, check it separately:
+
+```bash
+psql "$PG_CONNECTION_STRING" -tAc \
+  "SELECT to_regclass('kiroku.kioku_memories_embedding_hnsw')"
+```
+
+An empty result means the index is absent. Reapplying the idempotent 0009 SQL above recreates it;
+the absence of the index does not trigger keyword-only degradation.
 
 ### Embedding dimension mismatch
 

@@ -27,7 +27,9 @@ not configurable.
 L0 is the raw material: the **turns** a host records on a running session (role, content, tool
 summary, token counts) and/or directly recorded memories. A host opts in to turn capture by
 calling `recordTurn` while a session is running. If a host records no turns, distillation can
-still run against recorded memories as evidence.
+still run against recorded memories as evidence. `recordInteractive` is a metadata-only terminal
+session marker; it does not accept a transcript, so use a normal running session plus `recordTurn`
+when an externally managed conversation must become L0 evidence.
 
 ## L1 — extract atoms, then consolidate
 
@@ -45,7 +47,8 @@ and proposes a list of **atoms**. Each atom has:
 
 - `atomType` — `fact | pattern | preference | constraint | instruction`,
 - `content` — one concise, durable memory sentence,
-- `priority` — `0` = always inject, `100` = default, larger = lower priority,
+- `priority` — `0` = maximum recall boost (the "always inject" convention), `100` = default/no
+  boost,
 - `confidence` — `high | medium | low`.
 
 Priorities are clamped to `0`–`100`, and an `atomType` or `confidence` outside the allowed set is
@@ -88,7 +91,8 @@ The candidate finder is pluggable. The CLI exposes two:
 - **scan** (`--candidates scan`, default) — a recency/scope SQL scan. No embedding endpoint
   required.
 - **recall** (`--candidates recall`) — uses hybrid [recall](recall.md) to find the most similar
-  existing memories. Requires the `KIOKU_EMBEDDING_*` configuration.
+  existing memories. A valid `KIOKU_EMBEDDING_*` endpoint enables semantic candidates; an
+  embedding failure falls back to FTS for that request.
 
 `--limit N` caps how many candidates are considered per atom (default `5`, range 1–50).
 
@@ -114,7 +118,7 @@ several scenes per scope; today exactly one is generated, so there is one scene 
 Print it:
 
 ```bash
-kioku scenes --scope mori:repo:web
+kioku scenes --scope mori:repo:proj_01h4...
 ```
 
 ## L3 — persona
@@ -209,7 +213,7 @@ L2 scenes and L3 personas are mirrored to the filesystem as plain markdown, so a
 you) can read them without querying the database:
 
 ```text
-.kioku/scenes/<slug>.md      # e.g. mori-repo-web-3f2a1c9d7b.md
+.kioku/scenes/<slug>.md      # e.g. mori-repo-proj_01h455vb4pex5vsknk084sn02q-3f2a1c9d7b.md
 .kioku/persona/<slug>.md
 ```
 

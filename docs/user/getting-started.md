@@ -64,10 +64,12 @@ The migrations create three things you care about:
 > **pgvector note.** The embedding column and vector index are created only when the `pgvector`
 > extension is installable. kioku detects this at runtime (`VectorCapability`) and adapts: if
 > pgvector is missing, recall runs full-text only and the embedding worker is skipped. A database
-> migrated *before* pgvector was installed used to be permanently degraded; a heal migration now
-> re-attempts the DDL, so installing pgvector and re-running `just migrate` fixes it. Note that
-> kioku looks for the extension on its own `search_path`, so a `vector` extension installed into
-> `public` reports as *unavailable* — see
+> migrated *before* pgvector was installed can be healed by migration
+> `kioku/0009-kioku-embedding-schema-heal`, provided that migration is still pending when pgvector
+> becomes available. If 0009 was already recorded while pgvector was absent, pg-migrate will not
+> re-run it; apply the checked-in idempotent SQL manually. Also, kioku looks for the extension on
+> its own `search_path`, so a `vector` extension installed into `public` reports as *unavailable*.
+> See
 > [Troubleshooting](troubleshooting.md#pgvector-is-installed-but-reports-as-not-available).
 
 ## 3. Point the CLI at your database
@@ -102,30 +104,40 @@ Recorded memory kioku_memory_01... in scope kioku_demo/demo/demo
 - kioku_memory_01... [preference/high] prefers concise answers
 ```
 
-Now recall it by meaning:
+Recall it immediately with full-text search (the demo command does not create an embedding):
 
 ```bash
-kioku recall "what writing style is preferred" \
-  --scope kioku_demo:demo:demo
+kioku recall "concise answers" --scope kioku_demo:demo:demo --strategy keyword
 ```
 
 ```text
 1. preference "prefers concise answers"
 ```
 
-Add `--show-scores` to see the fused score and the component ranks:
+Add `--show-scores` to see the score and component ranks:
 
 ```bash
-kioku recall "writing style" --scope kioku_demo:demo:demo --show-scores
+kioku recall "concise answers" --scope kioku_demo:demo:demo \
+  --strategy keyword --show-scores
 ```
 
 ```text
-1. score=0.0164 fts=1 vec=1 preference "prefers concise answers"
+1. score=0.1664 fts=1 vec=- preference "prefers concise answers"
 ```
 
 `fts` is the full-text rank, `vec` is the semantic (pgvector) rank, and `score` is the fused
-RRF score with recency/priority/confidence signals applied. A `-` means that component did not
-contribute (e.g. pgvector unavailable, or the query did not embed). See [Recall](recall.md).
+RRF score with recency/priority/confidence signals applied. The exact score changes as the memory
+ages. A `-` means that component did not contribute; here vector search was deliberately disabled.
+
+For semantic recall, configure the embedding endpoint, backfill the new row, then use the default
+hybrid strategy:
+
+```bash
+kioku worker --backfill
+kioku recall "what writing style is preferred" --scope kioku_demo:demo:demo
+```
+
+See [Recall](recall.md) for the ranking and fallback behavior.
 
 ## 5. (Optional) build a session and distill it
 

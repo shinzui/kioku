@@ -17,9 +17,9 @@ kioku is **host-agnostic**: memories are organized by a generic `MemoryScope`
 coaching), **mori** (multi-repo agent execution), and **shikigami** (autonomous system agents)
 — can share one memory database without colliding.
 
-> kioku is a Haskell library plus a `kioku` CLI. It is a building block embedded by host
-> applications, not a standalone product. This guide covers both using the CLI and embedding
-> the library.
+> kioku is a Haskell library plus the `kioku` runtime CLI and `kioku-migrate` schema CLI. It is a
+> building block embedded by host applications, not a standalone product. This guide covers the
+> CLIs and embedding the library.
 
 ## Documentation map
 
@@ -29,7 +29,7 @@ Start here, in order:
    your first memory in under five minutes.
 2. **[Concepts](concepts.md)** — the mental model: memories, scopes, sessions, recall, and the
    distillation pyramid. Read this before the rest.
-3. **[CLI Reference](cli-reference.md)** — every `kioku` subcommand, its flags, and examples.
+3. **[CLI Reference](cli-reference.md)** — runtime commands plus `kioku-migrate` operations.
 4. **[Recall & Hybrid Retrieval](recall.md)** — how matches are found, fused, and ranked.
 5. **[The Distillation Pyramid](distillation.md)** — L0 → L1 → L2 → L3, consolidation, timers,
    and workspace mirroring.
@@ -75,9 +75,12 @@ export PG_CONNECTION_STRING='host=localhost dbname=kioku user=me'
 #    way to delete an event — so the demo requires an explicit opt-in.
 kioku demo --yes-write-events
 
-# 3. Recall memories relevant to a query within a scope.
-kioku recall "how does the user like answers" --scope kioku_demo:demo:demo
+# 3. The demo does not create an embedding, so smoke-test it with lexical recall.
+kioku recall "concise answers" --scope kioku_demo:demo:demo --strategy keyword
 ```
+
+For semantic recall, configure the embedding endpoint and run `kioku worker --backfill`; see
+[Getting Started](getting-started.md).
 
 > Distillation additionally needs an **Anthropic** key (`ANTHROPIC_API_KEY`), which is a separate
 > credential from the embeddings endpoint. See [Configuration](configuration.md).

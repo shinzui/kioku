@@ -1,8 +1,9 @@
 # CLI Reference
 
-The `kioku` command bundles the memory tools. Every command that touches the database reads the
-connection string from the `PG_CONNECTION_STRING` environment variable and exits with an error
-if it is unset.
+kioku ships two executables: `kioku` for memory/session operations and `kioku-migrate` for schema
+management. Every `kioku` command that reaches the database reads `PG_CONNECTION_STRING` and exits
+with an error if it is unset. Migration commands use `DATABASE_URL` instead; see
+[`kioku-migrate`](#kioku-migrate).
 
 ```text
 kioku
@@ -23,13 +24,14 @@ Available commands:
 
 Run `kioku <command> --help` for the flags of any subcommand.
 
-## Global requirements
+## Runtime configuration
 
-| Variable                | Required by            | Purpose                                    |
+| Variable                | Used by                | Purpose                                    |
 |-------------------------|------------------------|--------------------------------------------|
-| `PG_CONNECTION_STRING`  | every command          | libpq connection string to the database.   |
-| `KIOKU_EMBEDDING_*`     | `recall`, `distill --candidates recall`, `worker` | embedding endpoint config (see [Configuration](configuration.md)). |
-| `ANTHROPIC_API_KEY`     | `distill`, `worker`    | the distillation LLM. **Separate from the embeddings key** — configuring `KIOKU_EMBEDDING_*` does not configure this. |
+| `PG_CONNECTION_STRING`  | every `kioku` database operation | libpq connection string to the database. |
+| `KIOKU_EMBEDDING_*`     | vector recall, recall-based merge candidates, and embedding worker modes | embedding endpoint config (see [Configuration](configuration.md)); defaults exist, and recall degrades to keyword if embedding fails. |
+| `ANTHROPIC_API_KEY`     | commands that run distillation | the distillation LLM. **Separate from the embeddings key** — configuring `KIOKU_EMBEDDING_*` does not configure this. |
+| `DATABASE_URL`          | `kioku-migrate` database operations | migration target connection string; an explicit `--database-url` overrides it. |
 
 The scope string format used by several commands is:
 
@@ -124,11 +126,11 @@ kioku recall QUERY --scope NAMESPACE[:KIND:REF] [options]
 Examples:
 
 ```bash
-# Default hybrid recall within an entity scope
-kioku recall "preferred writing style" --scope kioku_demo:demo:demo
+# The demo does not create an embedding, so this immediate smoke test is keyword-only
+kioku recall "concise answers" --scope kioku_demo:demo:demo --strategy keyword
 
 # Keyword-only, limited to 3 hits
-kioku recall "deploy script" --scope mori:repo:web --strategy keyword --limit 3
+kioku recall "deploy script" --scope mori:repo:proj_01h4... --strategy keyword --limit 3
 
 # Show scoring detail
 kioku recall "testing practices" --scope mori --show-scores
@@ -137,12 +139,16 @@ kioku recall "testing practices" --scope mori --show-scores
 Output (`--show-scores`):
 
 ```text
-1. score=0.0164 fts=1 vec=1 preference "prefers concise answers"
+1. score=0.1664 fts=1 vec=- preference "prefers concise answers"
 ```
 
 - `score` — fused RRF score plus recency/priority/confidence signals.
 - `fts` — full-text rank (`-` if FTS did not contribute).
 - `vec` — pgvector rank (`-` if vector recall did not run or the query failed to embed).
+
+The exact score changes as the memory ages. In this immediate demo result, rank-1 FTS contributes
+about `0.0164`, recency about `0.10`, and high confidence `0.05`; the demo's default priority adds
+no boost.
 
 When nothing matches, `kioku recall` prints `(no matches)`.
 
@@ -179,8 +185,8 @@ kioku distill session SESSION_ID [options]
 | `--force`            | off     | Re-run even when the session has no turns newer than the last successful pass. |
 
 - `--candidates scan` does a recency/scope SQL scan and needs **no** embedding endpoint.
-- `--candidates recall` uses hybrid recall to find merge candidates and therefore needs the
-  `KIOKU_EMBEDDING_*` configuration.
+- `--candidates recall` uses hybrid recall to find merge candidates. A valid embedding endpoint
+  gives semantic candidates; if query embedding fails, recall falls back to FTS for that request.
 - Either way the pass calls the distillation LLM, so `ANTHROPIC_API_KEY` must be set.
 
 These flags govern **the CLI only**. The `kioku worker` timer path — the one that actually runs in
@@ -229,7 +235,7 @@ Prints each scene as `# <title>` followed by its markdown body, or `(no scenes)`
 been distilled yet.
 
 ```bash
-kioku scenes --scope mori:repo:web
+kioku scenes --scope mori:repo:proj_01h4...
 ```
 
 ---
@@ -308,3 +314,58 @@ kioku worker --timers-once
 
 See **[The Distillation Pyramid](distillation.md)** for what the timers do and
 **[Recall](recall.md)** for how embeddings affect retrieval.
+
+---
+
+## `kioku-migrate`
+
+The migration executable manages one dependency-ordered plan: Kiroku, then Keiro, then Kioku.
+
+```text
+kioku-migrate COMMAND
+
+Available commands:
+  plan     Show the component dependency order
+  list     List embedded migrations
+  check    Validate the embedded manifests
+  status   Compare the database ledger with the embedded plan
+  verify   Verify applied migration history and checksums
+  up       Apply pending migrations
+  repair   Repair an interrupted non-transactional migration
+  new      Scaffold and append a migration to a manifest
+  import   Import the pinned 30-migration Codd cohort
+```
+
+`plan`, `list`, and `check` inspect the compiled plan and need no database. Database-backed
+commands default to `DATABASE_URL`; pass `--database-url URL` to select a target explicitly.
+`status` and `verify` are read-only. A successful `up` also reconciles Keiro's read-model registry
+with the schemas compiled into this executable.
+
+Use `kioku-migrate <command> --help` for command-specific filters and output options. All commands
+support text output and `--json`. The usual operational sequence is:
+
+```bash
+cabal run kioku-migrate -- plan
+cabal run kioku-migrate -- check
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- status
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- up
+DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
+```
+
+`import` is the one-time Codd cutover command. It accepts a separate source database and advisory
+lock key when needed:
+
+```bash
+cabal run kioku-migrate -- import \
+  --database-url "$DATABASE_URL" \
+  --source-database-url "$OLD_DATABASE_URL" \
+  --reason 'verified Codd-to-pg-migrate cohort cutover' \
+  --confirm
+```
+
+The source defaults to the target, and the target defaults to `DATABASE_URL`.
+`--source-lock-key` defaults to the cooperating Codd lock key `7739843257482693991`. `--reason` is
+required. Although the parser accepts an omitted `--confirm`, the evidence validator refuses to
+import without that acknowledgement. `--strict-source` additionally rejects unrelated entries in
+a shared Codd ledger; leave it off when application-owned migrations share that ledger. See the
+backup-first [Codd upgrade runbook](upgrading-to-pg-migrate.md) before using this command.

@@ -13,13 +13,13 @@ Each memory has:
 
 | Field        | Meaning                                                                        |
 |--------------|--------------------------------------------------------------------------------|
-| `memoryId`   | Stable identifier (`memory_…`).                                                 |
+| `memoryId`   | Stable identifier (`kioku_memory_…`).                                           |
 | `agentId`    | Which agent recorded it.                                                        |
 | `sessionId`  | Optional session it came from.                                                  |
 | `scope`      | Where it lives — see [Scope](#scope) below.                                     |
 | `memoryType` | One of `fact`, `pattern`, `preference`, `constraint`, `instruction`.           |
 | `content`    | The memory text itself.                                                         |
-| `priority`   | `0` = always inject; `100` = default; larger = lower priority.                  |
+| `priority`   | Importance signal: `0` = maximum boost / "always inject" convention; `100` = default and no boost (values above 100 also get no boost). |
 | `confidence` | `high`, `medium`, or `low`.                                                     |
 | `tags`       | A set of free-form labels.                                                      |
 | `status`     | `active`, `superseded`, `merged`, or `archived`.                               |
@@ -91,7 +91,7 @@ NAMESPACE:KIND:REF         →  entity scope        e.g.  rei:intention:intentio
   restriction.
 - **ref** — the specific entity id. Host free text: it **may** contain `:` and `/`. The CLI splits
   on the first two colons only, so `ops:host:db.internal:5432` is the entity scope `ops` / `host` /
-  `db.internal:5432`, and `mori:repo:shinzui/kikan` is a valid repo ref.
+  `db.internal:5432`. Host-specific integrations may impose a narrower format on their refs.
 
 ### Global scope means different things to recall and to reads
 
@@ -106,7 +106,8 @@ A **global** scope is where people get caught out, because it is not symmetric:
 | `getActiveByScope`, `getGlobal`, and distillation | *the global bucket*    | only rows recorded with **no** entity scope                     |
 
 In one line: **recall searches namespace-wide for a global scope; scoped reads and distillation are
-exact-scope.** So a memory under `mori:repo:web` *is* returned by `kioku recall --scope mori`, but
+exact-scope.** So a memory under `mori:repo:proj_01h4...` *is* returned by
+`kioku recall --scope mori`, but
 it does *not* feed `mori`'s scene or persona. For the read-side equivalent of recall's breadth, use
 `getActiveInNamespace`.
 
@@ -131,7 +132,9 @@ Sessions move through states:
 - **running → completed** — `complete` closes it (optionally records the model used and a
   summary).
 - **running → failed** — `failSession` closes it with an error message.
-- **interactive** — `recordInteractive` captures a whole interactive conversation in one shot.
+- **interactive** — `recordInteractive` records a terminal session marker for an externally
+  managed interactive run. Its payload is metadata only (agent, focus, scope, subject, and start
+  time); it does not capture transcript turns, a summary, or a completion time.
 
 `complete` and `failSession` can also close a session while it is **awaiting**; both clear the
 awaiting fields in the read model. Closing an *already-closed* session conflicts rather than
@@ -178,8 +181,13 @@ kioku's recall is **hybrid**:
 
 - **Keyword** — Postgres full-text search (`tsvector` / `websearch_to_tsquery`).
 - **Embedding** — `pgvector` cosine similarity against the query's embedding.
-- **Hybrid** (default) — both, fused with **Reciprocal Rank Fusion (RRF)**, then nudged by
-  recency, priority, and confidence, and trimmed to a character budget.
+- **Hybrid** (default) — both, fused with **Reciprocal Rank Fusion (RRF)**, then re-ranked by
+  recency, priority, and confidence, and trimmed to a character budget. Those metadata signals can
+  outweigh the RRF rank terms; they are not merely tie-breakers.
+
+The priority label `0 = always inject` is a convention and the maximum priority score. It does
+**not** bypass candidate selection: a memory must still enter the keyword or vector candidate pool
+before priority can affect its final rank.
 
 When pgvector is unavailable, hybrid and embedding strategies transparently fall back to
 keyword-only. Full details and the scoring formula are in **[Recall](recall.md)**.

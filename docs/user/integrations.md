@@ -14,7 +14,7 @@ ScopeEntity  namespace kind ref         →  CLI:  NAMESPACE:KIND:REF
 - **namespace** — the host. Never shared across hosts. May not contain `%`, `/`, or `:`.
 - **kind** — the entity category within a host. Same restriction.
 - **ref** — the specific entity's id. Host free text: it **may** contain `:` and `/`, so
-  `mori:repo:shinzui/kikan` and `ops:host:db.internal:5432` are both valid. The CLI splits on the
+  `myapp:repo:shinzui/kikan` and `ops:host:db.internal:5432` are both valid. The CLI splits on the
   first two colons only.
 
 Choosing scopes well is the main integration decision: pick a `kind`/`ref` that matches the
@@ -23,7 +23,8 @@ natural unit you want memories to accumulate around (a user goal, a repo, an age
 > **The global scope is not just another bucket.** For **recall**, a global scope (`--scope mori`)
 > means *no scope filter*: it returns every active memory in the namespace, entity-scoped rows
 > included. For **scoped reads and distillation**, the same value means only the rows recorded with
-> no entity scope. So a `mori:repo:web` memory *is* found by `kioku recall --scope mori`, but it
+> no entity scope. So a `mori:repo:proj_01h4...` memory *is* found by
+> `kioku recall --scope mori`, but it
 > does *not* feed `mori`'s persona. The "User-wide"/"Org-wide"/"System-wide" rows in the tables
 > below are the *global bucket* in that second sense. See
 > [Recall](recall.md#global-scope-namespace-wide-recall-vs-exact-scope-reads).
@@ -57,18 +58,20 @@ stays in Rei; only the memory/session substrate moved to kioku.
 `mori agent exec --group` runs a prompt or skill across a group of repos, accumulating
 cross-run learnings in kioku. Natural scopes:
 
-| Unit          | Scope                       |
-|---------------|-----------------------------|
-| A single repo | `mori:repo:<repo>`          |
-| A repo group  | `mori:group:<group>`        |
-| Org-wide      | `mori` (global)             |
+| Unit          | Scope                              |
+|---------------|------------------------------------|
+| A single repo | `mori:repo:<projectId>`            |
+| A repo group  | `mori:group:<groupId>`             |
+| Org-wide      | `mori` (global)                    |
 
 ```bash
-kioku recall "how is CI configured here" --scope mori:repo:web
-kioku scenes --scope mori:group:frontend
+kioku recall "how is CI configured here" --scope mori:repo:proj_01h4...
+kioku scenes --scope mori:group:grp_01h4...
 ```
 
-Group-scoped memories let a run in one repo benefit from what was learned in a sibling repo.
+The refs are Mori's typed `ProjectId` (`proj_...`) and `GroupId` (`grp_...`), not a repository slug
+or display name. Group-scoped memories let a run in one repo benefit from what was learned in a
+sibling repo.
 
 ## shikigami — autonomous system agents
 
@@ -76,7 +79,7 @@ Group-scoped memories let a run in one repo benefit from what was learned in a s
 
 | Unit              | Scope                          |
 |-------------------|--------------------------------|
-| A specific agent  | `shikigami:agent:<agentId>`    |
+| A specific agent  | `shikigami:agent:<agentName>`  |
 | System-wide       | `shikigami` (global)           |
 
 ```bash

@@ -40,7 +40,7 @@ newtype Namespace = Namespace Text
 newtype ScopeKind = ScopeKind Text
 
 data MemoryScope
-  = ScopeGlobal Namespace                 -- namespace-wide
+  = ScopeGlobal Namespace                 -- global bucket; recall treats it namespace-wide
   | ScopeEntity Namespace ScopeKind Text  -- anchored to a specific entity
 ```
 
@@ -129,7 +129,8 @@ data RecordMemoryData = RecordMemoryData
   }
 ```
 
-Generate ids with `Kioku.Id` (`genMemoryId`, `genSessionId`). Example (mirrors `kioku demo`):
+Generate ids with `Kioku.Id` (`genMemoryId`, `genSessionId`). They produce typed ids with the
+`kioku_memory_...` and `kioku_session_...` prefixes respectively. Example (mirrors `kioku demo`):
 
 ```haskell
 mid <- genMemoryId
@@ -223,9 +224,10 @@ and nothing expires when it passes.
 Lifecycle: `start` → `running`; then `complete` or `failSession`, or `awaitInput` → `awaiting`
 → `resume` → `running`. `complete` and `failSession` may close either a `running` or
 `awaiting` session. `recordTurn` only succeeds while a session is `running`
-(`SessionNotRunning` otherwise). `recordInteractive` captures a finished interactive
-conversation in one event. Turns recorded here are the **L0 evidence** the distillation pyramid
-consumes — see [Distillation](distillation.md).
+(`SessionNotRunning` otherwise). `recordInteractive` creates a terminal `interactive` session from
+metadata (agent, focus, scope, subject, and start time); it does not store a transcript, summary, or
+completion timestamp. Use `recordTurn` on a normal running session when the conversation itself
+must become **L0 evidence**. See [Distillation](distillation.md).
 
 Session rows include the fields used by the read APIs:
 
@@ -410,8 +412,8 @@ Use the row API when a host needs audit/detail views or supersession inspection.
 
 ## Distillation (`Kioku.Distill.*`)
 
-Hosts that want to drive distillation directly. **Every entry point takes a `DistillRuntime`**,
-which carries the LLM config and the four programs:
+Hosts that want to drive generation directly pass a `DistillRuntime`, which carries the LLM config
+and the four programs. Read-only queries, timer helpers, and mirror-path helpers do not need it:
 
 ```haskell
 -- Kioku.Distill.Runtime
@@ -492,7 +494,8 @@ kioku ships a native pg-migrate component whose ordered SQL manifest is embedded
 compile time. `kiokuMigrations` is the component named `kioku` (depending on `keiro`), while
 `kiokuMigrationPlan` composes kiroku, keiro, and kioku in validated dependency order. A downstream
 host composes `kiokuMigrations` with its own components; this repo's `kioku-migrate` mounts the
-standard `plan`, `list`, `check`, `status`, `verify`, `up`, `repair`, and `new` commands.
+standard `plan`, `list`, `check`, `status`, `verify`, `up`, `repair`, and `new` commands, plus the
+kioku-specific Codd history `import` command.
 
 ### Applying migrations as a library: reconcile the read-model registry
 

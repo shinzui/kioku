@@ -14,7 +14,8 @@ Configuring one does not configure the other. This is the most common setup mist
 
 | Variable                | Required | Default | Description                                          |
 |-------------------------|----------|---------|------------------------------------------------------|
-| `PG_CONNECTION_STRING`  | **yes**  | —       | libpq connection string used by every `kioku` command. |
+| `PG_CONNECTION_STRING`  | for `kioku` database operations | — | libpq connection string used by the runtime CLI. |
+| `DATABASE_URL`          | for `kioku-migrate` database operations | — | migration target; overridden by `--database-url URL`. |
 
 ```bash
 export PG_CONNECTION_STRING='host=localhost dbname=kioku user=me'
@@ -27,8 +28,9 @@ database has a working vector path. You only need to set `PG_CONNECTION_STRING` 
 the dev shell.
 
 Migrations run through a **separate binary** (`kioku-migrate`, which is what `just migrate`
-invokes). It reads `DATABASE_URL`; the `Justfile` derives that value from the dev-shell `PG*`
-variables. Outside the dev shell, set it explicitly:
+invokes). Database-backed subcommands default to `DATABASE_URL`; the `Justfile` derives that value
+from the dev-shell `PG*` variables. An explicit `--database-url URL` wins. Outside the dev shell,
+set `DATABASE_URL` explicitly:
 
 ```bash
 export DATABASE_URL="$PG_CONNECTION_STRING"
@@ -100,18 +102,22 @@ Recall and the `scenes`/`persona` *print* commands do not need it.
 
 ## Which commands need what
 
+“Full behavior” below means a valid API key and a reachable endpoint. The embedding base URL,
+model, and dimension already have defaults; embedding failure makes recall fall back to FTS, but
+the embedding worker itself cannot produce vectors.
+
 | Command                                    | DB | Embeddings                       | LLM (`ANTHROPIC_API_KEY`) |
 |--------------------------------------------|----|----------------------------------|---------------------------|
-| `kioku demo --yes-write-events`            | ✔  | ✗                                | ✗                         |
-| `kioku demo-session --yes-write-events`    | ✔  | ✗                                | ✗ directly — but it schedules a timer a running worker will fire |
-| `kioku recall --strategy keyword`          | ✔  | ✗                                | ✗                         |
-| `kioku recall` (hybrid/embedding)          | ✔  | ✔ (falls back to keyword on failure) | ✗                     |
-| `kioku distill session --candidates scan`  | ✔  | ✗                                | ✔                         |
-| `kioku distill session --candidates recall`| ✔  | ✔                                | ✔                         |
-| `kioku scenes`, `kioku persona`            | ✔  | ✗ (just reads stored rows)       | ✗                         |
-| `kioku worker`                             | ✔  | ✔ (embedding worker)             | ✔ (timer loop)            |
-| `kioku worker --backfill`                  | ✔  | ✔                                | ✗                         |
-| `kioku worker --timers-once`               | ✔  | ✔ (recall-based merge candidates) | ✔                        |
+| `kioku demo --yes-write-events`            | ✔  | not used                         | not used                  |
+| `kioku demo-session --yes-write-events`    | ✔  | not used                         | not used directly — it schedules a timer a running worker will fire |
+| `kioku recall --strategy keyword`          | ✔  | not used                         | not used                  |
+| `kioku recall` (hybrid/embedding)          | ✔  | needed for semantic results; falls back to keyword | not used |
+| `kioku distill session --candidates scan`  | ✔  | not used                         | required                  |
+| `kioku distill session --candidates recall`| ✔  | needed for semantic candidates; recall falls back to FTS | required |
+| `kioku scenes`, `kioku persona`            | ✔  | not used (reads stored rows)     | not used                  |
+| `kioku worker`                             | ✔  | needed by the embedding pipeline | required when firing distillation timers |
+| `kioku worker --backfill`                  | ✔  | required                         | not used                  |
+| `kioku worker --timers-once`               | ✔  | used only by an L1 timer's recall-based candidate search; falls back to FTS | required for any claimed distillation timer |
 
 The demo commands require `--yes-write-events` because the event log is append-only — there is no
 way to delete what they write. `--backfill` and `--timers-once` are mutually exclusive.

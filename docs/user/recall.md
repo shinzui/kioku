@@ -66,15 +66,16 @@ search vanished. You got plausible keyword results and had no way to tell.
 **What kioku does.** The vector channel now runs in two passes:
 
 1. The **approximate pass** is the HNSW scan, with `hnsw.ef_search` set to the candidate pool size
-   so the pool actually fills. This is the fast path and it is what runs on almost every recall.
+   so the index can fill the pool.
 2. If the approximate pass comes back with fewer candidates than the pool, kioku runs an **exact
    pass**: the same query, but with the scope filter applied *before* the ranking rather than after
    it, so it cannot starve. Its results are authoritative.
 
-The second pass only runs when the first came back short, so a healthy recall pays nothing for it.
-When it does run, it scans every embedded memory in the scope you asked about — roughly 7ms per 2000
-embedded rows, growing linearly. That is the price of a correct answer, and it is bounded by the
-size of the scope you asked about, which is the set you wanted searched anyway.
+The second pass runs whenever the first returns fewer than 50 rows. That includes ordinary scopes
+containing fewer than 50 eligible embedded memories, so `exactFallbackFired` by itself is **not** a
+starvation diagnosis. When the pass runs, it scans every embedded memory in the requested scope —
+roughly 7ms per 2000 embedded rows in the benchmark used for this implementation, growing linearly.
+That is the price of a correct answer, and it is bounded by the set you asked to search.
 
 **What this does not fix.** Three things, stated plainly:
 
@@ -98,8 +99,8 @@ size of the scope you asked about, which is the set you wanted searched anyway.
 **Seeing it.** `Kioku.Recall.selectVectorCandidatesDiagnosed` returns a `VectorChannelOutcome`
 alongside the rows, recording how many candidates the approximate pass produced, whether the exact
 fallback fired, and how many rows were finally returned. `vectorChannelStarved` is true when the
-fallback found rows the approximate pass had missed. A host that wants a metric or a log line for
-the health of its semantic channel should count those; kioku does not emit one itself, because
+exact pass returns more rows than the approximate pass. A host that wants a metric or a log line
+for the health of its semantic channel should count those; kioku does not emit one itself, because
 `Kioku.Recall` has no access to the host's tracer or metrics handle.
 
 **`--show-scores` does not show it.** `Kioku.Recall.recall` — which is what the CLI calls — uses the
@@ -128,7 +129,7 @@ it is worth stating plainly:
 In one line: **recall searches namespace-wide for a global scope; scoped reads are
 exact-scope.**
 
-So a memory recorded under `mori:repo:web` **is** returned by `recall` with scope `mori`,
+So a memory recorded under `mori:repo:proj_01h4...` **is** returned by `recall` with scope `mori`,
 but is **not** returned by `getGlobal (Namespace "mori")`. Neither is a bug.
 
 The reason they differ is that they want opposite things. Search wants the largest plausible
@@ -171,9 +172,11 @@ where:
   `clamp01(1 − priority/100)`, so lower numeric priority = higher weight.
 - **Confidence weight:** `high → 1.0`, `medium → 0.6`, `low → 0.3`.
 
-Because RRF terms are small (≈0.016 at rank 1) while the signal weights are scaled down to match,
-the result is a fusion dominated by *appearing high in either channel*, gently re-ordered by how
-recent, important, and trusted each memory is.
+The relevance channels determine which memories enter the candidate set, but the metadata terms
+can dominate the final ordering: the two best possible RRF terms total about `0.0328`, while
+recency, priority, and confidence can contribute up to `0.30`. Priority `0` therefore gives the
+maximum priority boost; its "always inject" label is a host convention and does **not** bypass
+candidate selection or force a memory into the result.
 
 > The weights and constants (RRF `k`, half-life, signal weights, candidate pool size) are
 > internal tuning constants in `Kioku.Recall`. They are not currently exposed as configuration.
@@ -199,12 +202,17 @@ kioku detects one of four vector capabilities at runtime:
 |-------------------------------|------------------------------------------------------------|
 | **available**                 | Full hybrid: FTS + vector + RRF.                          |
 | **extension unavailable**     | Keyword-only. `embedding`/`hybrid` silently become FTS.   |
-| **columns unavailable**       | Keyword-only (the embedding column/index isn't present).  |
+| **columns unavailable**       | Keyword-only (one or more required embedding columns are absent). |
 | **dimension mismatch**        | Keyword-only. `KIOKU_EMBEDDING_DIMENSIONS` disagrees with the declared width of the `embedding` column. |
 
-In the keyword fallback the `vec` rank shows as `-` in `--show-scores` output, and the
-embedding/distillation workers skip vector work. Recall keeps working — it just loses the
-semantic channel.
+In the keyword fallback the `vec` rank shows as `-` in `--show-scores` output, and the embedding
+worker skips vector work. Distillation still runs, using FTS-only recall where applicable. Recall
+keeps working — it just loses the semantic channel.
+
+Capability detection verifies that the vector type can be resolved, that all four embedding
+columns exist, and that the declared vector width matches the configured dimension. It does **not**
+check for the HNSW index. A missing `kioku_memories_embedding_hnsw` index therefore does not cause
+keyword fallback; vector recall remains correct but may use a much slower sequential scan.
 
 A **dimension mismatch** is a *configuration* error rather than a missing feature, and the rest of
 the system is louder about it than recall is: `kioku worker` prints
@@ -216,28 +224,28 @@ Fix the environment variable, or migrate the column — see
 
 ### Healing a degraded schema
 
-The embedding columns are added by a migration that only runs its DDL if `CREATE EXTENSION
-vector` succeeds. If your server had no pgvector at that moment, the migration was still
-**recorded as applied** — so installing pgvector afterwards does not, on its own, bring the
-columns back. The database stays keyword-only forever.
+The original embedding migration only ran its DDL if `CREATE EXTENSION vector` succeeded. If your
+server had no pgvector then, that migration was still recorded as applied, so installing pgvector
+later does not by itself create the columns.
 
-`2026-07-11-17-45-43-kioku-embedding-schema-heal.sql` is the catch-up: it re-attempts the
-same DDL, so **any database that gains pgvector before its next migration run heals itself
-on `just migrate`.** It is idempotent — a no-op on a healthy database and on one that still
-has no pgvector.
+The catch-up migration `kioku/0009-kioku-embedding-schema-heal` (the checked-in file
+`kioku-migrations/migrations/0009-kioku-embedding-schema-heal.sql`) re-attempts the DDL. If 0009 is
+still pending when pgvector becomes available, the next `kioku-migrate up` or `just migrate` heals
+the schema. It is idempotent: a no-op on a healthy database and on one that still has no pgvector.
 
 For a database that has *already applied* every migration and only then gained the
 extension, pg-migrate correctly treats the checksummed history as immutable and will not
 re-run it. Apply the same checked-in file by hand:
 
 ```bash
-psql -d "$PGDATABASE" -f kioku-migrations/migrations/0009-kioku-embedding-schema-heal.sql
+psql "$PG_CONNECTION_STRING" --set=ON_ERROR_STOP=1 \
+  --file=kioku-migrations/migrations/0009-kioku-embedding-schema-heal.sql
 ```
 
 Then confirm:
 
 ```bash
-psql -tAc "SELECT format_type(atttypid, atttypmod) FROM pg_attribute a
+psql "$PG_CONNECTION_STRING" -tAc "SELECT format_type(atttypid, atttypmod) FROM pg_attribute a
              JOIN pg_class c ON c.oid = a.attrelid
              JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = 'kiroku' AND c.relname = 'kioku_memories'
@@ -263,13 +271,13 @@ or add `public` to the store's `extraSearchPath` when constructing the connectio
 
 ```bash
 # Hybrid (default)
-kioku recall "how should I format commits" --scope mori:repo:web
+kioku recall "how should I format commits" --scope mori:repo:proj_01h4...
 
 # See the component ranks and fused score
-kioku recall "commit style" --scope mori:repo:web --show-scores
+kioku recall "commit style" --scope mori:repo:proj_01h4... --show-scores
 
 # Keyword-only (no embedding endpoint needed)
-kioku recall "release script" --scope mori:repo:web --strategy keyword
+kioku recall "release script" --scope mori:repo:proj_01h4... --strategy keyword
 ```
 
 See the [CLI Reference](cli-reference.md#kioku-recall) for all flags.
