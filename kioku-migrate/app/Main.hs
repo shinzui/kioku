@@ -125,7 +125,7 @@ runStandardCommand plan defaultDatabaseUrl command = do
     JsonOutput -> LazyByteString.putStrLn (Aeson.encode (renderMigrationCommandJson outcome))
   reconcileAfterUp defaultDatabaseUrl command outcome
   Exit.exitWith
-    (case exitClass outcome of ExitSuccess -> Exit.ExitSuccess; _ -> Exit.ExitFailure 1)
+    (case exitClass outcome of ExitSucceeded -> Exit.ExitSuccess; _ -> Exit.ExitFailure 1)
 
 runImportCommand :: MigrationPlan -> Maybe String -> CoddImportOptions -> IO ()
 runImportCommand plan defaultDatabaseUrl options = do
@@ -158,7 +158,7 @@ runImportCommand plan defaultDatabaseUrl options = do
     TextOutput -> renderImportReport report
 
 renderImportReport :: HistoryImportReport -> IO ()
-renderImportReport HistoryImportReport {importResults} =
+renderImportReport HistoryImportReport {importResults, cleanupIssues} = do
   for_ (NonEmpty.toList importResults) \HistoryImportResult {importedMigration, importOutcome} ->
     putStrLn
       ( show importedMigration
@@ -167,11 +167,13 @@ renderImportReport HistoryImportReport {importResults} =
             Imported -> "imported"
             AlreadyImported -> "already imported"
       )
+  for_ cleanupIssues \cleanupIssue ->
+    putStrLn ("cleanup_issue=" <> show cleanupIssue)
 
 reconcileAfterUp :: Maybe String -> MigrationCommand -> CliOutcome -> IO ()
 reconcileAfterUp defaultDatabaseUrl command outcome =
   case (command, exitClass outcome) of
-    (Up UpOptions {connection = ConnectionOptions override}, ExitSuccess) ->
+    (Up UpOptions {connection = ConnectionOptions override}, ExitSucceeded) ->
       reconcile (maybe defaultConnectionString settingsConnectionString override)
     _ -> pure ()
   where

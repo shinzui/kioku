@@ -52,9 +52,9 @@ library
     , hasql-transaction        >=1.2      && <1.3
     , keiro-migrations
     , kiroku-store-migrations
-    , pg-migrate               ^>=1.0.0.0
-    , pg-migrate-embed         ^>=1.0.0.0
-    , pg-migrate-import-codd   ^>=1.0.0.0
+    , pg-migrate               ^>=1.1.0.0
+    , pg-migrate-embed         ^>=1.1.0.0
+    , pg-migrate-import-codd   ^>=1.1.0.0
     , template-haskell         >=2.20     && <2.24
     , text                     >=2.0      && <2.2
 
@@ -68,7 +68,7 @@ library test-support
     , ephemeral-pg             >=0.2      && <0.3
     , hasql                    >=1.10     && <1.11
     , kioku-migrations
-    , pg-migrate-test-support  ^>=1.0.0.0
+    , pg-migrate-test-support  ^>=1.1.0.0
     , text                     >=2.0      && <2.2
 
 test-suite kioku-migrations-test
@@ -82,9 +82,9 @@ test-suite kioku-migrations-test
     , hasql                          >=1.6
     , kioku-migrations
     , kioku-migrations:test-support
-    , pg-migrate                     ^>=1.0.0.0
-    , pg-migrate-embed               ^>=1.0.0.0
-    , pg-migrate-import-codd         ^>=1.0.0.0
+    , pg-migrate                     ^>=1.1.0.0
+    , pg-migrate-embed               ^>=1.1.0.0
+    , pg-migrate-import-codd         ^>=1.1.0.0
     , tasty                          >=1.5
     , tasty-hunit                    >=0.10
     , text                           >=2.0      && <2.2
