@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.1.0.0 — 2026-07-14
+
+### Added
+
+- Added the initial ten-migration Kioku schema for memory and session event streams, read models,
+  embeddings, distillation artifacts, timers, delegation, and durable awaiting state.
+- Added schema hardening and repair migrations for supersession chains, session indexes, scope
+  constraints, embedding columns, and collision-safe distillation identities.
+- Added a checked migration manifest and a test that fails when compiled migration order falls out
+  of sync with the files on disk.
+- Added `Kioku.Migrations.History.Codd`, which lets downstream databases import the pinned
+  30-migration Kiroku/Keiro/Kioku history into pg-migrate without replaying historical DDL.
+- Shipped the reviewed Kiroku/Keiro ledger realignment and Keiro schema-relocation SQL used by the
+  downstream cutover runbook under `codd-upgrade/`.
+- Added pg-migrate-backed ephemeral database test support while preserving the existing
+  `withKiokuMigratedDatabase` and `withBareDatabase` signatures.
+
+### Fixed
+
+- Made read-model registry migration logic locate `keiro_read_models` across supported cohort
+  layouts.
 
 ### Changed
 
@@ -23,12 +43,3 @@
   manifest the source of apply order.
 - Updated the composed migration plan to Keiro migrations 0.3, including Keiro migration 0018;
   the current plan contains 36 migrations (Kiroku 8, Keiro 18, Kioku 10).
-
-### Added
-
-- Added `Kioku.Migrations.History.Codd`, which lets downstream databases import the pinned
-  30-migration Kiroku/Keiro/Kioku history into pg-migrate without replaying historical DDL.
-- Shipped the reviewed Kiroku/Keiro ledger realignment and Keiro schema-relocation SQL used by the
-  downstream cutover runbook under `codd-upgrade/`.
-- Added pg-migrate-backed ephemeral database test support while preserving the existing
-  `withKiokuMigratedDatabase` and `withBareDatabase` signatures.
