@@ -9,14 +9,15 @@ import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
 import Hasql.Transaction qualified as Tx
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
-import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (runAppIO, withNoopAppEnv)
 import Kioku.Id (SessionId, genSessionId, idText)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
 import Kioku.Session.ReadModel (SessionRow (..))
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Test.Tasty (TestTree, localOption, mkTimeout, testGroup)
@@ -51,14 +52,12 @@ data LineageResult = LineageResult
 testDelegationLineage :: IO ()
 testDelegationLineage =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
+    withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
       parent <- genSessionId
       child1 <- genSessionId
       child2 <- genSessionId
       now <- getCurrentTime
-      let env = AppEnv {store = st, tracer, metrics = Nothing}
-          child2Started = addUTCTime 2 now
+      let child2Started = addUTCTime 2 now
       result <-
         runAppIO env do
           startFixture parent "parent" Nothing Nothing 0 now
@@ -105,12 +104,10 @@ rootAtDepthOne sid o t = (baseStart sid o t) {delegationDepth = 1}
 assertInvalidLineage :: LineageCase -> IO ()
 assertInvalidLineage mkCommand =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
+    withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
       sid <- genSessionId
       other <- genSessionId
       now <- getCurrentTime
-      let env = AppEnv {store = st, tracer, metrics = Nothing}
       result <- runAppIO env (Session.start (mkCommand sid other now))
       case result of
         Left storeErr -> assertFailure ("store error: " <> show storeErr)
@@ -119,7 +116,7 @@ assertInvalidLineage mkCommand =
           assertFailure ("expected SessionInvalidLineage, got " <> show other')
 
 startFixture ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   Text ->
   Maybe SessionId ->
@@ -149,11 +146,9 @@ startFixture sid agent previous parent depth startedAt = do
 testChainTerminatesOnCycle :: IO ()
 testChainTerminatesOnCycle =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
+    withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
       a <- genSessionId
       b <- genSessionId
-      let env = AppEnv {store = st, tracer, metrics = Nothing}
       result <-
         runAppIO env do
           insertCyclicPair a b

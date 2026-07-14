@@ -5,6 +5,7 @@ module Kioku.App
     AppEnv (..),
     KeiroMetrics,
     runAppIO,
+    withNoopAppEnv,
     noopTracer,
   )
 where
@@ -13,17 +14,19 @@ import Effectful (Eff, IOE, runEff)
 import Effectful.Error.Static (Error, runErrorNoCallStack)
 import Keiro.Telemetry (KeiroMetrics)
 import Kioku.Prelude
-import Kiroku.Store.Connection (KirokuStore)
-import Kiroku.Store.Effect (Store, runStorePool)
+import Kioku.ReadModel (registerKiokuReadModels)
+import Kiroku.Store.Connection (ConnectionSettings)
+import Kiroku.Store.Effect (Store, runStoreResource)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource, withKirokuStore)
 import Kiroku.Store.Error (StoreError)
 import OpenTelemetry.Attributes qualified as Attr
 import OpenTelemetry.Trace.Core qualified as OTel
 import Shibuya.Telemetry.Effect (Tracer, Tracing, runTracing)
 
-type AppEffects = '[Store, Error StoreError, Tracing, IOE]
+type AppEffects = '[Store, KirokuStoreResource, Error StoreError, Tracing, IOE]
 
 data AppEnv = AppEnv
-  { store :: !KirokuStore,
+  { connectionSettings :: !ConnectionSettings,
     tracer :: !Tracer,
     metrics :: !(Maybe KeiroMetrics)
   }
@@ -34,7 +37,17 @@ runAppIO env =
   runEff
     . runTracing (tracer env)
     . runErrorNoCallStack
-    . runStorePool (store env)
+    . withKirokuStore (connectionSettings env)
+    . runStoreResource
+
+withNoopAppEnv :: ConnectionSettings -> (AppEnv -> IO a) -> IO a
+withNoopAppEnv connectionSettings continue = do
+  tracer <- noopTracer
+  let env = AppEnv {connectionSettings, tracer, metrics = Nothing}
+  registration <- runAppIO env registerKiokuReadModels
+  case registration of
+    Left err -> fail ("Kioku read-model registration failed: " <> show err)
+    Right () -> continue env
 
 noopTracer :: IO Tracer
 noopTracer = do

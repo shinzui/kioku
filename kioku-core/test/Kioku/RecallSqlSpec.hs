@@ -17,7 +17,7 @@ import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (MemoryRecord (..))
-import Kioku.App (AppEffects, AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Recall (RecallRequest (..), RecallStrategy (..), selectFtsCandidates, selectVectorCandidates, vectorLiteral)
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
@@ -33,7 +33,7 @@ import Kioku.RecallHarness
     queryVector,
     seedCorpus,
   )
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
@@ -503,7 +503,5 @@ vectorTypeIsReachable =
 withRecallFixture :: ((forall a. Eff AppEffects a -> IO (Either StoreError a)) -> IO ()) -> IO ()
 withRecallFixture use =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
-      let env = AppEnv {store = st, tracer, metrics = Nothing}
+    withNoopAppEnv (defaultConnectionSettings connStr) \env ->
       use (runAppIO env)

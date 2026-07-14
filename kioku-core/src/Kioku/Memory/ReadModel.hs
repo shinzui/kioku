@@ -34,7 +34,7 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Projection (InlineProjection (..))
-import Keiro.ReadModel (ConsistencyMode (..), ReadModel (..))
+import Keiro.ReadModel (ConsistencyMode (..), ReadModel (..), StrongScope (..))
 import Kioku.Api.Scope (scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), confidenceToText, memoryTypeToText)
 import Kioku.Id (idText)
@@ -129,6 +129,7 @@ memoryByIdReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemoryByIdQuery mid) -> Tx.statement mid selectMemoryByIdStmt
     }
 
@@ -142,6 +143,7 @@ memoriesByNamespaceReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemoriesByNamespaceQuery ns) -> Tx.statement ns selectActiveByNamespaceStmt
     }
 
@@ -155,6 +157,7 @@ memoriesByNamespaceRowsReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemoriesByNamespaceQuery ns) -> Tx.statement ns selectActiveByNamespaceRowsStmt
     }
 
@@ -168,6 +171,7 @@ memoriesByScopeReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemoriesByScopeQuery ns sk sr) -> Tx.statement (ns, sk, sr) selectActiveByScopeStmt
     }
 
@@ -181,6 +185,7 @@ memoriesByScopeRowsReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemoriesByScopeQuery ns sk sr) -> Tx.statement (ns, sk, sr) selectActiveByScopeRowsStmt
     }
 
@@ -194,6 +199,7 @@ memoriesBySessionReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemoriesBySessionQuery sid) -> Tx.statement sid selectBySessionStmt
     }
 
@@ -207,6 +213,7 @@ memoriesBySessionRowsReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemoriesBySessionQuery sid) -> Tx.statement sid selectBySessionRowsStmt
     }
 
@@ -220,6 +227,7 @@ memoriesByTypeReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemoriesByTypeQuery ns mt) -> Tx.statement (ns, mt) selectByTypeStmt
     }
 
@@ -233,6 +241,7 @@ memoriesByTypeRowsReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemoriesByTypeQuery ns mt) -> Tx.statement (ns, mt) selectByTypeRowsStmt
     }
 
@@ -246,6 +255,7 @@ memorySupersessionChainReadModel =
       version = 1,
       shapeHash = "kioku-memory-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(MemorySupersessionChainQuery mid) -> Tx.statement mid selectSupersessionChainStmt
     }
 

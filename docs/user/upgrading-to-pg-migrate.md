@@ -2,7 +2,7 @@
 
 This runbook moves a data-bearing database created by the pre-cutover kioku cohort onto
 pg-migrate without replaying any of its 30 historical migrations. The source profile is exact:
-kiroku 6, keiro 14, and kioku 10. Five migrations added after those pins are not imported; the
+kiroku 6, keiro 14, and kioku 10. Six migrations added after those pins are not imported; the
 normal `up` step applies them once after the history import.
 
 Stop every application, worker, and migration process that can write to the database. The importer
@@ -80,7 +80,7 @@ mapped SQL. Six Kiroku and nine Kioku mappings are checked against preserved SHA
 Running the same import again is safe: matching audit evidence reports `already imported`. Changed
 evidence fails with a history-import conflict instead of overwriting the first audit.
 
-## 5. Apply the five post-pin migrations and verify
+## 5. Apply the six post-pin migrations and verify
 
 ```bash
 DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- up
@@ -89,12 +89,12 @@ DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- status
 ```
 
 `up` reports the 30 imported migrations as already applied and applies only Kiroku 0007/0008 and
-Keiro 0015/0016/0017. The final status is 35 applied migrations with no pending, unknown, or
+Keiro 0015/0016/0017/0018. The final status is 36 applied migrations with no pending, unknown, or
 verification issues:
 
 ```text
 kiroku  8
-keiro  17
+keiro  18
 kioku  10
 ```
 

@@ -31,7 +31,7 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Projection (InlineProjection (..))
-import Keiro.ReadModel (ConsistencyMode (..), ReadModel (..))
+import Keiro.ReadModel (ConsistencyMode (..), ReadModel (..), StrongScope (..))
 import Kioku.Api.Scope (scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Id (idText)
 import Kioku.Prelude
@@ -197,6 +197,7 @@ sessionByIdReadModel =
       version = 3,
       shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(SessionByIdQuery sid) -> Tx.statement sid selectSessionByIdStmt
     }
 
@@ -210,6 +211,7 @@ sessionsByNamespaceReadModel =
       version = 3,
       shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \q -> Tx.statement q selectSessionsByNamespaceStmt
     }
 
@@ -223,6 +225,7 @@ sessionsByScopeReadModel =
       version = 3,
       shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \q -> Tx.statement q selectSessionsByScopeStmt
     }
 
@@ -236,6 +239,7 @@ sessionsByFocusReadModel =
       version = 3,
       shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \q -> Tx.statement q selectSessionsByFocusStmt
     }
 
@@ -249,6 +253,7 @@ sessionsByStartedRangeReadModel =
       version = 3,
       shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \q -> Tx.statement q selectSessionsByStartedRangeStmt
     }
 
@@ -262,6 +267,7 @@ sessionChainReadModel =
       version = 3,
       shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(SessionChainQuery sid) -> Tx.statement sid selectSessionChainStmt
     }
 
@@ -275,6 +281,7 @@ sessionDelegationChildrenReadModel =
       version = 3,
       shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(SessionDelegationChildrenQuery sid) -> Tx.statement sid selectDelegationChildrenStmt
     }
 
@@ -288,6 +295,7 @@ awaitingSessionsByCorrelationKeyReadModel =
       version = 3,
       shapeHash = "kioku-session-v3",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \q -> Tx.statement q selectAwaitingByCorrelationKeyStmt
     }
 
@@ -301,6 +309,7 @@ turnsBySessionReadModel =
       version = 1,
       shapeHash = "kioku-turn-v1",
       defaultConsistency = Eventual,
+      strongScope = EntireLog,
       query = \(TurnsBySessionQuery sid) -> Tx.statement sid selectTurnsBySessionStmt
     }
 

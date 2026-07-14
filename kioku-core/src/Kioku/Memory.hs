@@ -45,6 +45,7 @@ import Kioku.Memory.ReadModel
   )
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 
 data MemoryWriteError
@@ -56,7 +57,7 @@ data MemoryWriteError
   deriving stock (Generic, Show)
 
 record ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   RecordMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
 record cmdData = do
@@ -71,7 +72,7 @@ record cmdData = do
     recordMismatch = mismatchOf memoryRecordFields cmdData
 
 supersede ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SupersedeMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
 supersede cmdData = do
@@ -90,7 +91,7 @@ supersede cmdData = do
     supersedeMismatch = mismatchOf memorySupersedeFields cmdData
 
 archive ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   ArchiveMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
 archive cmdData = do
@@ -107,7 +108,7 @@ archive cmdData = do
     archiveMismatch = mismatchOf memoryArchiveFields cmdData
 
 updateTags ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   UpdateMemoryTagsData ->
   Eff es (Either MemoryWriteError MemoryId)
 updateTags cmdData = do
@@ -121,7 +122,7 @@ updateTags cmdData = do
       | otherwise -> runMemoryCommand cmdData.memoryId (UpdateMemoryTags cmdData)
 
 updateConfidence ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   UpdateMemoryConfidenceData ->
   Eff es (Either MemoryWriteError MemoryId)
 updateConfidence cmdData = do
@@ -141,7 +142,7 @@ updateConfidence cmdData = do
 -- merge target alone: merging into the same winner twice is a duplicate, merging into a
 -- different one is a conflict.
 merge ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   MemoryId ->
   MemoryId ->
   Eff es (Either MemoryWriteError MemoryId)
@@ -298,7 +299,7 @@ getSupersessionChain mid =
   runQueryWith Nothing Eventual memorySupersessionChainReadModel (MemorySupersessionChainQuery (idText mid))
 
 runMemoryCommand ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   MemoryId ->
   MemoryCommand ->
   Eff es (Either MemoryWriteError MemoryId)

@@ -19,7 +19,7 @@ import Hasql.Transaction qualified as Tx
 import Keiro.Stream qualified as Stream
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
-import Kioku.App (AppEffects, AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Id (MemoryId, genMemoryId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
@@ -34,8 +34,9 @@ import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
 import Kioku.Worker.Failure (embeddingRetryDelay, isTransientStoreError)
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError (..))
 import Kiroku.Store.Read (readStreamForward)
 import Kiroku.Store.Transaction (runTransaction)
@@ -146,7 +147,7 @@ testDimensionMismatchHalts =
 -- | Record a memory, then hand back its id and the @MemoryRecorded@ event at
 -- the head of its stream — a real recorded event, not a hand-built one.
 recordFixtureMemory ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   Text ->
   Eff es (MemoryId, RecordedEvent)
 recordFixtureMemory content = do
@@ -253,9 +254,7 @@ withVectorEnv label action =
 withEmbeddingEnv :: (AppEnv -> IO a) -> IO a
 withEmbeddingEnv action =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
-      action AppEnv {store = st, tracer, metrics = Nothing}
+    withNoopAppEnv (defaultConnectionSettings connStr) action
 
 loadEmbeddingState :: (Store :> es) => Text -> Eff es Bool
 loadEmbeddingState memoryId =

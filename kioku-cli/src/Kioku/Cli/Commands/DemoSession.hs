@@ -7,14 +7,14 @@ where
 
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
-import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (runAppIO, withNoopAppEnv)
 import Kioku.Cli.Commands.Demo (demoScope)
 import Kioku.Cli.Options (redactConnectionString, yesWriteEventsFlag)
 import Kioku.Id (genSessionId, idText)
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), StartSessionData (..))
 import Kioku.Session.ReadModel (SessionRow (..), TurnRow (..))
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Options.Applicative
 import System.Environment (lookupEnv)
 
@@ -31,8 +31,7 @@ runDemoSession DemoSessionOptions = do
   putStrLn ("Target: " <> Text.unpack (redactConnectionString (Text.pack connStr)))
   putStrLn "Scope:  kioku_demo/demo/demo"
   putStrLn "Note:   completing this session schedules a distillation timer; a running worker will process it (an LLM call)."
-  withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
-    tr <- noopTracer
+  withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
     sid <- genSessionId
     now <- getCurrentTime
     let scope = demoScope
@@ -67,7 +66,6 @@ runDemoSession DemoSessionOptions = do
               modelUsed = Just "demo-model",
               summary = Just "Demo session completed"
             }
-        env = AppEnv {store = st, tracer = tr, metrics = Nothing}
     result <- runAppIO env do
       startResult <- Session.start startPayload
       turnResult <- Session.recordTurn turnPayload

@@ -7,10 +7,10 @@ where
 
 import Data.Text qualified as Text
 import Kioku.Api.Scope (MemoryScope)
-import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (runAppIO, withNoopAppEnv)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Distill.L2 (SceneRow (..), getScenesByScope)
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Options.Applicative
 import System.Environment (lookupEnv)
 
@@ -32,9 +32,7 @@ scenesOptionsParser =
 runScenes :: ScenesOptions -> IO ()
 runScenes opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
-  withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
-    tr <- noopTracer
-    let env = AppEnv {store = st, tracer = tr, metrics = Nothing}
+  withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
     result <- runAppIO env (getScenesByScope opts.scope)
     case result of
       Left storeErr -> ioError (userError ("kioku scenes store error: " <> show storeErr))

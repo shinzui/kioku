@@ -7,140 +7,17 @@ packages:
 
 with-compiler: ghc-9.12.4
 
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/keiki.git
-  tag: bc987f46393b604c335f034385b4c3c1ad118074
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/keiki.git
-  tag: bc987f46393b604c335f034385b4c3c1ad118074
-  subdir: keiki-codec-json
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/keiro.git
-  tag: 3187e9b345c27af077fcbbe122abfae6ad8ba67d
-  subdir: keiro
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/keiro.git
-  tag: 3187e9b345c27af077fcbbe122abfae6ad8ba67d
-  subdir: keiro-core
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/keiro.git
-  tag: 3187e9b345c27af077fcbbe122abfae6ad8ba67d
-  subdir: keiro-pgmq
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/keiro.git
-  tag: 3187e9b345c27af077fcbbe122abfae6ad8ba67d
-  subdir: keiro-migrations
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/kiroku.git
-  tag: 876fb66f60508441970211c56de0bfb234ccb3f6
-  subdir: kiroku-store
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/kiroku.git
-  tag: 876fb66f60508441970211c56de0bfb234ccb3f6
-  subdir: kiroku-store-migrations
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/kiroku.git
-  tag: 876fb66f60508441970211c56de0bfb234ccb3f6
-  subdir: kiroku-test-support
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/kiroku.git
-  tag: 876fb66f60508441970211c56de0bfb234ccb3f6
-  subdir: shibuya-kiroku-adapter
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/shibuya.git
-  tag: 172df245f40a454af46dd7f4cde855eaa4414c5a
-  subdir: shibuya-core
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/pgmq-hs.git
-  tag: 973c1076f469448818de5d2044a483296be2c02e
-  subdir: pgmq-core pgmq-hasql pgmq-effectful pgmq-migration
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/baikai
-  tag: 5f527d8534074875ac02e47ba61d6755b82aca75
-  subdir: baikai baikai-claude baikai-effectful
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/shikumi
-  tag: 0df4d85928c79cbfe78d7880a263fc0b9696ddc2
-  subdir: shikumi shikumi-trace
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/shibuya-pgmq-adapter.git
-  tag: 99e997e8a05f4a0deb92ddede4d419351f6da3d8
-  subdir: shibuya-pgmq-adapter
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/pg-migrate.git
-  tag: f39d64e354818999667d345a1452f33eb4857fc1
-  subdir: pg-migrate
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/pg-migrate.git
-  tag: f39d64e354818999667d345a1452f33eb4857fc1
-  subdir: pg-migrate-embed
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/pg-migrate.git
-  tag: f39d64e354818999667d345a1452f33eb4857fc1
-  subdir: pg-migrate-cli
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/pg-migrate.git
-  tag: f39d64e354818999667d345a1452f33eb4857fc1
-  subdir: pg-migrate-import-codd
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/pg-migrate.git
-  tag: f39d64e354818999667d345a1452f33eb4857fc1
-  subdir: pg-migrate-test-support
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/hasql-migration
-  tag: 4aaff6c0919d1fe8e1c248c3ce4ce05775c59c8c
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/ephemeral-pg.git
-  tag: 304c160f25570ea5e225baf5024778c93f434b56
-
-source-repository-package
-  type: git
-  location: https://github.com/shinzui/hasql-project.git
-  tag: 2bc7ace5db942d87962990bba0b2323ec4c67770
-  subdir: hasql-notifications
+-- These optional integrations are not in Kioku's current build closure, but
+-- keeping their released cohort explicit prevents a consumer from reviving the
+-- former Git-pinned PGMQ stack at an older version.
+constraints:
+  keiki-codec-json ^>=0.2.0.0,
+  keiro-pgmq ^>=0.3.0.0,
+  pgmq-core ^>=0.4.0.0,
+  pgmq-effectful ^>=0.4.0.0,
+  pgmq-hasql ^>=0.4.0.0,
+  pgmq-migration ^>=0.4.0.0,
+  shibuya-pgmq-adapter ^>=0.12.0.0
 
 package blake3
   flags: -avx512 -avx2 -sse41 -sse2
@@ -148,16 +25,3 @@ package blake3
 
 package postgresql-libpq
   flags: +use-pkg-config
-
-allow-newer:
-  baikai-claude:crypton,
-  haxl:time,
-  keiro-migrations:pg-migrate,
-  keiro-migrations:pg-migrate-cli,
-  keiro-migrations:pg-migrate-embed,
-  keiro-migrations:pg-migrate-import-codd,
-  kiroku-store-migrations:pg-migrate,
-  kiroku-store-migrations:pg-migrate-cli,
-  kiroku-store-migrations:pg-migrate-embed,
-  kiroku-store-migrations:pg-migrate-import-codd,
-  kiroku-test-support:pg-migrate

@@ -16,7 +16,7 @@ import Effectful.Error.Static (Error)
 import Keiro.Stream qualified as Stream
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
-import Kioku.App (AppEffects, AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (ArchiveMemoryData (..), RecordMemoryData (..), SupersedeMemoryData (..))
@@ -32,8 +32,9 @@ import Kioku.Session.Domain
     StartSessionData (..),
   )
 import Kioku.Session.EventStream (sessionStream)
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Read (readStreamForward)
 import Kiroku.Store.Types (StreamVersion (..))
@@ -339,7 +340,7 @@ recordData mid recordedAt content =
     }
 
 startedSession ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   Eff es SessionId
 startedSession = do
   sid <- liftIO genSessionId
@@ -348,7 +349,7 @@ startedSession = do
   pure sid
 
 recordedMemory ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   Text ->
   Eff es MemoryId
 recordedMemory content = do
@@ -410,9 +411,7 @@ expectConflictM label = \case
 withApp :: Eff AppEffects a -> IO a
 withApp action =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
-      let env = AppEnv {store = st, tracer, metrics = Nothing}
+    withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
       result <- runAppIO env action
       case result of
         Left storeErr -> assertFailure ("store error: " <> show storeErr)

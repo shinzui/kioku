@@ -48,12 +48,12 @@ library
 
   build-depends:
     , async                 >=2.2
-    , base                  >=4.21 && <5
+    , base                  >=4.21     && <5
     , containers            >=0.6
     , effectful             >=2.5
     , kioku-api
     , kioku-core
-    , kiroku-store
+    , kiroku-store          ^>=0.3.0.1
     , optparse-applicative  >=0.18
     , text                  >=2.1
     , time                  >=1.12

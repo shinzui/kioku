@@ -74,7 +74,7 @@ tests =
       testCase "the full migration chain applies to a fresh database" testFreshDatabase,
       testCase "the migration manifest is complete and valid" testManifestIntegrity,
       testCase "the pinned Codd history maps 30 known plan targets" testHistoryMappings,
-      testCase "the pre-cutover Codd cohort imports 30 rows and applies only five forward migrations" testCoddCohortImport
+      testCase "the pre-cutover Codd cohort imports 30 rows and applies only six forward migrations" testCoddCohortImport
     ]
 
 -- * The manifest guard
@@ -265,13 +265,13 @@ testCoddCohortImport =
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 35
+    length appliedMigrations @?= 36
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 35
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 36
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 fixtureMigrationNames :: Text -> [FilePath]
@@ -341,7 +341,8 @@ expectedForwardMigrationIds =
           migrationId "kiroku" "0008-schema-management-comment",
           migrationId "keiro" "0015-keiro-outbox-claim-order-index",
           migrationId "keiro" "0016-keiro-inbox-drop-received-idx",
-          migrationId "keiro" "0017-schema-management-comment"
+          migrationId "keiro" "0017-schema-management-comment",
+          migrationId "keiro" "0018"
         ]
 
 expectRight :: (Show error) => Either error value -> value

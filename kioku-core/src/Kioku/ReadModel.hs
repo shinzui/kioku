@@ -27,6 +27,7 @@
 module Kioku.ReadModel
   ( ReadModelSchema (..),
     kiokuReadModelSchemas,
+    registerKiokuReadModels,
     ReconcileOutcome (..),
     reconcileReadModelRegistry,
   )
@@ -97,6 +98,20 @@ kiokuReadModelSchemas =
     schemaOf memoriesByTypeRowsReadModel,
     schemaOf memorySupersessionChainReadModel
   ]
+
+-- | Register every Kioku read model at application startup.
+--
+-- Keiro 0.3 deliberately stopped registering models on their first query. This
+-- operation is idempotent and leaves an existing row unchanged, allowing Keiro
+-- to continue failing closed when its version or shape hash is stale.
+registerKiokuReadModels :: (Store :> es) => Eff es ()
+registerKiokuReadModels =
+  forM_ kiokuReadModelSchemas \schema ->
+    void $
+      Schema.registerReadModel
+        schema.readModelName
+        schema.readModelVersion
+        schema.readModelShapeHash
 
 -- | What reconciliation did to one read model's registry row.
 data ReconcileOutcome

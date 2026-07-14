@@ -9,13 +9,13 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Kioku.Api.Scope (MemoryScope)
 import Kioku.Api.Types (MemoryRecord (..))
-import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (runAppIO, withNoopAppEnv)
 import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Recall (RecallHit (..), RecallRequest (..), RecallStrategy (..), recall)
 import Kioku.Recall.Capability (detectVectorCapability)
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Options.Applicative
 import System.Environment (lookupEnv)
 import Text.Printf (printf)
@@ -62,10 +62,8 @@ runRecall :: RecallOptions -> IO ()
 runRecall opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
   config <- resolveEmbeddingConfig
-  withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
-    tr <- noopTracer
-    let env = AppEnv {store = st, tracer = tr, metrics = Nothing}
-        model = toEmbeddingModel config
+  withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
+    let model = toEmbeddingModel config
         request =
           RecallRequest
             { scope = opts.scope,

@@ -11,13 +11,13 @@ import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..))
-import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (runAppIO, withNoopAppEnv)
 import Kioku.Cli.Options (redactConnectionString, yesWriteEventsFlag)
 import Kioku.Id (genMemoryId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
 import Kioku.Recall qualified as Recall
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Options.Applicative
 import System.Environment (lookupEnv)
 
@@ -42,8 +42,7 @@ runDemo DemoOptions = do
   putStrLn "kioku demo appends permanent memory events (kioku has no delete)."
   putStrLn ("Target: " <> Text.unpack (redactConnectionString (Text.pack connStr)))
   putStrLn "Scope:  kioku_demo/demo/demo"
-  withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
-    tr <- noopTracer
+  withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
     mid <- genMemoryId
     now <- getCurrentTime
     let scope = demoScope
@@ -61,7 +60,6 @@ runDemo DemoOptions = do
               supersedes = Nothing,
               recordedAt = now
             }
-        env = AppEnv {store = st, tracer = tr, metrics = Nothing}
     result <- runAppIO env do
       writeResult <- Memory.record payload
       recallResult <- Recall.getActiveByScope scope

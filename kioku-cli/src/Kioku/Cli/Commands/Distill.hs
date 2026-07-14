@@ -7,14 +7,14 @@ module Kioku.Cli.Commands.Distill
 where
 
 import Data.Text qualified as Text
-import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (runAppIO, withNoopAppEnv)
 import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Distill.L1 (L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
 import Kioku.Id (SessionId, idText, parseId)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Recall.Capability (detectVectorCapability)
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Options.Applicative
 import System.Environment (lookupEnv)
 
@@ -72,9 +72,7 @@ runDistill opts = do
     case opts.candidateSource of
       CandidateScan -> pure Nothing
       CandidateRecall -> Just <$> resolveEmbeddingConfig
-  withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
-    tr <- noopTracer
-    let env = AppEnv {store = st, tracer = tr, metrics = Nothing}
+  withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
     result <- runAppIO env do
       finder <-
         case (opts.candidateSource, recallConfig) of

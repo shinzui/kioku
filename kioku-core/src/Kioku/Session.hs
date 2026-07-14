@@ -58,6 +58,7 @@ import Kioku.Session.ReadModel
     turnsBySessionReadModel,
   )
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 
 data SessionWriteError
@@ -77,7 +78,7 @@ maxDelegationDepth :: Int
 maxDelegationDepth = 64
 
 start ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   StartSessionData ->
   Eff es (Either SessionWriteError SessionId)
 start cmdData =
@@ -257,7 +258,7 @@ sessionFailFields =
   [("errorMessage", \d row -> row.errorMessage == Just d.errorMessage)]
 
 complete ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   CompleteSessionData ->
   Eff es (Either SessionWriteError SessionId)
 complete cmdData =
@@ -276,7 +277,7 @@ complete cmdData =
         >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . completeMismatch)
 
 failSession ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   FailSessionData ->
   Eff es (Either SessionWriteError SessionId)
 failSession cmdData =
@@ -296,7 +297,7 @@ failSession cmdData =
         >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . failMismatch)
 
 awaitInput ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   AwaitInputData ->
   Eff es (Either SessionWriteError SessionId)
 awaitInput cmdData =
@@ -320,7 +321,7 @@ awaitInput cmdData =
 -- aggregate's own guard, which keiro re-evaluates after any optimistic-concurrency retry —
 -- so a stale caller cannot resume a wait that was already resumed and re-parked.
 resume ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   ResumeSessionData ->
   Eff es (Either SessionWriteError SessionId)
 resume cmdData =
@@ -345,7 +346,7 @@ resume cmdData =
 -- It is inherently last-writer-wins: if the session is concurrently re-parked on a new
 -- wait, a force resume may answer the wrong one. Prefer 'resume'.
 forceResume ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   Text ->
   UTCTime ->
@@ -361,7 +362,7 @@ forceResume sid input resumedAt =
       }
 
 recordInteractive ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   RecordInteractiveSessionData ->
   Eff es (Either SessionWriteError SessionId)
 recordInteractive cmdData = do
@@ -387,7 +388,7 @@ recordInteractive cmdData = do
 -- caller bug, and mapping that specific SQL error from inside keiro's projection
 -- transaction is not worth the machinery.
 recordTurn ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   RecordTurnData ->
   Eff es (Either SessionWriteError SessionId)
 recordTurn cmdData =
@@ -523,7 +524,7 @@ getTurns sid =
   runQueryWith Nothing Eventual turnsBySessionReadModel (TurnsBySessionQuery (idText sid))
 
 runSessionCommand ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   SessionCommand ->
   Eff es (Either SessionWriteError SessionId)

@@ -26,7 +26,7 @@ import Database.PostgreSQL.Migrate.History.Codd
     withCoddLockKey,
   )
 import Hasql.Connection.Settings qualified as Settings
-import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (runAppIO, withNoopAppEnv)
 import Kioku.Migrations (kiokuMigrationPlan)
 import Kioku.Migrations.History.Codd
   ( cohortCoddHistoryMappings,
@@ -34,7 +34,7 @@ import Kioku.Migrations.History.Codd
     cohortCoddStateValidators,
   )
 import Kioku.ReadModel (ReadModelSchema (..), ReconcileOutcome (..), reconcileReadModelRegistry)
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Options.Applicative
 import Options.Applicative qualified as Opt
 import System.Environment (lookupEnv)
@@ -186,13 +186,10 @@ settingsConnectionString settings =
     Nothing -> error "Hasql rendered an unreadable connection string"
 
 reconcile :: Text.Text -> IO ()
-reconcile connectionString = do
-  tracer <- noopTracer
-  withStore (defaultConnectionSettings connectionString) \store -> do
+reconcile connectionString =
+  withNoopAppEnv (defaultConnectionSettings connectionString) \env -> do
     result <-
-      runAppIO
-        AppEnv {store = store, tracer = tracer, metrics = Nothing}
-        reconcileReadModelRegistry
+      runAppIO env reconcileReadModelRegistry
     case result of
       Left err -> Exit.die ("read-model registry reconciliation failed: " <> show err)
       Right outcomes -> for_ outcomes report

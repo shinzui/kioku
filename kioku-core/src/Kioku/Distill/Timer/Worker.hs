@@ -38,6 +38,7 @@ import Kioku.Distill.Timer.Outcome
 import Kioku.Id (parseIdLenient)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Kiroku.Store.Types (EventId (..))
@@ -55,7 +56,7 @@ kiokuTimerWorkerOptions =
   TimerWorkerOptions {maxAttempts = Just 8, requeueStuckAfter = Just 300}
 
 fireL1Timer ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   DistillRuntime ->
   FindMergeCandidates es ->
   TimerRow ->
@@ -90,7 +91,7 @@ fireL1Timer rt finder row
 -- next one; a 'FireNotMine' from all three means no handler owns this timer, and
 -- the runner decides what to do about that.
 fireKiokuTimer ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   DistillRuntime ->
   FindMergeCandidates es ->
   TimerRow ->
@@ -158,7 +159,7 @@ rescheduleClaimedTimer row delay = do
           }
 
 runKiokuTimerWorkerOnce ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   Maybe KeiroMetrics ->
   DistillRuntime ->
   FindMergeCandidates es ->
@@ -177,7 +178,7 @@ runKiokuTimerWorkerOnce metrics rt finder now =
 -- terminal state, so a timer processed in this pass is not claimable again
 -- within it.
 drainKiokuTimers ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   Maybe KeiroMetrics ->
   DistillRuntime ->
   FindMergeCandidates es ->

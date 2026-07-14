@@ -56,6 +56,7 @@ import Kioku.Recall.Capability (VectorCapability)
 import Kioku.Session qualified as Session
 import Kioku.Session.ReadModel (SessionRow (..), TurnRow (..))
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Shikumi.Schema.Types (field, unField)
@@ -142,7 +143,7 @@ data AuditRow = AuditRow
 -- re-fires cheap. The watermark advances only when the whole fold succeeds, so
 -- a failed pass is retried in full.
 distillSessionL1 ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   L1RunMode ->
   DistillRuntime ->
   FindMergeCandidates es ->
@@ -288,7 +289,7 @@ fallbackMemoryText sid scope = do
               Right scopeRows -> Right (renderMemories scopeRows)
 
 applyAtom ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   DistillRuntime ->
   FindMergeCandidates es ->
   SessionId ->
@@ -326,7 +327,7 @@ applyAtom rt finder sid session maxTurnIndex summary atom = do
 -- of the session and the atom content, so every write here is idempotent under
 -- keiro's at-least-once timer contract.
 applyDecision ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   SessionRow ->
   ExtractedAtom ->
@@ -428,7 +429,7 @@ retiredWinnerNote status =
   "this atom was already distilled and is now " <> status <> "; already represented"
 
 recordAtom ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   SessionRow ->
   ExtractedAtom ->

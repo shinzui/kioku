@@ -11,7 +11,7 @@ import Control.Exception (SomeException, displayException, try)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Effectful (IOE, (:>))
-import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L1 (FindMergeCandidates, recallCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
@@ -54,15 +54,15 @@ runWorker :: WorkerOptions -> IO ()
 runWorker opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
   config <- resolveEmbeddingConfig
-  withStore (defaultConnectionSettings (Text.pack connStr)) $ \st -> do
-    tr <- noopTracer
-    let env = AppEnv {store = st, tracer = tr, metrics = Nothing}
-    case opts of
-      WorkerTimersOnce -> runTimerOnce env config
-      WorkerBackfill -> withCapability env config \capability ->
-        runBackfill env capability config
-      WorkerContinuous -> withCapability env config \capability ->
-        runContinuousWorker env st capability config
+  let settings = defaultConnectionSettings (Text.pack connStr)
+  withStore settings $ \st ->
+    withNoopAppEnv settings \env ->
+      case opts of
+        WorkerTimersOnce -> runTimerOnce env config
+        WorkerBackfill -> withCapability env config \capability ->
+          runBackfill env capability config
+        WorkerContinuous -> withCapability env config \capability ->
+          runContinuousWorker env st capability config
 
 withCapability :: AppEnv -> EmbeddingConfig -> (VectorCapability -> IO a) -> IO a
 withCapability env config k = do

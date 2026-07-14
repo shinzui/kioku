@@ -20,7 +20,7 @@ import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), scheduleTimerTx)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
-import Kioku.App (AppEffects, AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L1 (scopedScanCandidates)
 import Kioku.Distill.L2 (l2SceneProcessManagerName)
 import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
@@ -31,8 +31,9 @@ import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Shikumi.Error (ShikumiError (..))
@@ -154,7 +155,7 @@ testDrainProcessesAllDueTimers =
     fmap (.status) rows @?= ["dead", "dead", "dead"]
 
 fireOnce ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   DistillRuntime ->
   Eff es ()
 fireOnce rt = do
@@ -183,7 +184,7 @@ scheduleTestTimer timerId processManagerName correlationId payload offset = do
         }
 
 startFixtureSession ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   Eff es ()
 startFixtureSession sid = do
@@ -282,10 +283,9 @@ freshTimerId = TimerId <$> UUIDv4.nextRandom
 withTimerEnv :: (AppEnv -> DistillRuntime -> IO ()) -> Assertion
 withTimerEnv action =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
+    withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
       rt <- newDistillRuntime
-      action AppEnv {store = st, tracer, metrics = Nothing} rt
+      action env rt
 
 runOrFail :: AppEnv -> Eff AppEffects a -> IO a
 runOrFail env action = runAppIO env action >>= expectRight "runAppIO"

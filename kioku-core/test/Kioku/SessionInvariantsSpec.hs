@@ -15,7 +15,7 @@ import Keiro.Command (CommandError (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.Stream qualified as Stream
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
-import Kioku.App (AppEffects, AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Distill.Timer (l1TimerScheduleProjection)
 import Kioku.Id (SessionId, genSessionId, idText)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
@@ -34,8 +34,9 @@ import Kioku.Session.Domain
 import Kioku.Session.EventStream (parseSessionEvent, sessionEventStream, sessionStream)
 import Kioku.Session.ReadModel (SessionRow (..), sessionInlineProjection)
 import Kiroku.Store.Append (appendToStream)
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Read (readStreamForward)
 import Kiroku.Store.Types
@@ -400,7 +401,7 @@ rawEvent typ payload =
 -- | Run a command straight at the aggregate, skipping 'Kioku.Session''s read-model
 -- prechecks. This is the harness that makes "the aggregate enforces it" a testable claim.
 runSessionCommandDirect ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   SessionCommand ->
   Eff es (Either CommandError ())
@@ -422,16 +423,14 @@ assertRejected label = \case
 withApp :: Eff AppEffects a -> IO a
 withApp action =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
-      let env = AppEnv {store = st, tracer, metrics = Nothing}
+    withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
       result <- runAppIO env action
       case result of
         Left storeErr -> assertFailure ("store error: " <> show storeErr)
         Right value -> pure value
 
 startFixture ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   Eff es SessionId
 startFixture = do
   sid <- liftIO genSessionId
@@ -453,7 +452,7 @@ startFixture = do
   pure sid
 
 parkFixture ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   Maybe Text ->
   Eff es ()
@@ -471,7 +470,7 @@ parkFixture sid key = do
   void (liftEither "Session.awaitInput" result)
 
 resumeFixture ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   Maybe Text ->
   Text ->

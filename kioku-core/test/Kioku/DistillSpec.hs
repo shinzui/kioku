@@ -32,7 +32,7 @@ import Keiro.Stream qualified as Stream
 import Keiro.Timer (countDueTimers)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
-import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.Consolidate (ConsolidateInput (..), ConsolidationAction (..), ConsolidationDecision (..), ExistingMemory (..), consolidateProgram)
 import Kioku.Distill.Extract (ExtractOutput (..), ExtractedAtom (..), extractProgram)
 import Kioku.Distill.L1 (L1Error (..), L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
@@ -59,8 +59,9 @@ import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..))
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), StartSessionData (..))
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Read (readStreamForward)
 import Kiroku.Store.Transaction (runTransaction)
@@ -590,7 +591,7 @@ testWorkerPropagatesSupersedeAndMerge = withDistillWorkspaceEnv \env workspace -
 -- due. Bounded on purpose: a timer that rescheduled itself would otherwise spin
 -- here forever, and a hung test is worse than a failed one.
 drainTimers ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   DistillRuntime ->
   Eff es Int
 drainTimers rt = go (50 :: Int) 0
@@ -623,7 +624,7 @@ forgetScope =
   ScopeEntity (Namespace "rei") (ScopeKind "intention")
 
 recordForgetFixture ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   MemoryId ->
   MemoryScope ->
   Text ->
@@ -799,9 +800,7 @@ testReplayDistillation = withDistillWorkspaceEnv \env workspace -> do
 withDistillEnv :: (AppEnv -> IO a) -> IO a
 withDistillEnv action =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
-      action AppEnv {store = st, tracer, metrics = Nothing}
+    withNoopAppEnv (defaultConnectionSettings connStr) action
 
 fixtureScope :: MemoryScope
 fixtureScope =
@@ -1050,7 +1049,7 @@ testRecallCandidateWindow = withDistillEnv \env -> do
 -- with content that shares no stem with the extracted atom so full-text search
 -- passes over them.
 seedCandidateWindow ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   MemoryScope ->
   UTCTime ->
@@ -1082,7 +1081,7 @@ dummyEmbeddingModel =
       }
 
 seedMemory ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   MemoryId ->
   SessionId ->
   MemoryScope ->
@@ -1093,7 +1092,7 @@ seedMemory memoryId sid scope content =
   seedMemoryWith memoryId sid scope content 50
 
 seedMemoryWith ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   MemoryId ->
   SessionId ->
   MemoryScope ->
@@ -1135,7 +1134,7 @@ fixtureTurns =
 -- | Start a session and record 'fixtureTurns', leaving it @Running@ so further
 -- turns can be recorded. The aggregate only accepts @RecordTurn@ from @Running@.
 writeRunningFixtureSession ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   MemoryScope ->
   UTCTime ->
@@ -1158,7 +1157,7 @@ writeRunningFixtureSession sid scope now = do
   traverse_ (uncurry (recordFixtureTurn sid now)) fixtureTurns
 
 recordFixtureTurn ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   UTCTime ->
   Int ->
@@ -1181,7 +1180,7 @@ recordFixtureTurn sid now turnIndex content = do
   void (liftIO (expectRight "Session.recordTurn" turnResult))
 
 writeFixtureSession ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   MemoryScope ->
   UTCTime ->

@@ -8,9 +8,9 @@
 -- migration. That is not hypothetical; it is what happened when the session models went
 -- v1 -> v2 -> v3.
 --
--- 'reconcileReadModelRegistry' is the repair, and this spec walks the whole arc: a healthy
--- query, a downgraded registry row, the resulting outage, the reconcile, and the query
--- working again.
+-- 'reconcileReadModelRegistry' is the repair, and this spec walks the whole arc: startup
+-- registration, a healthy query, a downgraded registry row, the resulting outage, the
+-- reconcile, and the query working again.
 module Kioku.ReadModelReconcileSpec (tests) where
 
 import Data.Text qualified as Text
@@ -21,7 +21,7 @@ import Effectful.Error.Static (Error)
 import Hasql.Transaction qualified as Tx
 import Keiro.ReadModel (ReadModelError (..))
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
-import Kioku.App (AppEffects, AppEnv (..), noopTracer, runAppIO)
+import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Id (SessionId, genSessionId)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
@@ -33,8 +33,9 @@ import Kioku.ReadModel
   )
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
-import Kiroku.Store.Connection (defaultConnectionSettings, withStore)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Test.Tasty (TestTree, testGroup)
@@ -53,7 +54,7 @@ tests =
 testStaleThenReconcile :: Assertion
 testStaleThenReconcile =
   withApp \sid -> do
-    -- A first query registers the session models at the identity the code declares.
+    -- Application startup registered every model at the identity the code declares.
     healthy <- Session.getById sid
     liftIO $ assertBool "a fresh database serves session queries" (isRight healthy)
 
@@ -77,20 +78,19 @@ testStaleThenReconcile =
         "the downgraded row was bumped back"
         (Just Reconciled)
         (outcomeFor "kioku-session-by-id" outcomes)
-      -- Reconciliation must cover every model the code declares, not just the ones this
-      -- test happened to query. The rest have no registry row at all — only
-      -- kioku-session-by-id was ever queried — so they are inserted rather than repaired.
+      -- Reconciliation must cover every model the code declares, not just the one this
+      -- test downgraded. Startup registered the rest, so they stay current.
       assertEqual
         "every declared model was accounted for"
         (map (.readModelName) kiokuReadModelSchemas)
         (map ((.readModelName) . fst) outcomes)
       assertEqual
-        "the models that were never queried got fresh rows"
+        "the models that were not downgraded stayed current"
         []
         [ schema.readModelName
         | (schema, outcome) <- outcomes,
           schema.readModelName /= "kioku-session-by-id",
-          outcome /= Registered
+          outcome /= AlreadyCurrent
         ]
 
     repaired <- Session.getById sid
@@ -137,17 +137,15 @@ isRight = \case
 withApp :: (SessionId -> Eff AppEffects ()) -> Assertion
 withApp use =
   withKiokuMigratedDatabase \connStr ->
-    withStore (defaultConnectionSettings connStr) \st -> do
-      tracer <- noopTracer
+    withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
       sid <- genSessionId
-      let env = AppEnv {store = st, tracer, metrics = Nothing}
       result <- runAppIO env (startFixture sid >> use sid)
       case result of
         Left err -> assertFailure ("store error: " <> show err)
         Right () -> pure ()
 
 startFixture ::
-  (IOE :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   Eff es ()
 startFixture sid = do
