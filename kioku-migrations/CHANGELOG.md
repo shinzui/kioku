@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- Raised `keiro-migrations` to `^>=0.4.0.1`. Keiro's component gains two migrations, which the
+  composed `kiokuMigrationPlan` now carries:
+  `0019-keiro-snapshots-state-shape-hash.sql`, which adds a `state_shape_hash` column to
+  `keiro.keiro_snapshots`, and `0020-keiro-workflow-children-failure-reason.sql`, which adds a
+  nullable `failure_reason` column to Keiro's workflow-children table. Both are additive
+  `ALTER TABLE ... ADD COLUMN` statements on Keiro-owned tables that Kioku neither reads nor
+  writes. The plan's forward-migration total moves from 36 to 38.
+
+### Deprecated
+
+- `Kioku.Migrations.History.Codd` and the `codd-upgrade/` SQL fixups are deprecated. They are a
+  one-time bridge for databases whose schema evolution predates the pg-migrate cutover; a database
+  created by `kioku-migrate up` has never needed them. Removal is gated on the last codd-era
+  downstream database crossing over — as of this release that is Shikigami, tracked by its
+  `docs/plans/38-migrate-shikigami-database-evolution-from-codd-to-pg-migrate.md`. If you still
+  have a `codd.sql_migrations` table, cross over now: the bridge will be deleted, together with
+  everything listed in `codd-upgrade/README.md`, in a future release.
+
 ## 0.1.0.0 — 2026-07-14
 
 ### Added

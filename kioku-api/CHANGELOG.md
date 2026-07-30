@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- No API change. Released in lockstep with the rest of the Kioku packages for the Keiki 0.4,
+  Keiro 0.4, Baikai 0.4 and Shikumi cohort upgrade.
+
 ## 0.1.0.0 — 2026-07-14
 
 ### Added
