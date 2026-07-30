@@ -40,7 +40,10 @@ executable kioku-migrate
     OverloadedRecordDot
     OverloadedStrings
 
-  ghc-options:        -threaded -rtsopts -with-rtsopts=-N
+  -- This executable *implements* the deprecated codd import bridge, so its own
+  -- use of Kioku.Migrations.History.Codd is deliberate. The deprecation exists
+  -- to warn downstream consumers, not us; silence it only here.
+  ghc-options:        -threaded -rtsopts -with-rtsopts=-N -Wno-deprecations
   build-depends:
     , aeson                   >=2.2      && <2.3
     , base                    >=4.21     && <5

@@ -1,7 +1,18 @@
 {-# LANGUAGE MultilineStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
+-- |
+-- One-time bridge for databases whose schema evolution was applied by codd
+-- before Kioku moved to pg-migrate. It maps the historical 30-migration codd
+-- cohort onto pg-migrate's ledger so an existing database crosses over without
+-- replaying any DDL. It is not part of the ongoing migration path: a database
+-- created by @kioku-migrate up@ has never needed it.
 module Kioku.Migrations.History.Codd
+  {-# DEPRECATED
+    "One-time codd import bridge. Scheduled for removal once Shikigami plan 38 \
+    \completes its codd-to-pg-migrate cutover; a database created by kioku-migrate \
+    \has never needed this module."
+    #-}
   ( kiokuCoddHistoryMappings,
     cohortCoddHistoryMappings,
     cohortCoddSourceConfig,

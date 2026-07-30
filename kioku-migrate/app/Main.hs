@@ -87,7 +87,12 @@ kiokuCommandParser plan =
           "import"
           ( info
               (ImportCodd <$> coddImportOptionsParser <**> helper)
-              (progDesc "Import the 30-migration pinned Kiroku/Keiro/Kioku Codd cohort without replaying DDL")
+              ( progDesc
+                  "DEPRECATED (removal pending): import the 30-migration pinned Kiroku/Keiro/Kioku Codd \
+                  \cohort without replaying DDL. This is a one-time bridge for databases predating the \
+                  \pg-migrate cutover; it is removed once the last codd-era database has crossed over. \
+                  \A database created by 'kioku-migrate up' never needs this."
+              )
           )
       )
 
