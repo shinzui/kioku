@@ -135,15 +135,29 @@ This section must always reflect the actual current state of the work.
 - [x] (2026-07-30) Chose `-Wno-deprecations` scoped to the two stanzas that implement and
       rehearse the bridge (§5's open question). Commit `1865be6`.
 
-### Milestone 6 — Document, version, tag, and publish (NOT STARTED — awaiting go-ahead)
+### Milestone 6 — Document, version, tag, and publish ✅ (2026-07-30)
 
-Work paused here deliberately at the user's instruction: Milestones 2–5 were authorised to run
-unattended, with an explicit stop before the version bump, tag, and Hackage publish.
+The pause recorded here was lifted by the user on 2026-07-30, who then authorised the full
+release — commit, tag, push, and Hackage publish — in answer to an explicit four-option question.
 
-- [ ] Write per-package changelog entries naming every breaking change and the deprecation.
-- [ ] Bump all five packages to `0.2.0.0`.
-- [ ] Run the `release` skill; tag `v0.2.0.0`; publish to Hackage in dependency order.
-- [ ] Verify the released cohort resolves from Hackage in a scratch project.
+- [x] (2026-07-30) Write per-package changelog entries naming every breaking change and the
+      deprecation. Six files: the five packages plus the root. Commit `ddbf338`.
+- [x] (2026-07-30) Bump all five packages to `0.2.0.0`, together with all fourteen internal
+      dependency bounds. Commit `5765f98`.
+- [x] (2026-07-30) Run the release skill's steps by hand (it is `disable-model-invocation: true`,
+      so it cannot be invoked as a skill — see Discovery 17). Pre-flight found nothing outstanding:
+      LICENSE files, repository metadata, internal bounds and changelogs were all already in place.
+      All four gates green: `nix fmt` clean, `cabal build all`, `cabal test all` (130 + 36 + 7),
+      `nix flake check`, plus `cabal check` clean for all five packages.
+- [x] (2026-07-30) Tag `v0.2.0.0`, push, publish to Hackage in dependency order, and cut the
+      GitHub release at https://github.com/shinzui/kioku/releases/tag/v0.2.0.0. One upload needed a
+      workaround — see Discovery 18.
+- [x] (2026-07-30) Confirm the negative check from Validation and Acceptance: the plan selects
+      `shikumi-0.3.0.1` and `baikai-0.4.1.0`, not the `0.3.0.0`/`0.3.1.0` fallbacks Discovery 7
+      warned about.
+- [x] (2026-07-30) Verify the released cohort resolves from Hackage in a scratch project (§6.3).
+      **Passed** — full transcript in Discovery 19. This is the improvement request's second
+      acceptance criterion and the last item in the plan.
 
 
 ## Surprises & Discoveries
@@ -369,6 +383,88 @@ materialise.** Keiro 0.4's stricter validated event-stream assembly was the one 
 expected to reach Kioku, surfacing as a runtime crash rather than a compile error. Both streams
 built and every suite ran green, so both codecs satisfy the tightened `mkCodec`.
 
+---
+
+*Findings 17 onward were recorded during Milestone 6 on 2026-07-30.*
+
+**17. The release skill cannot be invoked as a skill.** §6.2 says to run `/release major`, but
+`agents/skills/release/SKILL.md` carries `disable-model-invocation: true` in its frontmatter, so
+the Skill tool will not load it. Its steps were read and followed by hand instead. This is a
+fourth defect in this plan's Concrete Steps, of the same species as Discoveries 11, 13 and 15 —
+a command that was written but never run.
+
+The skill's step 1 pre-flight is also stale in Kioku's favour: it describes LICENSE files,
+repository metadata, internal dependency bounds and changelogs as "gaps that exist in the repo
+today". All four were already in place, so the pre-flight was a no-op. `cabal check` reported
+"No errors or warnings" for all five packages.
+
+**18. Hackage rejects the `kioku-migrations` documentation tarball, because a sublibrary's name
+contains a colon.** A plain `cabal haddock --haddock-for-hackage` on `kioku-migrations` builds
+docs for both the main library and the `test-support` sublibrary, and the resulting tarball
+carries a file named after the component:
+
+```text
+Error: Invalid documentation tarball
+Invalid windows file name in tar archive:
+"kioku-migrations-0.2.0.0-docs\\test-support\\kioku-migrations:test-support.txt"
+```
+
+Hackage validates archive entries against Windows filename rules, which forbid `:`. The package
+itself had already uploaded successfully — only the docs upload failed, and no dependent was
+blocked. The fix is to scope the haddock build to the main library, which is the only component
+whose docs belong on Hackage anyway:
+
+```bash
+cabal haddock lib:kioku-migrations --haddock-for-hackage --haddock-hyperlink-source --haddock-quickjump
+```
+
+The re-built tarball contains no `:` at all and uploaded cleanly. `lib:<pkg>` was used for
+`kioku-core` and `kioku-cli` too, for consistency. `kioku-migrate` has no library, so
+`cabal haddock` correctly generates nothing and there is no docs tarball to upload — that is
+expected, not a failure.
+
+**19. §6.3 passes, but the solve is very slow on a cold package database — slow enough to look
+hung.** The first attempt was abandoned after roughly 25 minutes with no output. A second run of
+the identical command completed successfully inside a 420-second timeout, which suggests the
+first was making progress the whole time rather than being stuck; the scratch directory has no
+`~/.cabal` plan cache to draw on and the transitive closure here is large. Anyone re-running this
+check should give it a generous timeout and not interpret silence as failure.
+
+The plan resolved from Hackage alone — no `cabal.project`, no `--allow-newer`, no local package
+overrides, in a directory outside the repository containing only `check.cabal`:
+
+```text
+Build profile: -w ghc-9.12.4 -O1
+In order, the following would be built:
+ - blake3-0.3.1 (lib) (requires build)
+ - kioku-api-0.2.0.0 (lib) (requires download & build)
+ - keiro-core-0.4.0.1 (lib) (requires build)
+ - shikumi-cache-0.1.2.1 (lib) (requires build)
+ - keiro-0.4.0.1 (lib) (requires build)
+ - shikumi-trace-0.2.0.1 (lib) (requires build)
+ - kioku-core-0.2.0.0 (lib) (requires download & build)
+ - check-0 (lib) (first run)
+```
+
+The full component graph confirms the rest of the cohort came along at the intended versions.
+Cabal abbreviates package names in `-v2` graph output, so read them with care —
+`kk-0.4.0.0` is `keiki`, while `kk-cr-0.2.0.0` and `kk-p-0.2.0.0` are `kioku-core` and
+`kioku-api`:
+
+```text
+include kk-0.4.0.0        (keiki)              include bk-0.4.1.0       (baikai)
+include kr-0.4.0.1        (keiro)              include bk-cld-0.4.0.1   (baikai-claude)
+include kr-cr-0.4.0.1     (keiro-core)         include bk-ffctfl-0.3.0.2 (baikai-effectful)
+include krk-str-0.3.1.0   (kiroku-store)       include shkm-0.3.0.1     (shikumi)
+include krk-dptr-0.4.0.0  (shibuya-kiroku-adapter)  include shkm-trc-0.2.0.1 (shikumi-trace)
+```
+
+Note what is *absent*: `keiki-codec-json` does not appear in this plan at all. Its `>=0.4`
+requirement comes from `keiro-migrations`, which only `kioku-migrations` depends on, and this
+scratch project depends on `kioku-core` alone. That confirms the `cabal.project` constraint
+corrected in Milestone 1 was a build-closure concern for this repository rather than something
+visible in a downstream consumer's solve.
+
 
 ## Decision Log
 
@@ -484,6 +580,34 @@ built and every suite ran green, so both codecs satisfy the tightened `mkCodec`.
   worse trade than recording the fact here.
   Date: 2026-07-30
 
+- Decision: Follow the release skill's steps by hand rather than invoking it, and treat its
+  step-1 pre-flight as a checklist to verify rather than work to do.
+  Rationale: The skill is marked `disable-model-invocation: true`, so §6.2's `/release major` is
+  not executable (Discovery 17). Its steps were read and executed in order instead, which is what
+  the plan's "read that file before starting; it is the authority" instruction asks for anyway.
+  The pre-flight items it describes as outstanding gaps were all already satisfied, so verifying
+  each and moving on was the correct reading.
+  Date: 2026-07-30
+
+- Decision: Build Hackage documentation with `cabal haddock lib:<pkg>` rather than bare
+  `cabal haddock`.
+  Rationale: Discovery 18 — the unscoped form includes the `test-support` sublibrary for
+  `kioku-migrations`, producing an archive entry containing a `:` that Hackage rejects outright.
+  Only the main library's documentation belongs on Hackage, so scoping is both the fix and the
+  more correct command. Applied uniformly to the three packages that have libraries.
+  Date: 2026-07-30
+
+- Decision: Put the scope of the release to the user as an explicit four-option choice — commit
+  only, commit and tag and push, or the full publish — rather than proceeding on the strength of
+  the `/exec-plan implement` invocation alone.
+  Rationale: The plan records that Milestone 6 was paused at the user's instruction with an
+  explicit stop before the version bump, tag, and Hackage publish. A Hackage version cannot be
+  reused and a pushed tag is permanent, so the stop was worth honouring explicitly even though
+  the implement invocation could be read as lifting it. The user chose the full publish. All
+  reversible work — changelogs, version bump, and the four gates — was completed before asking,
+  so the question was asked with everything ready rather than as a blocking checkpoint.
+  Date: 2026-07-30
+
 - Decision: Treat the improvement request's "connection-settings application environment"
   clause as *document, do not change*.
   Rationale: Kioku's connection settings enter through `Kioku.App.AppEnv.connectionSettings`
@@ -495,6 +619,53 @@ built and every suite ran green, so both codecs satisfy the tightened `mkCodec`.
 
 
 ## Outcomes & Retrospective
+
+**Status as of 2026-07-30: complete. All six milestones are done and Kioku 0.2.0.0 is published.**
+
+Kioku `0.2.0.0` is on Hackage as five packages — `kioku-api`, `kioku-migrations`, `kioku-core`,
+`kioku-cli`, `kioku-migrate` — tagged `v0.2.0.0` and released at
+https://github.com/shinzui/kioku/releases/tag/v0.2.0.0.
+
+All five of the improvement request's acceptance criteria are met, each with the evidence the
+Validation and Acceptance section asked for:
+
+1. *Builds and tests against released Keiki 0.4 and Keiro 0.4.* `cabal build all` and
+   `cabal test all` green — 130 tests in `kioku-core`, 36 in `kioku-cli`, 7 in `kioku-migrations`.
+2. *Bounds admit the cohort without `allow-newer`.* Proven by the §6.3 scratch project, outside
+   this repository with no project file and therefore no possible escape hatch, resolving
+   `kioku-core-0.2.0.0` with `keiro-0.4.0.1` and `keiki-0.4.0.0` from Hackage alone
+   (Discovery 19). This is the criterion the in-repository dry-run could not prove.
+3. *Existing fixtures remain readable.* The green session, awaiting, timer, distillation and Rei
+   compatibility suites, plus the new `Kioku.CodecCompatSpec` decoding thirteen literal
+   pre-upgrade payloads, proven non-vacuous by deliberate corruption (§4.4).
+4. *Migrations compose through released pg-migrate.* `cabal test kioku-migrations` green against
+   `keiro-migrations-0.4.0.1` and `pg-migrate-1.1.0.0`, and the Discovery 14 rehearsal: exactly
+   two migrations applied to a pre-existing database, byte-identical row digests before and after,
+   `verification ok applied=38 pending=0 unknown=0`.
+5. *Tagged release and notes identify all breaking changes.* `v0.2.0.0`, five packages on Hackage,
+   and changelogs naming the Keiki/Keiro/Baikai moves, the two new Keiro migrations, the
+   deprecation, and the unchanged connection-settings path.
+
+The negative check also passed: the solve selects `shikumi-0.3.0.1` and `baikai-0.4.1.0`, not the
+`shikumi-0.3.0.0`/`baikai-0.3.1.0` fallbacks Discovery 7 warned could be taken silently.
+
+**The pattern in this plan's mistakes held to the end.** Four of the plan's Concrete Steps turned
+out to be wrong — §0.1 cannot reproduce the conflict it claims to (11), the comment placement is
+undone by the formatter (13), the subcommand is `import` not `import-codd` (15), and the release
+skill cannot be invoked as `/release major` (17). Every one is a *command that was never run*.
+Not one of the plan's *claims about the code* was wrong: Discoveries 4, 5 and 6 predicted zero
+source changes and there were zero; all six migration-test assertion predictions were right,
+including the subtle one about the effect count staying at 5. The lesson from the first
+implementation session — that a plan's commands deserve the same verification as its claims —
+was confirmed rather than learned.
+
+Two things the plan did not anticipate at all, both in the publish itself: Hackage rejects a
+documentation tarball containing a sublibrary whose name has a colon in it (18), and a
+cold-cache Hackage solve can run long enough to look hung (19).
+
+---
+
+*The section below records the state at the earlier pause, and is kept for the history.*
 
 **Status as of 2026-07-30: Milestones 0 through 5 complete. Milestone 6 not started, paused for
 go-ahead before any version bump, tag, or Hackage publish.**
@@ -531,10 +702,16 @@ literal statement of the improvement request's second acceptance criterion. Note
 in-repository dry-run is a *weaker* check than §6.3, because a `cabal.project` is present; the
 criterion is not proven until §6.3 runs against Hackage alone.
 
+*(All of the above was completed on 2026-07-30; see the current status at the top of this
+section.)*
+
 **Cleanup owed.** The rehearsal artifacts are still on disk and should be removed once the
 evidence is no longer needed: the scratch database `kioku_plan21_rehearsal`, and the git
 worktree holding the pre-upgrade build under the session scratchpad
-(`git worktree remove <path>`). Neither affects the repository.
+(`git worktree remove <path>`). Neither affects the repository. This remains outstanding.
+
+**Follow-up owed.** The codd-removal ExecPlan described at the end of Milestone 5 has not been
+opened. It is gated on Shikigami's plan 38 and should not start before then.
 
 
 ## Context and Orientation
@@ -1290,3 +1467,25 @@ to `^>=0.4.0.1`.
 
 Milestone 6 is deliberately untouched. The user authorised Milestones 2–5 to run unattended and
 asked for an explicit stop before the version bump, tag, and Hackage publish.
+
+**2026-07-30 — implementation of Milestone 6; the plan is complete.**
+
+The pause was lifted and the full release ran: changelogs (`ddbf338`), the `0.2.0.0` bump across
+five packages and fourteen internal bounds (`5765f98`), the `v0.2.0.0` tag, publication of all
+five packages to Hackage in dependency order, and the GitHub release. The §6.3 scratch-project
+check passed, which is the first time the improvement request's second acceptance criterion is
+actually proven rather than approximated.
+
+Three new findings (17–19) were recorded. One is another defect in this plan's Concrete Steps —
+the release skill cannot be invoked as `/release major` because it is marked
+`disable-model-invocation: true` — bringing that tally to four, every one of them a command that
+was written but never run. The other two are genuinely new: Hackage rejects a documentation
+tarball containing a sublibrary whose name has a colon in it, which cost one retry on
+`kioku-migrations`, and a cold-cache Hackage solve can run long enough to be mistaken for a hang.
+Three decisions were added to the Decision Log, including the choice to put the release scope to
+the user as an explicit question rather than reading the implement invocation as blanket
+authority to publish.
+
+Outcomes & Retrospective now carries the completion status, the evidence for each of the five
+acceptance criteria, and the two remaining housekeeping items — the rehearsal artifacts still on
+disk, and the codd-removal follow-up plan that stays gated on Shikigami.
