@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            kioku-core
-version:         0.1.0.0
+version:         0.2.0.0
 synopsis:        Reusable agent memory runtime
 description:
   Core runtime for kioku. M1 establishes the application effect stack; later
@@ -102,7 +102,7 @@ library
     , keiki                   ^>=0.4.0.0
     , keiro                   ^>=0.4.0.1
     , keiro-core              ^>=0.4.0.1
-    , kioku-api               ^>=0.1.0.0
+    , kioku-api               ^>=0.2.0.0
     , kiroku-store            ^>=0.3.0.1
     , lens                    >=5.2       && <5.4
     , mmzk-typeid             >=0.7       && <0.8
@@ -152,9 +152,9 @@ test-suite kioku-test
     , hasql-transaction              >=1.0
     , keiro                          ^>=0.4.0.1
     , keiro-core                     ^>=0.4.0.1
-    , kioku-api                      ^>=0.1.0.0
-    , kioku-core                     ^>=0.1.0.0
-    , kioku-migrations:test-support  ^>=0.1.0.0
+    , kioku-api                      ^>=0.2.0.0
+    , kioku-core                     ^>=0.2.0.0
+    , kioku-migrations:test-support  ^>=0.2.0.0
     , kiroku-store                   ^>=0.3.0.1
     , lens                           >=5.2
     , shibuya-core                   >=0.8.0.1  && <0.9

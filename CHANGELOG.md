@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0.0 — 2026-07-30
 
 Kioku moves onto the released July 2026 cohort. Before this release there was no combination of
 published packages that paired Kioku with the current Keiro and Keiki: `kioku-core-0.1.0.0`
