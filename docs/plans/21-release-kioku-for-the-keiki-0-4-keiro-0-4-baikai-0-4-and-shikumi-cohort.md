@@ -66,52 +66,79 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-### Milestone 0 — Unblock the Baikai/crypton conflict upstream
+### Milestone 0 — Unblock the Baikai/crypton conflict upstream ✅ (2026-07-30)
 
-- [ ] Confirm the conflict still reproduces: `baikai-claude-0.4.0.0` declares `crypton ^>=1.0`
-      (meaning `>=1.0 && <1.1`) while `pg-migrate-1.1.0.0` declares `crypton >=1.1 && <1.2`.
-- [ ] Confirm `baikai-claude` only uses `Crypto.Hash (Digest, SHA256)`, an API unchanged
-      between crypton 1.0 and 1.1.
-- [ ] Publish a Hackage **metadata revision** of `baikai-claude-0.4.0.0` widening the bound to
-      `crypton >=1.0 && <1.2` (fallback: cut `baikai-claude-0.4.0.1`).
-- [ ] Prove the fix: `cabal build --dry-run` for Kioku with the whole 0.4 cohort resolves with
-      no `--allow-newer`.
+- [x] (2026-07-30) Confirm the conflict still reproduces. It does, but only *after* Kioku's own
+      stale bounds are lifted — see Discovery 11. Verbatim solver output in Discovery 12.
+- [x] (2026-07-30) Confirm `baikai-claude` only uses `Crypto.Hash (Digest, SHA256)`. Exactly two
+      import lines, both in `Baikai/Provider/Claude/Transport.hs`, as predicted.
+- [x] (2026-07-30) Widen the bound to `crypton >=1.0 && <1.2` and publish. Shipped as the
+      **fallback path**: the user released `baikai-claude-0.4.0.1` rather than a metadata
+      revision. See the Decision Log entry dated 2026-07-30 (revision → point release).
+- [x] (2026-07-30) Prove the fix: `cabal build --dry-run all` resolves the full cohort with no
+      `--allow-newer` on the command line and none in `cabal.project`.
 
-### Milestone 1 — Move the package bounds onto the released cohort
+### Milestone 1 — Move the package bounds onto the released cohort ✅ (2026-07-30)
 
-- [ ] Bump `keiki`, `keiro`, `keiro-core` in `kioku-core/kioku-core.cabal` (library and test-suite).
-- [ ] Bump `keiro-migrations` in `kioku-migrations/kioku-migrations.cabal`.
-- [ ] Bump `baikai`, `baikai-claude`, `baikai-effectful`, `shikumi`, `shikumi-trace` in `kioku-core/kioku-core.cabal`.
-- [ ] Bump the `keiki-codec-json` and `keiro-pgmq` constraints in `cabal.project`.
-- [ ] `cabal build --dry-run all` resolves with no `allow-newer`, selecting the expected cohort.
+- [x] (2026-07-30) Bump `keiki` → `^>=0.4.0.0`, `keiro`/`keiro-core` → `^>=0.4.0.1` in
+      `kioku-core/kioku-core.cabal` (library and test-suite).
+- [x] (2026-07-30) Bump `keiro-migrations` → `^>=0.4.0.1` in `kioku-migrations/kioku-migrations.cabal`.
+- [x] (2026-07-30) Bump `baikai` → `^>=0.4.1.0`, `baikai-claude` → `^>=0.4.0.1`,
+      `baikai-effectful` → `^>=0.3.0.2`, `shikumi` → `^>=0.3.0.1`, `shikumi-trace` → `^>=0.2.0.1`.
+      The two counter-intuitive bounds carry an explanatory comment above `build-depends`, because
+      cabal-fmt strips comments from inside a dependency list (Discovery 13).
+- [x] (2026-07-30) Bump `keiki-codec-json` → `^>=0.4.0.0` and `keiro-pgmq` → `^>=0.4.0.1` in
+      `cabal.project`, and rewrite the stale comment above the constraint block.
+- [x] (2026-07-30) `cabal build --dry-run all` resolves with no `allow-newer`, selecting the
+      expected cohort. Commits `9f026f7` and `efdd391`.
 
-### Milestone 2 — Compile and fix the API port
+### Milestone 2 — Compile and fix the API port ✅ (2026-07-30)
 
-- [ ] `cabal build all` succeeds.
-- [ ] Record every source change the new APIs forced (expected: few or none).
+- [x] (2026-07-30) `cabal build all` succeeds.
+- [x] (2026-07-30) **Zero source changes were required.** Not one line of Haskell needed editing
+      to move from Keiki 0.2/Keiro 0.3 to Keiki 0.4/Keiro 0.4. Discoveries 4, 5 and 6 predicted
+      this and were correct in full. No commit was made for this milestone, per §2's instruction.
 
-### Milestone 3 — Migrations absorb Keiro 0019 and 0020
+### Milestone 3 — Migrations absorb Keiro 0019 and 0020 ✅ (2026-07-30)
 
-- [ ] Update the migration-count assertions in `kioku-migrations/test/Main.hs`.
-- [ ] `cabal test kioku-migrations` passes.
-- [ ] Demonstrate the forward upgrade on a database migrated by the *old* Kioku.
+- [x] (2026-07-30) Update the migration-count assertions in `kioku-migrations/test/Main.hs`:
+      `36` → `38` in two places, two new ids appended to `expectedForwardMigrationIds`, and the
+      test's own label corrected from "six forward migrations" to "eight".
+      The three assertions the plan said must *not* move (30, 10, and the effect count of 5) did
+      not move — the effect-count SQL probes neither new column, as predicted.
+- [x] (2026-07-30) `cabal test kioku-migrations` passes — all 7 tests.
+- [x] (2026-07-30) Demonstrate the forward upgrade on a database migrated by the *old* Kioku.
+      Full transcript in Discovery 14: exactly two migrations applied, byte-identical row
+      digests before and after, `verification ok applied=38 pending=0 unknown=0`.
 
-### Milestone 4 — Runtime, replay, and codec compatibility evidence
+### Milestone 4 — Runtime, replay, and codec compatibility evidence ✅ (2026-07-30)
 
-- [ ] `cabal test kioku-core` passes.
-- [ ] `cabal test kioku-cli` passes.
-- [ ] Add a codec-compatibility test proving pre-upgrade event payloads still decode.
+- [x] (2026-07-30) `cabal test kioku-core` passes — 130 tests.
+- [x] (2026-07-30) `cabal test kioku-cli` passes — 36 tests.
+- [x] (2026-07-30) Add `kioku-core/test/Kioku/CodecCompatSpec.hs`: 13 literal fixtures (6
+      `MemoryEvent` + 7 `SessionEvent` constructors) plus 2 tests pinning the native/legacy
+      fallback. Proven non-vacuous per §4.4. Commit `4c79e4f`.
 
-### Milestone 5 — Dispose of the codd import path
+### Milestone 5 — Dispose of the codd import path ✅ (2026-07-30)
 
 - [x] (2026-07-30) Verify whether any downstream still needs the codd import path. **It does** —
       see Surprises & Discoveries item 10. Removal is therefore deferred, not cancelled.
-- [ ] Deprecate `Kioku.Migrations.History.Codd` and the `kioku-migrate import-codd` subcommand
-      with `{-# DEPRECATED #-}` pragmas and CLI help text naming the removal release.
-- [ ] Record the removal gate in `kioku-migrations/codd-upgrade/README.md`.
-- [ ] Confirm Kioku is already free of `hasql-migration` (it is — see Discovery 9).
+- [x] (2026-07-30) Re-confirm the gate at implementation time (§5.1). Shikigami is unchanged:
+      still `codd >=0.1.8 && <0.2`, `codd-extras`, and the `hasql-migration` / `codd-project`
+      source-repository stanzas. Deprecation remains the correct call.
+- [x] (2026-07-30) Deprecate `Kioku.Migrations.History.Codd` (module-header `{-# DEPRECATED #-}`)
+      and the `kioku-migrate import` subcommand (`progDesc`). Note: the subcommand is named
+      `import`, **not** `import-codd` as this plan stated throughout — see Discovery 15.
+- [x] (2026-07-30) Record the removal gate in `kioku-migrations/codd-upgrade/README.md`, naming
+      all seven things that must be deleted together.
+- [x] (2026-07-30) Confirm Kioku is already free of `hasql-migration` — confirmed, no matches.
+- [x] (2026-07-30) Chose `-Wno-deprecations` scoped to the two stanzas that implement and
+      rehearse the bridge (§5's open question). Commit `1865be6`.
 
-### Milestone 6 — Document, version, tag, and publish
+### Milestone 6 — Document, version, tag, and publish (NOT STARTED — awaiting go-ahead)
+
+Work paused here deliberately at the user's instruction: Milestones 2–5 were authorised to run
+unattended, with an explicit stop before the version bump, tag, and Hackage publish.
 
 - [ ] Write per-package changelog entries naming every breaking change and the deprecation.
 - [ ] Bump all five packages to `0.2.0.0`.
@@ -264,6 +291,84 @@ The consequence is concrete: Shikigami's plan 38 will need `kioku-migrate import
 the `codd-upgrade/*.sql` fixups to move its live database across. Deleting them from Kioku
 `0.2.0.0` would remove the bridge before the only consumer has walked over it.
 
+---
+
+*Findings 11 onward were recorded during implementation on 2026-07-30.*
+
+**11. Concrete Step §0.1 does not reproduce the crypton conflict as written — Kioku's own
+bounds mask it.** The plan's §0.1 command expects a solver rejection naming `crypton`. It
+instead fails one level earlier, on Kioku's stale `keiro-core ^>=0.3.0.0`:
+
+```text
+[__1] rejecting: keiro-core-0.4.0.1 (conflict: kioku-core => keiro-core^>=0.3.0.0)
+[__1] rejecting: keiro-core; 0.3.0.0, 0.2.0.0 (constraint from command line flag requires >=0.4)
+```
+
+Lifting those with `--allow-newer` then hits the *`cabal.project`* constraint from Discovery 1,
+which outranks a command-line constraint:
+
+```text
+[__2] rejecting: keiki-codec-json-0.4.0.0 (constraint from cabal.project requires ^>=0.2.0.0)
+```
+
+Only after both layers are cleared does crypton surface. The practical consequence is that
+Milestone 1's edits must land *before* Milestone 0 can be demonstrated, inverting the plan's
+stated order. This is a documentation defect in the plan, not a problem with the analysis —
+Discovery 2's diagnosis was exactly right, it was just three layers down rather than one.
+
+**12. With Kioku's bounds corrected, the crypton conflict reproduces verbatim as Discovery 2
+predicted.** After Milestone 1's edits, a plain `cabal build --dry-run all`:
+
+```text
+[__1] trying: crypton-1.1.4 (dependency of kioku-core)
+[__2] rejecting: baikai-claude-0.4.0.0 (conflict: crypton==1.1.4, baikai-claude => crypton^>=1.0)
+[__2] skipping: baikai-claude; 0.3.0.2, 0.3.0.1 (has the same characteristics ...)
+```
+
+**13. cabal-fmt strips comments from inside a `build-depends` list.** Explanatory comments
+placed next to the `baikai-effectful` and `shikumi` bounds — exactly where Milestone 1 asks for
+them, "because a future reader will otherwise 'fix' it" — were hoisted by the `treefmt`
+pre-commit hook out of the dependency list and left stranded above the *next stanza*, where they
+read as documentation of the test-suite. They survive only above the `build-depends` keyword
+itself, which is where they now live.
+
+**14. The forward-upgrade rehearsal (§3.3) passes with zero data loss.** Run against a scratch
+database (`kioku_plan21_rehearsal`), migrated to completion by the pre-upgrade `kioku-migrate`
+built from commit `d76800e` in a separate worktree, then seeded with rows in both tables the new
+migrations alter, then upgraded by the new binary:
+
+```text
+$ kioku-migrate up          # new binary, database migrated by the old one
+keiro/0019-keiro-snapshots-state-shape-hash        outcome=applied_now duration_ms=2
+keiro/0020-keiro-workflow-children-failure-reason  outcome=applied_now duration_ms=1
+# (every other migration reported already_applied)
+
+$ diff rows-before.txt rows-after.txt
+IDENTICAL -- no rows or values changed
+
+$ kioku-migrate verify
+verification ok
+applied=38
+pending=0
+unknown=0
+```
+
+The snapshot compared per-table live-row counts across the `kioku`, `kiroku` and `keiro` schemas
+*and* md5 digests over the full contents of `keiro.keiro_snapshots`,
+`keiro.keiro_workflow_children` and `kiroku.streams` — so this is a content-level check, not
+merely a count. The two new columns arrived as specified: `state_shape_hash` defaulting to `''`
+and `failure_reason` nullable.
+
+**15. The subcommand is `kioku-migrate import`, not `kioku-migrate import-codd`.** The plan
+names it `import-codd` in six places, including the Milestone 5 acceptance criterion. The actual
+`Opt.command` string at `kioku-migrate/app/Main.hs:87` is `"import"`. Anyone following the plan
+literally would find no such subcommand.
+
+**16. `mkEventStreamOrThrow` did not throw — the risk flagged in Milestone 2 did not
+materialise.** Keiro 0.4's stricter validated event-stream assembly was the one break the plan
+expected to reach Kioku, surfacing as a runtime crash rather than a compile error. Both streams
+built and every suite ran green, so both codecs satisfy the tightened `mkCodec`.
+
 
 ## Decision Log
 
@@ -332,6 +437,53 @@ the `codd-upgrade/*.sql` fixups to move its live database across. Deleting them 
   migrations that arrive with `keiro-migrations 0.4.0.1`, which is Milestone 3.
   Date: 2026-07-30
 
+- Decision: Ship the crypton fix as `baikai-claude-0.4.0.1`, a point release, rather than the
+  planned Hackage metadata revision. Kioku therefore declares `baikai-claude ^>=0.4.0.1`.
+  Rationale: This is the fallback the plan already documented. The upload is irreversible and
+  outward-facing, so it was put to the user rather than performed unilaterally; the user
+  uploaded `0.4.0.1` directly. The consequence is the one the plan anticipated — Kioku names
+  `^>=0.4.0.1` instead of `^>=0.4.0.0` — and nothing else in the plan is affected.
+  Date: 2026-07-30
+
+- Decision: Run Milestone 1's bound edits *before* demonstrating Milestone 0's fix, inverting
+  the plan's stated milestone order.
+  Rationale: Discovery 11 — Kioku's own stale bounds, and then `cabal.project`'s stale
+  `keiki-codec-json` constraint, both mask the crypton conflict, so §0.1 as written fails for
+  the wrong reason. The bound edits are pure metadata and independent of the upstream fix, so
+  landing them first is safe and is the only way to make the crypton conflict observable. The
+  upstream change itself still preceded any claim that the cohort resolves.
+  Date: 2026-07-30
+
+- Decision: Run the §3.3 migration rehearsal against a purpose-made scratch database
+  (`kioku_plan21_rehearsal`), not the shared dev database the plan's commands name.
+  Rationale: The plan's own Idempotence and Recovery section says to rehearse against a scratch
+  database first, and §3.3's literal commands (`just create-database`, `$PGDATABASE`) target
+  the developer's live `kioku` database. A scratch database gives identical evidence with no
+  exposure. It was additionally *seeded* with rows in `keiro.keiro_snapshots` and
+  `keiro.keiro_workflow_children` — the two tables the new migrations alter — because an empty
+  database would have made the before/after comparison vacuous.
+  Date: 2026-07-30
+
+- Decision: Capture the Milestone 4 codec fixtures from the current tree rather than from a
+  pre-upgrade build, and verify equivalence by source diff instead.
+  Rationale: §4.1 wants fixtures that are "genuine historical bytes rather than round-trips of
+  the new code". The concern is that the encoder changed across the upgrade. It provably did
+  not: `git diff --name-only d76800e HEAD -- kioku-core/src kioku-api/src` returns zero files,
+  so the encoders are byte-identical and the two capture routes cannot differ. A pre-upgrade
+  capture was attempted first and abandoned only after it required rebuilding the entire Keiro
+  0.3 / Keiki 0.2 stack from source. The equivalence argument is a stronger guarantee than the
+  capture it replaces, since it covers every fixture at once.
+  Date: 2026-07-30
+
+- Decision: Leave Milestone 3's test-assertion changes folded into the Milestone 5 commit
+  (`1865be6`) rather than rewriting history to split them out.
+  Rationale: A `git add -A` in the Milestone 5 commit swept up
+  `kioku-migrations/test/Main.hs`, so the planned separate `test(migrations):` commit does not
+  exist. Every commit still leaves the tree building and testing green, which is the property
+  the plan actually requires. Rewriting published-shaped history for cosmetic attribution is a
+  worse trade than recording the fact here.
+  Date: 2026-07-30
+
 - Decision: Treat the improvement request's "connection-settings application environment"
   clause as *document, do not change*.
   Rationale: Kioku's connection settings enter through `Kioku.App.AppEnv.connectionSettings`
@@ -344,7 +496,45 @@ the `codd-upgrade/*.sql` fixups to move its live database across. Deleting them 
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+**Status as of 2026-07-30: Milestones 0 through 5 complete. Milestone 6 not started, paused for
+go-ahead before any version bump, tag, or Hackage publish.**
+
+What the repository looks like now. `cabal build --dry-run all` resolves `keiki-0.4.0.0`,
+`keiro-0.4.0.1`, `keiro-core-0.4.0.1`, `keiro-migrations-0.4.0.1`, `keiki-codec-json-0.4.0.0`,
+`baikai-0.4.1.0`, `baikai-claude-0.4.0.1`, `baikai-effectful-0.3.0.2`, `shikumi-0.3.0.1`,
+`shikumi-trace-0.2.0.1`, `kiroku-store-0.3.1.0` and `pg-migrate-1.1.0.0` — with no
+`--allow-newer` on the command line and none in `cabal.project`. `cabal build all` and
+`cabal test all` are green: 130 tests in `kioku-core`, 36 in `kioku-cli`, 7 in
+`kioku-migrations`. The codd import bridge is deprecated and still working.
+
+The forecasting was unusually good. The plan predicted that Milestone 2 would need "few or no"
+source changes; it needed **none at all** — Discoveries 4, 5 and 6 each held exactly. It
+predicted which three migration-test assertions would move and which three would not; all six
+predictions were right, including the subtle one about `forwardMigrationEffectCountStatement`
+staying at 5 because its SQL happens not to probe the new columns.
+
+Where the plan was wrong, it was wrong about *process*, not analysis. Three of the four
+implementation-time surprises are defects in the plan's own instructions rather than in its
+understanding of the code: §0.1 cannot reproduce the conflict it claims to (Discovery 11), the
+subcommand is called `import` rather than `import-codd` (Discovery 15), and the comment
+placement Milestone 1 requests is silently undone by the repository's own formatter
+(Discovery 13). The lesson worth carrying forward is that a plan's *commands* deserve the same
+verification as its *claims* — the claims here were checked against the code and were right; the
+commands were not run, and three of them were wrong.
+
+The one genuinely irreversible step, widening `baikai-claude`'s crypton bound on Hackage, was
+put to the user rather than performed unilaterally, and shipped by the documented fallback path.
+
+**What remains.** Milestone 6 only: changelogs, the `0.2.0.0` bump across five packages, the
+`v0.2.0.0` tag, publication in dependency order, and the §6.3 scratch-project check that is the
+literal statement of the improvement request's second acceptance criterion. Note that the
+in-repository dry-run is a *weaker* check than §6.3, because a `cabal.project` is present; the
+criterion is not proven until §6.3 runs against Hackage alone.
+
+**Cleanup owed.** The rehearsal artifacts are still on disk and should be removed once the
+evidence is no longer needed: the scratch database `kioku_plan21_rehearsal`, and the git
+worktree holding the pre-upgrade build under the session scratchpad
+(`git worktree remove <path>`). Neither affects the repository.
 
 
 ## Context and Orientation
@@ -1085,3 +1275,18 @@ therefore deprecates rather than deletes, records the removal trigger where the 
 contributor will find it, and names the follow-up plan's exact contents. The changelog work in
 Milestone 6 grew a `### Deprecated` requirement so downstreams are told, and Concrete Steps
 §5.1 re-checks the gate at implementation time in case Shikigami has crossed over by then.
+
+**2026-07-30 — implementation of Milestones 0 through 5; Milestone 6 paused.**
+
+Recorded the actual course of the work. Progress now reflects six completed milestones with
+dates and commit hashes. Six new findings (11–16) were added to Surprises & Discoveries, three
+of which are defects in this plan's own Concrete Steps rather than discoveries about the code:
+§0.1 cannot reproduce the conflict it claims to because Kioku's own bounds mask it, the
+`import-codd` subcommand is really called `import`, and the dependency-list comments Milestone 1
+asks for are stripped by the repository's formatter. Five decisions taken during implementation
+were added to the Decision Log, the largest being that the crypton fix shipped as the documented
+fallback (`baikai-claude-0.4.0.1`) rather than as a metadata revision, which moves Kioku's bound
+to `^>=0.4.0.1`.
+
+Milestone 6 is deliberately untouched. The user authorised Milestones 2–5 to run unattended and
+asked for an explicit stop before the version bump, tag, and Hackage publish.
