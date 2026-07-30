@@ -82,7 +82,7 @@ library
   build-depends:
     , aeson                   >=2.2       && <2.3
     , baikai                  ^>=0.4.1.0
-    , baikai-claude           ^>=0.4.0.0
+    , baikai-claude           ^>=0.4.0.1
     , baikai-effectful        ^>=0.3.0.2
     , base                    >=4.21      && <5
     , bytestring              >=0.11      && <0.13
