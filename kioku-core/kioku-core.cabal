@@ -121,6 +121,7 @@ test-suite kioku-test
   main-is:        Main.hs
   other-modules:
     Kioku.AwaitingSpec
+    Kioku.CodecCompatSpec
     Kioku.DistillSpec
     Kioku.EmbeddingWorkerSpec
     Kioku.IdempotencySpec

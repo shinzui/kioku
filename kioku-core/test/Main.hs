@@ -1,6 +1,7 @@
 module Main where
 
 import Kioku.AwaitingSpec qualified as AwaitingSpec
+import Kioku.CodecCompatSpec qualified as CodecCompatSpec
 import Kioku.DistillSpec qualified as DistillSpec
 import Kioku.EmbeddingWorkerSpec qualified as EmbeddingWorkerSpec
 import Kioku.IdempotencySpec qualified as IdempotencySpec
@@ -21,6 +22,7 @@ main =
     testGroup
       "kioku"
       [ AwaitingSpec.tests,
+        CodecCompatSpec.tests,
         ReiCompatSpec.tests,
         IdempotencySpec.tests,
         ReadModelReconcileSpec.tests,
