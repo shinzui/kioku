@@ -6,15 +6,18 @@ description: >-
   Keiki 0.4 and Keiro 0.4 families without downstream allow-newer overrides.
 timestamp: 2026-07-30T14:36:35Z
 requestId: IR-1
-status: proposed
+status: completed
 origin: mori://shinzui/shikigami
+completedAt: 2026-07-31T03:46:15Z
 ---
 
 # Improvement Request: Release Kioku for Keiki 0.4 and Keiro 0.4
 
 ## Status
 
-Proposed and blocking Shikigami plan 47's dependency-cohort port.
+Completed. Kioku `v0.2.0.0` was released from
+`5765f98add2a87a356c70793a6ba54375ef5feec`; all five packages are published on
+Hackage at `0.2.0.0`. Shikigami plan 47 no longer has an upstream release gate.
 
 ## Context
 
@@ -44,3 +47,15 @@ environment and supply migration/replay compatibility evidence for existing Kiok
 - Updated bounds and API ports across the Kioku package family.
 - Replay, codec, and migration compatibility tests.
 - Tagged release suitable for a reproducible downstream pin.
+
+## Completion Evidence
+
+- GitHub release: `https://github.com/shinzui/kioku/releases/tag/v0.2.0.0`
+- Tag commit: `5765f98add2a87a356c70793a6ba54375ef5feec`
+- Published packages: `kioku-api-0.2.0.0`, `kioku-core-0.2.0.0`,
+  `kioku-migrations-0.2.0.0`, `kioku-cli-0.2.0.0`, and
+  `kioku-migrate-0.2.0.0`
+- Compatibility bounds: `keiki ^>=0.4.0.0`, `keiro ^>=0.4.0.1`,
+  `keiro-core ^>=0.4.0.1`, and `keiro-migrations ^>=0.4.0.1`
+- Release compatibility coverage: `Kioku.CodecCompatSpec` decodes pre-upgrade
+  event payload fixtures under the new cohort.
