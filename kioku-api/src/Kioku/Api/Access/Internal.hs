@@ -25,6 +25,14 @@ module Kioku.Api.Access.Internal
     actorPrincipal,
     ownerPrincipal,
 
+    -- * Principals as they appear on stored facts
+    LegacyPrincipalRef (..),
+    legacyPrincipalRef,
+    legacyPrincipalRefText,
+    RecordedPrincipal (..),
+    recordedPrincipalText,
+    parseRecordedPrincipal,
+
     -- * Kioku's own action vocabulary
     MemoryPermission (..),
     allMemoryPermissions,
@@ -78,6 +86,7 @@ module Kioku.Api.Access.Internal
     memoryContextDecisionToken,
     memoryContextAllows,
     memoryContextFreshness,
+    memoryContextRecordedActor,
     assumeAuthorizedMemoryContext,
   )
 where
@@ -166,6 +175,78 @@ actorPrincipal (MemoryActor value) = value
 
 ownerPrincipal :: MemoryOwner -> PrincipalRef
 ownerPrincipal (MemoryOwner value) = value
+
+-- | A free-text agent label from before canonical principals existed, carried verbatim.
+--
+-- Kioku's events used to record an @agentId@ that was whatever string the host felt like
+-- sending: @rei@, @demo-agent@, @claude@. That is not a principal — nobody issued it, nobody
+-- can resolve it, and two hosts can pick the same one — so it must never be laundered into a
+-- 'PrincipalRef' by pasting a kind prefix onto it. It is kept exactly as it was written and
+-- marked as legacy wherever it appears.
+--
+-- The constructor is deliberately total and validates nothing. This value only ever comes from
+-- data that is already on disk, and a validating constructor here would mean a historical event
+-- that fails to decode — which is to say, an aggregate that can no longer be rebuilt.
+newtype LegacyPrincipalRef = LegacyPrincipalRef Text
+  deriving stock (Eq, Ord, Show, Generic)
+
+legacyPrincipalRef :: Text -> LegacyPrincipalRef
+legacyPrincipalRef = LegacyPrincipalRef
+
+legacyPrincipalRefText :: LegacyPrincipalRef -> Text
+legacyPrincipalRefText (LegacyPrincipalRef value) = value
+
+-- | Who a stored fact says acted, as far as the event stream knows.
+--
+-- Three cases, and the last two exist because history is not uniform. Everything written through
+-- the memory-space API names a real principal. Events written before it carry a legacy agent
+-- label, or — for the many events that never recorded an agent at all, such as archiving a
+-- memory or completing a session — nothing.
+--
+-- 'UnattributedPrincipal' is the honest answer for that last group. The alternative is inventing
+-- an actor for a fact that did not record one, which would put a fabricated identity into an
+-- audit trail.
+data RecordedPrincipal
+  = -- | a principal a directory issued and vouched for
+    KnownPrincipal !PrincipalRef
+  | -- | a pre-memory-space free-text agent label, marked as such
+    LegacyPrincipal !LegacyPrincipalRef
+  | -- | a pre-memory-space event that recorded no actor
+    UnattributedPrincipal
+  deriving stock (Eq, Ord, Show, Generic)
+
+-- | The canonical text rendering, which is also the wire form.
+--
+-- The two non-canonical cases are spelled with a @kioku:@ prefix, and that is unambiguous rather
+-- than merely unlikely: 'mkPrincipalRef' rejects @:@ outright, so no principal a directory can
+-- issue is spellable as either marker. Round-tripping is exact even for a legacy label that
+-- itself begins with @kioku:legacy:@, because only the first marker is stripped.
+recordedPrincipalText :: RecordedPrincipal -> Text
+recordedPrincipalText = \case
+  KnownPrincipal principal -> principalRefText principal
+  LegacyPrincipal legacy -> legacyPrincipalMarker <> legacyPrincipalRefText legacy
+  UnattributedPrincipal -> unattributedPrincipalMarker
+
+-- | Parse the rendering above. An unrecognized @kioku:@ form is an error rather than a legacy
+-- label, so a marker added by a later version fails loudly here instead of being silently
+-- demoted to free text.
+parseRecordedPrincipal :: Text -> Either Text RecordedPrincipal
+parseRecordedPrincipal value
+  | value == unattributedPrincipalMarker = Right UnattributedPrincipal
+  | Just legacy <- Text.stripPrefix legacyPrincipalMarker value =
+      Right (LegacyPrincipal (LegacyPrincipalRef legacy))
+  | Just unknown <- Text.stripPrefix kiokuPrincipalMarker value =
+      Left ("unknown kioku principal marker: " <> unknown)
+  | otherwise = KnownPrincipal <$> mkPrincipalRef value
+
+kiokuPrincipalMarker :: Text
+kiokuPrincipalMarker = "kioku:"
+
+legacyPrincipalMarker :: Text
+legacyPrincipalMarker = kiokuPrincipalMarker <> "legacy:"
+
+unattributedPrincipalMarker :: Text
+unattributedPrincipalMarker = kiokuPrincipalMarker <> "unattributed"
 
 -- | What a caller wants to do to a memory space, in Kioku's own words.
 --
@@ -475,6 +556,15 @@ memoryContextAllows :: MemoryPermission -> MemoryAccessContext -> Bool
 memoryContextAllows permission context =
   Set.member permission context.grantedPermissions
 
+-- | The actor to record on a fact written under this context.
+--
+-- Every write Kioku accepts through the memory-space API is attributed to the principal the
+-- context was minted for, never to one the caller names separately. That is what stops a caller
+-- authorized as one principal from writing an event claiming another one acted.
+memoryContextRecordedActor :: MemoryAccessContext -> RecordedPrincipal
+memoryContextRecordedActor context =
+  KnownPrincipal (actorPrincipal context.actor)
+
 -- | The freshness a follow-up authorization read should use, given what this context already
 -- observed. This is the forwarding rule: a context minted from a real decision pins later reads
 -- to at least that revision, and an assumed context pins nothing because it observed nothing.
@@ -518,6 +608,12 @@ instance ToJSON PrincipalRef where
 
 instance FromJSON PrincipalRef where
   parseJSON = withText "PrincipalRef" (orFail . mkPrincipalRef)
+
+instance ToJSON RecordedPrincipal where
+  toJSON = toJSON . recordedPrincipalText
+
+instance FromJSON RecordedPrincipal where
+  parseJSON = withText "RecordedPrincipal" (orFail . parseRecordedPrincipal)
 
 instance ToJSON MemoryActor where
   toJSON = toJSON . actorPrincipal

@@ -44,6 +44,14 @@ module Kioku.Api.Access
     actorPrincipal,
     ownerPrincipal,
 
+    -- * Principals as they appear on stored facts
+    LegacyPrincipalRef,
+    legacyPrincipalRef,
+    legacyPrincipalRefText,
+    RecordedPrincipal (..),
+    recordedPrincipalText,
+    parseRecordedPrincipal,
+
     -- * Kioku's own action vocabulary
     MemoryPermission (..),
     allMemoryPermissions,
@@ -97,6 +105,7 @@ module Kioku.Api.Access
     memoryContextDecisionToken,
     memoryContextAllows,
     memoryContextFreshness,
+    memoryContextRecordedActor,
     assumeAuthorizedMemoryContext,
     authorizeMemoryAccess,
   )

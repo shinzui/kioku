@@ -21,6 +21,7 @@ tests =
     "Kioku.Api.Access"
     [ memorySpaceIdTests,
       principalRefTests,
+      recordedPrincipalTests,
       permissionWireTests,
       jsonRoundTripTests,
       objectRefTests,
@@ -110,6 +111,53 @@ renderedPrincipals =
     "org_01h9xk3v7hf8b9c0d1e2f3g4hb"
   ]
 
+-- | A recorded principal is what a stored event says about who acted. The property that matters
+-- is that the three cases can never be confused for one another on the wire — in particular that
+-- a legacy free-text agent label can never be read back as a principal a directory issued.
+recordedPrincipalTests :: TestTree
+recordedPrincipalTests =
+  testGroup
+    "RecordedPrincipal"
+    [ testCase "a known principal renders as the bare directory form" do
+        recordedPrincipalText (KnownPrincipal (expectRight (mkPrincipalRef "agent_01h9xk")))
+          @?= "agent_01h9xk",
+      testCase "a legacy agent label is marked" do
+        recordedPrincipalText (LegacyPrincipal (legacyPrincipalRef "demo-agent"))
+          @?= "kioku:legacy:demo-agent",
+      testCase "an unattributed event says so" do
+        recordedPrincipalText UnattributedPrincipal @?= "kioku:unattributed",
+      testCase "a legacy label never parses back as a directory principal" do
+        -- The load-bearing case. A legacy agentId is a string somebody typed; promoting it to a
+        -- principal would put an identity nobody issued into an audit trail.
+        parseRecordedPrincipal "kioku:legacy:demo-agent"
+          @?= Right (LegacyPrincipal (legacyPrincipalRef "demo-agent")),
+      testCase "a legacy label that looks like a marker still round-trips" do
+        roundTripPrincipal (LegacyPrincipal (legacyPrincipalRef "kioku:legacy:nested")),
+      testCase "a legacy label containing a colon round-trips" do
+        roundTripPrincipal (LegacyPrincipal (legacyPrincipalRef "rei:coach")),
+      testCase "an empty legacy label round-trips" do
+        -- Historical agent ids were unvalidated free text, so decoding one must not fail.
+        roundTripPrincipal (LegacyPrincipal (legacyPrincipalRef "")),
+      testCase "an unknown kioku marker is a loud error" do
+        assertLeft "unknown marker" (parseRecordedPrincipal "kioku:something-new"),
+      testCase "a directory principal still has to be valid" do
+        assertLeft "reserved" (parseRecordedPrincipal "person#member"),
+      testCase "no directory principal can spell either marker" do
+        -- This is why the marker scheme is unambiguous rather than merely unlikely.
+        assertLeft "colon" (mkPrincipalRef "kioku:legacy:x")
+        assertLeft "colon" (mkPrincipalRef "kioku:unattributed"),
+      testCase "encodes as a bare JSON string" do
+        LBS8.unpack (encode (LegacyPrincipal (legacyPrincipalRef "demo-agent")))
+          @?= "\"kioku:legacy:demo-agent\"",
+      testCase "a context records its own actor, not a caller-named one" do
+        memoryContextRecordedActor (assumeAuthorizedMemoryContext spaceOne testActor)
+          @?= KnownPrincipal (actorPrincipal testActor)
+    ]
+
+roundTripPrincipal :: RecordedPrincipal -> IO ()
+roundTripPrincipal value =
+  parseRecordedPrincipal (recordedPrincipalText value) @?= Right value
+
 -- | These five spellings end up inside stored events. Changing one is a breaking change, so it
 -- should have to be done on purpose, with this test in the diff.
 permissionWireTests :: TestTree
@@ -138,6 +186,9 @@ jsonRoundTripTests =
       roundTrip "PrincipalRef" (expectRight (mkPrincipalRef "person_01h9xk")),
       roundTrip "MemoryActor" (MemoryActor (expectRight (mkPrincipalRef "agent_01h9xk"))),
       roundTrip "MemoryOwner" (MemoryOwner (expectRight (mkPrincipalRef "person_01h9xk"))),
+      roundTrip "RecordedPrincipal (known)" (KnownPrincipal (expectRight (mkPrincipalRef "agent_01h9xk"))),
+      roundTrip "RecordedPrincipal (legacy)" (LegacyPrincipal (legacyPrincipalRef "demo-agent")),
+      roundTrip "RecordedPrincipal (unattributed)" UnattributedPrincipal,
       testGroup
         "MemoryPermission"
         [roundTrip (show permission) permission | permission <- allMemoryPermissions],
