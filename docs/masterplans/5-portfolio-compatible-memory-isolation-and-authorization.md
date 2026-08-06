@@ -54,7 +54,7 @@ would fork Meibo and En.
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
 | EP-1 | Define portfolio identity and authorization contracts for Kioku | docs/plans/24-define-portfolio-identity-and-authorization-contracts-for-kioku.md | None | None | Complete |
-| EP-2 | Carry memory-space partitions through Kioku domain and APIs | docs/plans/25-carry-memory-space-partitions-through-kioku-domain-and-apis.md | EP-1 | None | Not Started |
+| EP-2 | Carry memory-space partitions through Kioku domain and APIs | docs/plans/25-carry-memory-space-partitions-through-kioku-domain-and-apis.md | EP-1 | None | Complete |
 | EP-3 | Migrate Kioku read models to partitioned memory spaces | docs/plans/26-migrate-kioku-read-models-to-partitioned-memory-spaces.md | EP-2 | None | Not Started |
 | EP-4 | Isolate workers timers and workspace artifacts by memory space | docs/plans/27-isolate-workers-timers-and-workspace-artifacts-by-memory-space.md | EP-2, EP-3 | None | Not Started |
 
@@ -99,10 +99,21 @@ rationale that will matter later, and deliberate exclusions.
   and consistency tokens. Kioku owns memory-space data and applies the authorized space as an
   indexed predicate.
 - **Domain context:** EP-2 owns `MemorySpaceId`, `PrincipalRef`, `MemoryAccessContext`, codec
-  compatibility, and legacy constructors. EP-3 and EP-4 consume these types.
+  compatibility, and legacy constructors. EP-3 and EP-4 consume these types. As shipped it also
+  owns `RecordedPrincipal` (the three-case actor a stored fact records) and
+  `MemoryContextProvider` (how work that discovers itself gets authorized), and it enforces the
+  partition in the aggregate rather than in a read-model precheck — see
+  [ADR-4](../adr/the-aggregate-enforces-the-partition.md) and
+  [ADR-5](../adr/historical-attribution-is-marked-never-invented.md).
 - **Schema:** EP-3 owns the additive migration and backfill across memories, sessions, turns,
   watermarks, decisions, scenes, personas, and any provenance/evidence tables present when it
-  lands. EP-4 owns query audits outside ordinary read-model functions.
+  lands. EP-4 owns query audits outside ordinary read-model functions. EP-2 left EP-3 two named
+  obligations: the memory-space column that makes the write-path idempotency comparison
+  space-aware (until then a caller can learn that an id in another space exists and whether it is
+  active), and composite `(memory_space_id, …)` identities for scene and persona rows, which are
+  still derived from the scope alone. EP-2 also carried the L1 timer payload's space itself rather
+  than leaving it to EP-4, because distillation writes memories and would otherwise have written
+  every background pass into the legacy space.
 - **Recall:** `docs/masterplans/6-explicit-and-safe-recall-boundaries.md` consumes the completed
   partition contract; recall must never be namespace-wide across memory spaces.
 
@@ -117,8 +128,12 @@ and the milestone. This section provides an at-a-glance view of the entire initi
   names stay host-supplied because Kikan-En IR-1 is still `proposed`.)
 - [x] EP-1: decide the legacy default-space and authorization-boundary policies in ADRs.
   (2026-08-06 — `docs/adr/` ADR-1, ADR-2, ADR-3.)
-- [ ] EP-2: carry space and principal context through APIs, commands, events, and codecs.
-- [ ] EP-2: prove old event streams replay into the explicit legacy space.
+- [x] EP-2: carry space and principal context through APIs, commands, events, and codecs.
+  (2026-08-06 — every command and event payload carries the space and the acting principal; writes
+  take a `MemoryAccessContext` and are checked against it.)
+- [x] EP-2: prove old event streams replay into the explicit legacy space. (2026-08-06 — the
+  pre-upgrade codec fixtures decode into `kioku_legacy`, and a whole pre-partition session stream
+  rehydrates there and then refuses a command from another space.)
 - [ ] EP-3: migrate and backfill every Kioku read model with composite partition indexes.
 - [ ] EP-3: prove cross-space uniqueness and read isolation in real PostgreSQL.
 - [ ] EP-4: partition timers, subscribers, reconciliation, and workspace mirrors end to end.
@@ -188,5 +203,10 @@ distill durable project context from this MasterPlan and its child ExecPlans int
 docs/adr/. Keep task-local execution and coordination details here.
 
 Planning completed on 2026-08-06. Four child plans define the contract, propagate it through
-the event domain, migrate storage, and close worker/artifact paths. Implementation has not
-started.
+the event domain, migrate storage, and close worker/artifact paths.
+
+EP-1 and EP-2 are complete as of 2026-08-06. Writes are partitioned end to end and every stored
+event names its space and its actor; the boundary is enforced by the aggregates themselves, so it
+holds without any schema change. Reads are not partitioned yet and deliberately do not pretend to
+be — that is EP-3's column and predicate. The remaining exposure is therefore read-side and
+worker-side, which is exactly the shape the decomposition predicted.

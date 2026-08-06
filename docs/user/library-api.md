@@ -76,6 +76,51 @@ data MemoryRecord = MemoryRecord
 `MemoryRecord` is the read-side view returned by recall. The `*ToText`/`*FromText` helpers
 convert the enums to/from their wire strings (`"fact"`, `"high"`, `"active"`, …).
 
+## The memory access context
+
+Every write takes a `MemoryAccessContext` as its first argument. That record says *somebody has
+already decided this caller may do this here*: it names one `MemorySpaceId` — the isolation
+boundary — the principal the write is attributed to, and the actions it was minted for. Kioku's
+core never derives one.
+
+An embedded host with no authentication boundary of its own builds one directly:
+
+```haskell
+import Kioku.Api.Access
+
+context :: MemoryAccessContext
+context =
+  assumeAuthorizedMemoryContext
+    (either error id (mkMemorySpaceId "acme-tenant-3"))
+    (MemoryActor (either error id (mkPrincipalRef "agent_01h9xk3v7hf8b9c0d1e2f3g4h5")))
+```
+
+`assumeAuthorizedMemoryContext` is named the way it is so it cannot be used by accident: it grants
+every action on the named space without asking anyone. A host serving untrusted callers uses
+`authorizeMemoryAccess` instead, which runs a coarse credential check, a directory lookup, and a
+per-space permission check in that order. See [Scopes & Integrations](integrations.md).
+
+Two rules follow from this, and both are checked on every write:
+
+- **The payload must name the same space and principal as the context.** A payload that disagrees
+  is refused (`MemorySpaceMismatch`, `MemoryActorMismatch`) rather than quietly rewritten, so a
+  stored event and the decision that allowed it stay the same fact.
+- **A context authorizes specific actions.** One minted for reading cannot be spent on a write
+  (`MemoryNotPermitted`).
+
+A memory or session belongs to the space it was created in, permanently. The aggregate itself
+refuses any later command naming a different one, so the check survives a concurrent-writer
+retry rather than depending on a read-model precheck.
+
+Namespaces and scopes are unaffected: they organize memory *inside* a space and decide nothing
+about who may read it. Two different spaces can use the same namespace and scope for entirely
+unrelated data.
+
+> **Reads are not partitioned yet.** The read-model tables gain their memory-space column in a
+> later change, so the query functions below still return rows from every space and deliberately
+> do not take a context — one that accepted a context would be claiming an isolation it cannot
+> perform. Until then, isolation applies to writes and to the event history they produce.
+
 ## Writing memories (`Kioku.Memory`)
 
 All writers are idempotent for *matching* duplicates and return a conflict for
@@ -95,31 +140,47 @@ data MemoryWriteError
   | MemoryReadFailed ReadModelError
   | MemoryNotFound
   | MemoryNotActive
-  | MemoryConflict Text          -- names the field that differs
+  | MemoryConflict Text                            -- names the field that differs
+  | MemoryNotPermitted MemoryPermission            -- the context did not authorize this action
+  | MemorySpaceMismatch MemorySpaceId MemorySpaceId  -- requested, authorized
+  | MemoryActorMismatch RecordedPrincipal RecordedPrincipal  -- claimed, authorized
 
-record          :: RecordMemoryData            -> Eff es (Either MemoryWriteError MemoryId)
-supersede       :: SupersedeMemoryData         -> Eff es (Either MemoryWriteError MemoryId)
-archive         :: ArchiveMemoryData           -> Eff es (Either MemoryWriteError MemoryId)
-updateTags      :: UpdateMemoryTagsData        -> Eff es (Either MemoryWriteError MemoryId)
-updateConfidence:: UpdateMemoryConfidenceData  -> Eff es (Either MemoryWriteError MemoryId)
-merge           :: MemoryId -> MemoryId         -> Eff es (Either MemoryWriteError MemoryId)
+recordWithContext           :: MemoryAccessContext -> RecordMemoryData           -> Eff es (Either MemoryWriteError MemoryId)
+supersedeWithContext        :: MemoryAccessContext -> SupersedeMemoryData        -> Eff es (Either MemoryWriteError MemoryId)
+archiveWithContext          :: MemoryAccessContext -> ArchiveMemoryData          -> Eff es (Either MemoryWriteError MemoryId)
+updateTagsWithContext       :: MemoryAccessContext -> UpdateMemoryTagsData       -> Eff es (Either MemoryWriteError MemoryId)
+updateConfidenceWithContext :: MemoryAccessContext -> UpdateMemoryConfidenceData -> Eff es (Either MemoryWriteError MemoryId)
+mergeWithContext            :: MemoryAccessContext -> MemoryId -> MemoryId       -> Eff es (Either MemoryWriteError MemoryId)
 ```
 
-- `record` — idempotent success if the id already exists with the same payload; `MemoryConflict` if
+Each asks the context for one permission: `MemoryRecord` for `recordWithContext`,
+`updateTagsWithContext`, and `updateConfidenceWithContext`, which create or amend a memory;
+`MemoryForget` for `supersedeWithContext`, `archiveWithContext`, and `mergeWithContext`, which
+retire one.
+
+- `recordWithContext` — idempotent success if the id already exists with the same payload; `MemoryConflict` if
   any semantic field differs; otherwise appends `MemoryRecorded`.
 - `supersede` / `archive` / `merge` — `MemoryNotFound` if the memory doesn't exist; idempotent
   success if it is already retired **the same way** (the same winner for supersede/merge,
   `archived` for archive); `MemoryConflict` otherwise.
 - `updateTags` / `updateConfidence` — `MemoryNotActive` on an inactive memory; no-op if the value is
   unchanged.
-- `merge loser winner` — folds `loser` into `winner`. Unlike the other writes it generates its own
-  `mergedAt`, so idempotency matches on the merge target alone.
+- `mergeWithContext ctx loser winner` — folds `loser` into `winner`. Unlike the other writes it
+  generates its own `mergedAt`, so idempotency matches on the merge target alone.
+
+The unsuffixed `record`, `supersede`, `archive`, `updateTags`, `updateConfidence`, and `merge`
+still exist for one release as **deprecated** wrappers. They take no context and refuse any
+payload naming a space other than `legacyMemorySpaceId`, so they cannot reach anybody else's
+data. See [Upgrading to memory spaces](upgrading-to-memory-spaces.md).
 
 `RecordMemoryData` (the main input):
 
 ```haskell
 data RecordMemoryData = RecordMemoryData
-  { memoryId    :: MemoryId
+  { memoryId       :: MemoryId
+  , memorySpaceId  :: MemorySpaceId          -- must equal the context's space
+  , actorPrincipal :: RecordedPrincipal      -- must equal the context's principal
+  , ownerPrincipal :: Maybe PrincipalRef     -- who the memory belongs to, if not the actor
   , agentId     :: Text
   , sessionId   :: Maybe SessionId
   , scope       :: MemoryScope
@@ -141,6 +202,9 @@ mid <- genMemoryId
 now <- getCurrentTime
 let payload = RecordMemoryData
       { memoryId = mid
+      , memorySpaceId = memoryContextSpace context
+      , actorPrincipal = memoryContextRecordedActor context
+      , ownerPrincipal = Nothing
       , agentId = "demo-agent"
       , sessionId = Nothing
       , scope = ScopeEntity (Namespace "kioku_demo") (ScopeKind "demo") "demo"
@@ -152,21 +216,38 @@ let payload = RecordMemoryData
       , supersedes = Nothing
       , recordedAt = now
       }
-result <- Memory.record payload
+result <- Memory.recordWithContext context payload
 ```
+
+`memoryContextSpace` and `memoryContextRecordedActor` are the only supported way to fill those two
+fields. `RecordedPrincipal` has three cases: `KnownPrincipal` for a principal a directory issued,
+`LegacyPrincipal` for the free-text `agentId` events carried before memory spaces existed, and
+`UnattributedPrincipal` for older events that recorded no actor at all. Kioku never turns a legacy
+label into a directory principal.
 
 ## Sessions (`Kioku.Session`)
 
+Session writes take a context on the same terms, and all of them ask for `MemoryRecord`: a
+session, its turns, and its lifecycle are memory being recorded.
+
 ```haskell
-start           :: StartSessionData              -> Eff es (Either SessionWriteError SessionId)
-awaitInput      :: AwaitInputData                -> Eff es (Either SessionWriteError SessionId)
-resume          :: ResumeSessionData             -> Eff es (Either SessionWriteError SessionId)
-forceResume     :: SessionId -> Text -> UTCTime  -> Eff es (Either SessionWriteError SessionId)
-complete        :: CompleteSessionData           -> Eff es (Either SessionWriteError SessionId)
-failSession     :: FailSessionData               -> Eff es (Either SessionWriteError SessionId)
-recordInteractive :: RecordInteractiveSessionData -> Eff es (Either SessionWriteError SessionId)
-recordTurn      :: RecordTurnData                -> Eff es (Either SessionWriteError SessionId)
+startWithContext             :: MemoryAccessContext -> StartSessionData              -> Eff es (Either SessionWriteError SessionId)
+awaitInputWithContext        :: MemoryAccessContext -> AwaitInputData                -> Eff es (Either SessionWriteError SessionId)
+resumeWithContext            :: MemoryAccessContext -> ResumeSessionData             -> Eff es (Either SessionWriteError SessionId)
+forceResumeWithContext       :: MemoryAccessContext -> SessionId -> Text -> UTCTime  -> Eff es (Either SessionWriteError SessionId)
+completeWithContext          :: MemoryAccessContext -> CompleteSessionData           -> Eff es (Either SessionWriteError SessionId)
+failSessionWithContext       :: MemoryAccessContext -> FailSessionData               -> Eff es (Either SessionWriteError SessionId)
+recordInteractiveWithContext :: MemoryAccessContext -> RecordInteractiveSessionData  -> Eff es (Either SessionWriteError SessionId)
+recordTurnWithContext        :: MemoryAccessContext -> RecordTurnData                -> Eff es (Either SessionWriteError SessionId)
 ```
+
+`SessionWriteError` gains `SessionNotPermitted`, `SessionSpaceMismatch`, and
+`SessionActorMismatch`, which mean exactly what their memory counterparts do. The unsuffixed
+names remain as deprecated legacy-space wrappers.
+
+`forceResumeWithContext` waives the correlation-key check and nothing else: the session must still
+belong to the space the context authorizes. An operator override for a lost key is not an
+override for the isolation boundary.
 
 Reads:
 
@@ -187,6 +268,9 @@ getTurns            :: SessionId          -> Eff es (Either ReadModelError [Turn
 ```haskell
 data StartSessionData = StartSessionData
   { sessionId         :: SessionId
+  , memorySpaceId     :: MemorySpaceId
+  , actorPrincipal    :: RecordedPrincipal
+  , ownerPrincipal    :: Maybe PrincipalRef
   , agentId           :: Text
   , focus             :: Text
   , scope             :: MemoryScope
@@ -429,13 +513,17 @@ data L1Outcome = L1Distilled L1Summary | L1SkippedUpToDate
 newtype FindMergeCandidates es                 -- produced by scopedScanCandidates / recallCandidates
 
 distillSessionL1 ::
-  L1RunMode -> DistillRuntime -> FindMergeCandidates es -> SessionId ->
+  MemoryAccessContext -> L1RunMode -> DistillRuntime -> FindMergeCandidates es -> SessionId ->
   Eff es (Either L1Error L1Outcome)
 
 -- Kioku.Distill.L2 / L3
 regenerateScene   :: DistillRuntime -> MemoryScope -> Eff es (Either L2Error (Maybe SceneRow))
 regeneratePersona :: DistillRuntime -> MemoryScope -> Eff es (Either L3Error (Maybe PersonaRow))
 ```
+
+A pass records and merges memories, so it needs a context for the space the session belongs to,
+and it demands `MemoryDistill` before anything else — an unauthorized pass fails before it spends
+an LLM token rather than after, at the first write (`L1NotPermitted`).
 
 `L1SkippedUpToDate` is the watermark: under `RespectWatermark` a session with no turns newer than
 the last successful pass is skipped before any LLM call. `regenerateScene`/`regeneratePersona`
@@ -444,8 +532,9 @@ summarizing nothing.
 
 - `Kioku.Distill.L2` also exports `getScenesByScope` and the mirroring helpers
   (`mirrorSceneToWorkspace`, `sceneMirrorPath`); `Kioku.Distill.L3` the persona equivalents.
-- `Kioku.Distill.Timer` — the timer ids and schedule projection (`l1TimerScheduleProjection`,
-  `l1IdleTimerId`, `idleFlushSeconds`).
+- `Kioku.Distill.Timer` — the timer ids, the schedule projection (`l1TimerScheduleProjection`,
+  `l1IdleTimerId`, `idleFlushSeconds`), and `L1TimerPayload`, which carries the memory space the
+  scheduled pass belongs to.
 - `Kioku.Distill.Timer.Outcome` — the taxonomy a timer handler returns. This **replaced a
   `Maybe EventId`** whose `Nothing` meant three incompatible things:
 
@@ -466,6 +555,37 @@ summarizing nothing.
 
 Most hosts let the **worker** drive these on timers rather than calling them directly; see
 [Distillation](distillation.md).
+
+### Background workers and the context provider
+
+A worker discovers its own work, so it cannot arrive holding a context. It reads the memory space
+out of the claimed timer's payload and asks a `MemoryContextProvider` for a decision about *that*
+space:
+
+```haskell
+-- Kioku.Api.Access
+newtype MemoryContextProvider m = MemoryContextProvider
+  { contextForSpace :: MemorySpaceId -> m (Either MemoryAccessDenial MemoryAccessContext) }
+
+assumeAuthorizedContextProvider :: Applicative m => MemoryActor -> MemoryContextProvider m
+
+-- Kioku.Distill.Timer.Worker
+runKiokuTimerWorkerOnce ::
+  Maybe KeiroMetrics -> MemoryContextProvider (Eff es) -> DistillRuntime -> FindMergeCandidates es ->
+  UTCTime -> Eff es (Maybe TimerRow)
+
+drainKiokuTimers ::
+  Maybe KeiroMetrics -> MemoryContextProvider (Eff es) -> DistillRuntime -> FindMergeCandidates es ->
+  Eff es Int
+```
+
+An embedded host wires `assumeAuthorizedContextProvider`; a host behind a service boundary wires
+its own authorizer. A refusal dead-letters the timer rather than retrying it silently, because a
+refusal is a configuration fact and an operator has to see it.
+
+The CLI resolves both values from the environment: `KIOKU_MEMORY_SPACE` (default `kioku_legacy`)
+and `KIOKU_ACTOR` (default `kioku_cli`). A malformed value is a startup error, not a silent
+fallback.
 
 ## Embeddings and worker plumbing
 

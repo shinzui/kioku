@@ -135,6 +135,14 @@ supply one. There are two supported ways to do that, and the first one is the de
    their answers through two records of plain functions — `PrincipalDirectory` and
    `PermissionChecker`.
 
+Whichever route a host takes, the resulting `MemoryAccessContext` is now a required argument to
+every Kioku write, and each write is checked against it: the payload must name the same space and
+the same principal, and the context must have been minted for the action being performed. A
+memory or session belongs permanently to the space it was created in, and the aggregate refuses
+any later command naming a different one. Reads are not partitioned yet — see
+[Upgrading to memory spaces](upgrading-to-memory-spaces.md) for what that does and does not
+guarantee today.
+
 **Kioku's build closure contains none of the services named below**, and it never will: its
 dependencies are Baikai, the Keiro/Keiki/Kiroku/Shibuya cohort, Shikumi, and ordinary Hackage
 libraries. Every type in `Kioku.Api.Access` is plain `base`, `containers`, `text`, and `aeson`.
