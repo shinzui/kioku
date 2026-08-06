@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0.0 — 2026-08-05
+
+### Changed
+
+- No API change. Released in lockstep with the rest of the Kioku packages for the Keiki 0.9 and
+  Keiro 0.11 cohort upgrade. `kioku-api` depends on neither, so a consumer that uses only this
+  package can move from 0.2.0.0 to 0.3.0.0 with no other change.
+
 ## 0.2.0.0 — 2026-07-30
 
 ### Changed

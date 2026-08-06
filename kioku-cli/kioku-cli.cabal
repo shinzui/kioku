@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            kioku-cli
-version:         0.2.0.0
+version:         0.3.0.0
 synopsis:        kioku command-line interface
 description:
   Command-line entry point for kioku demos and operational commands.
@@ -60,8 +60,8 @@ library
     , base                  >=4.21     && <5
     , containers            >=0.6      && <0.8
     , effectful             >=2.5      && <2.7
-    , kioku-api             ^>=0.2.0.0
-    , kioku-core            ^>=0.2.0.0
+    , kioku-api             ^>=0.3.0.0
+    , kioku-core            ^>=0.3.0.0
     , kiroku-store          ^>=0.3.0.1
     , optparse-applicative  >=0.18     && <0.20
     , text                  >=2.1      && <2.2
@@ -74,7 +74,7 @@ executable kioku
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , base       >=4.21     && <5
-    , kioku-cli  ^>=0.2.0.0
+    , kioku-cli  ^>=0.3.0.0
 
 test-suite kioku-cli-test
   import:         warnings, shared
@@ -85,9 +85,9 @@ test-suite kioku-cli-test
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , base                  >=4.21     && <5
-    , kioku-api             ^>=0.2.0.0
-    , kioku-cli             ^>=0.2.0.0
-    , kioku-core            ^>=0.2.0.0
+    , kioku-api             ^>=0.3.0.0
+    , kioku-cli             ^>=0.3.0.0
+    , kioku-core            ^>=0.3.0.0
     , optparse-applicative  >=0.18
     , tasty                 >=1.5
     , tasty-hunit           >=0.10

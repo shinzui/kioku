@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0.0 — 2026-08-05
+
+### Breaking Changes
+
+- Moved onto the Keiki 0.9 / Keiro 0.11 cohort through `kioku-core` and `kioku-migrations`. The
+  bound is breaking; the schema effect is nothing. A database migrated by kioku 0.2.0.0 has no
+  pending migration on the next `kioku-migrate up` — every one of the 38 reports as already
+  applied, and `kioku-migrate verify` still reports `applied=38 pending=0 unknown=0`.
+
+### Changed
+
+- No change to planning, applying, verifying, repairing, Codd-history import, or read-model
+  registry reconciliation.
+
 ## 0.2.0.0 — 2026-07-30
 
 ### Breaking Changes

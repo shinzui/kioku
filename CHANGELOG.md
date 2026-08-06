@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.3.0.0 — 2026-08-05
+
+Kioku moves onto the Keiki 0.9 / Keiro 0.11 cohort. This is a bounds-only release: no Kioku source
+file changed, no migration was added, and no event payload or snapshot is affected. It is a major
+bump because `kioku-core` forces its consumers onto Keiki 0.9's sealed constructor API, and no
+version of `kioku-core` spans the 0.4 and 0.9 cohorts.
+
+### Breaking Changes
+
+- **kioku-core:** Moved to `keiki ^>=0.9.0.0`, `keiro ^>=0.11.0.0`, `keiro-core ^>=0.11.0.0`. A
+  consumer now links Keiki 0.9's sealed `InCtor` / `WireCtor` construction — manual behavior needs
+  `unavailableInCtor` / `unavailableWireCtor`, trusted evidence needs Keiki's Generic or TH
+  producers, and `mkWireCtor` / `mkWireCtor0` / `mkInCtor` / `mkInCtor0` are deprecated. Kioku's
+  own aggregates already used the trusted TH path.
+- **kioku-core:** Keiki 0.9's rewritten inversion-ambiguity analysis can change the warning set
+  from `validateEventStream` / `mkEventStream`. Kioku's two streams still assemble clean, but
+  `mkEventStreamOrThrow` fails at runtime rather than compile time, so a consumer with its own
+  streams should exercise its startup path.
+- **kioku-migrations / kioku-migrate:** `keiro-migrations ^>=0.11.0.0`. The bound is breaking; the
+  plan is unchanged. Keiro ships the same 20 SQL files at 0.4.0.1 and 0.11.0.0, so the plan still
+  carries 38 forward migrations and an existing database has nothing to apply.
+- **kioku-api / kioku-cli:** No API change; released in lockstep under the shared version.
+
+### Changed
+
+- Existing snapshots stay valid. Keiki's `Keiki.Shape` only gained a `CanonicalTypeName Natural`
+  instance and no Kioku register slot uses `Natural`, so the shape hashes are unchanged.
+- The `keiki-codec-json` wire format is unchanged across 0.4 → 0.9.
+- The rest of the cohort holds its existing bounds: `kiroku-store`, `kiroku-store-migrations`,
+  `shibuya-core`, `shibuya-kiroku-adapter`, `baikai`, `baikai-claude`, `baikai-effectful`,
+  `shikumi`, `shikumi-trace`, `pg-migrate`.
+
 ## 0.2.0.0 — 2026-07-30
 
 Kioku moves onto the released July 2026 cohort. Before this release there was no combination of

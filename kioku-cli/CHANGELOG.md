@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0.0 — 2026-08-05
+
+### Changed
+
+- No API change. Released in lockstep with the rest of the Kioku packages for the Keiki 0.9 and
+  Keiro 0.11 cohort upgrade. The commands and their option parsers are unchanged; what changes is
+  the framework they link against through `kioku-core`.
+
 ## 0.2.0.0 — 2026-07-30
 
 ### Changed

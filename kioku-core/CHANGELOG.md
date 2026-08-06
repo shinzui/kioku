@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.3.0.0 — 2026-08-05
+
+### Breaking Changes
+
+- Moved onto the Keiki 0.9 and Keiro 0.11 cohort: `keiki ^>=0.9.0.0`, `keiro ^>=0.11.0.0`, and
+  `keiro-core ^>=0.11.0.0`. Kioku no longer builds against Keiki 0.4 or Keiro 0.4, and there is no
+  version of `kioku-core` that spans both cohorts.
+- A consumer that links `kioku-core` now links Keiki 0.9's sealed constructor API. `InCtor` and
+  `WireCtor` construction and record update are behind read-only patterns: manual behavior must go
+  through `unavailableInCtor` / `unavailableWireCtor`, and constructors that need trusted
+  structural evidence must use Keiki's Generic or Template Haskell producers. `mkWireCtor`,
+  `mkWireCtor0`, `mkInCtor` and `mkInCtor0` are deprecated. Kioku's own aggregates already use the
+  trusted TH path and needed no change, but a consumer that hand-writes constructors alongside
+  Kioku's does.
+- Keiki 0.9 classifies replay head identity structurally and rewrites the default
+  inversion-ambiguity analysis, so `validateEventStream` and `mkEventStream` may report a
+  different conservative warning set after recompilation. `Kioku.Memory.EventStream` and
+  `Kioku.Session.EventStream` both assemble through `mkEventStreamOrThrow`, which turns a warning
+  into a runtime `error` at first use rather than a compile failure; both still assemble clean
+  under 0.9. A consumer that builds its own streams should re-run its startup path, not just
+  rebuild.
+
+### Changed
+
+- No Kioku source change was required by the upgrade. Keiro's 0.5–0.11 releases are almost
+  entirely `keiro-dsl` work, which Kioku does not depend on; the Keiro runtime surface Kioku
+  imports is unchanged across the whole range.
+- Event payloads are unaffected. The `keiki-codec-json` wire format is unchanged across 0.4 → 0.9,
+  and `Kioku.CodecCompatSpec` continues to decode literal pre-upgrade payloads under the new
+  cohort.
+- Existing snapshots stay valid. Keiki's `Keiki.Shape` changed only by adding a
+  `CanonicalTypeName Natural` instance, and no Kioku register slot uses `Natural`, so
+  `regFileShapeHash` and `stateShapeHash` are unchanged and there is no snapshot rebuild.
+- The rest of the cohort does not move: `kiroku-store`, `shibuya-core`, `shibuya-kiroku-adapter`,
+  `baikai`, `baikai-claude`, `baikai-effectful`, `shikumi` and `shikumi-trace` keep the bounds
+  they had in 0.2.0.0.
+
 ## 0.2.0.0 — 2026-07-30
 
 ### Breaking Changes

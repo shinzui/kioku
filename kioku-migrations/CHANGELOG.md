@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0.0 — 2026-08-05
+
+### Breaking Changes
+
+- Raised `keiro-migrations` to `^>=0.11.0.0`. The bound is breaking because no single
+  `kioku-migrations` spans the Keiro 0.4 and 0.11 components, but the composed plan is not:
+  `keiro-migrations` ships the same 20 SQL files at 0.4.0.1 and 0.11.0.0, byte-for-byte, so
+  `kiokuMigrationPlan` still carries 38 forward migrations. Unlike 0.2.0.0, this release adds no
+  migration.
+
+### Changed
+
+- This is a code-only upgrade. A database already at kioku 0.2.0.0 has nothing to apply.
+
 ## 0.2.0.0 — 2026-07-30
 
 ### Breaking Changes
