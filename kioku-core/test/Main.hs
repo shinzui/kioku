@@ -5,6 +5,7 @@ import Kioku.CodecCompatSpec qualified as CodecCompatSpec
 import Kioku.DistillSpec qualified as DistillSpec
 import Kioku.EmbeddingWorkerSpec qualified as EmbeddingWorkerSpec
 import Kioku.IdempotencySpec qualified as IdempotencySpec
+import Kioku.MemorySpaceSpec qualified as MemorySpaceSpec
 import Kioku.PortfolioAccessSpec qualified as PortfolioAccessSpec
 import Kioku.ReadModelReconcileSpec qualified as ReadModelReconcileSpec
 import Kioku.RecallSpec qualified as RecallSpec
@@ -26,6 +27,7 @@ main =
         CodecCompatSpec.tests,
         ReiCompatSpec.tests,
         IdempotencySpec.tests,
+        MemorySpaceSpec.tests,
         PortfolioAccessSpec.tests,
         ReadModelReconcileSpec.tests,
         RecallSpec.tests,
