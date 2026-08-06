@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- Every memory and session command payload gained required fields: `memorySpaceId` and
+  `actorPrincipal` on all of them, plus `ownerPrincipal` on `RecordMemoryData`,
+  `StartSessionData`, and `RecordInteractiveSessionData`. Every construction site is a compile
+  error until updated. The corresponding event payloads gained the same fields.
+- Every write function takes a `MemoryAccessContext` first and is named `*WithContext`:
+  `recordWithContext`, `supersedeWithContext`, `archiveWithContext`, `updateTagsWithContext`,
+  `updateConfidenceWithContext`, `mergeWithContext`, `startWithContext`, `awaitInputWithContext`,
+  `resumeWithContext`, `forceResumeWithContext`, `completeWithContext`, `failSessionWithContext`,
+  `recordInteractiveWithContext`, and `recordTurnWithContext`. The unsuffixed names remain as
+  **deprecated** wrappers for one release; they take no context and refuse any payload naming a
+  space other than `legacyMemorySpaceId`.
+- `distillSessionL1` takes a `MemoryAccessContext` first and demands the `MemoryDistill`
+  permission before any LLM call.
+- `fireL1Timer`, `fireKiokuTimer`, `runKiokuTimerWorkerOnce`, and `drainKiokuTimers` take a
+  `MemoryContextProvider`, because a worker discovers its own work and cannot arrive holding a
+  context.
+- `MemoryWriteError` gained `MemoryNotPermitted`, `MemorySpaceMismatch`, and
+  `MemoryActorMismatch`; `SessionWriteError` gained the three equivalents; `L1Error` gained
+  `L1NotPermitted`.
+- An L1 timer payload that cannot be parsed now dead-letters instead of being ignored. Payloads
+  written before this release parse fine and fire in the legacy space.
+
+### Added
+
+- `Kioku.Partition` — the single place that decides what a payload written before memory spaces
+  means: the legacy space, and a legacy-marked agent label. No codec invents its own default.
+- `Kioku.Distill.Timer.L1TimerPayload`, which carries the memory space a scheduled distillation
+  pass belongs to.
+- Aggregate state carries the memory space, and every non-creation edge guards on it, so a command
+  naming a different space is refused by the state machine rather than by a read-model precheck.
+
+### Compatibility
+
+- Events already on disk keep decoding. They land in `legacyMemorySpaceId`; an old free-text
+  `agentId` is recorded as a legacy-marked label and never rewritten into a directory principal;
+  an event that recorded no agent is `UnattributedPrincipal`. Encoders emit only the new form.
+- **Reads are not partitioned.** The query functions are unchanged and take no context, because
+  the read-model tables have no memory-space column yet. See
+  `docs/user/upgrading-to-memory-spaces.md`.
+
 ## 0.3.0.0 — 2026-08-05
 
 ### Breaking Changes

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `RecordedPrincipal` and `LegacyPrincipalRef` in `Kioku.Api.Access`: who a stored fact says
+  acted. Three cases — a principal a directory issued, a pre-memory-space free-text agent label
+  kept verbatim and marked, and an event that recorded no actor at all. The wire markers
+  `kioku:legacy:` and `kioku:unattributed` are unambiguous because `mkPrincipalRef` rejects `:`.
+- `memoryContextRecordedActor`, the supported way to attribute a write. Attribution comes from the
+  context that authorized it, never from a separate caller-supplied name.
+- `MemoryContextProvider` and `assumeAuthorizedContextProvider`, for background work that
+  discovers which memory space it belongs to only after claiming it.
+
 ## 0.3.0.0 — 2026-08-05
 
 ### Changed

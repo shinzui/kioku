@@ -51,7 +51,8 @@ This section must always reflect the actual current state of the work.
   pre-partition stream.)
 - [x] Update public API documentation and upgrade notes. (2026-08-06 —
   `docs/user/library-api.md`, `docs/user/upgrading-to-memory-spaces.md`,
-  `docs/user/configuration.md`, `docs/user/integrations.md`, `docs/user/README.md`.)
+  `docs/user/configuration.md`, `docs/user/integrations.md`, `docs/user/README.md`, and an
+  `Unreleased` section in each affected package's `CHANGELOG.md`.)
 - [ ] **Deliberately not done here, handed to plan 26:** partition the read models. Queries keep
   their current signatures and take no context, because the tables have no memory-space column
   yet. Two consequences are documented rather than fixed: reads still span spaces, and the

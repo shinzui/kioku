@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `KIOKU_MEMORY_SPACE` (default `kioku_legacy`) and `KIOKU_ACTOR` (default `kioku_cli`) decide the
+  memory space CLI commands write into and the principal writes are attributed to. A malformed
+  value is a startup error rather than a silent fallback. The worker is not pinned to one space:
+  it acts in whichever space a claimed timer names.
+
 ## 0.3.0.0 — 2026-08-05
 
 ### Changed
