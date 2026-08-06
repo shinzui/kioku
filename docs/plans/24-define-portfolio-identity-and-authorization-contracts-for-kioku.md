@@ -40,8 +40,14 @@ This section must always reflect the actual current state of the work.
   (2026-08-06 — `authorizeMemoryAccess` in `kioku-api/src/Kioku/Api/Access.hs`.)
 - [x] Add public Kioku API types and pure wire-format tests without copying directory policy.
   (2026-08-06 — 57 cases in `kioku-api/test/Kioku/Api/AccessSpec.hs`, all passing.)
-- [ ] Add cross-project conformance fixtures for person, team, agent, and service principals.
-- [ ] Record the final boundary and legacy-space policy in local ADRs.
+- [x] Add cross-project conformance fixtures for person, team, agent, and service principals.
+  (2026-08-06 — 19 cases in `kioku-core/test/Kioku/PortfolioAccessSpec.hs`, all passing.)
+- [x] Record the final boundary and legacy-space policy in local ADRs.
+  (2026-08-06 — `docs/adr/` ADR-1, ADR-2, ADR-3; `okf validate docs/adr` reports `OK: 3 concepts`.)
+- [ ] **Remaining, blocked externally:** pin the literal object type and permission names against
+  the owning schema. Kikan-En IR-1 is `status: proposed` and its schema has no `space` object, so
+  Kioku ships the `MemoryAuthorizationBinding` seam and no default binding. Closing this item
+  needs only a default binding plus a fixture asserting the agreed names; no type changes.
 
 
 ## Surprises & Discoveries
@@ -178,8 +184,42 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-No implementation has started. The plan ends when downstream plans have an executable,
-versioned conformance contract rather than only architecture prose.
+Completed 2026-08-06, with one item deliberately left open.
+
+**What exists now.** `kioku-api/src/Kioku/Api/Access.hs` and its `Internal` companion define
+`MemorySpaceId`, `PrincipalRef`, `MemoryActor`, `MemoryOwner`, the five-action `MemoryPermission`
+vocabulary, `MemoryFreshness`, the four-way `MemoryAccessDenial`, and the opaque
+`MemoryAccessContext`. `authorizeMemoryAccess` runs the coarse-claim, directory, and
+object-permission gates in order. Two test suites prove it: 57 pure wire-format and validation
+cases in `kioku-api`, and 19 conformance fixtures under `Portfolio access contract` in
+`kioku-core`. Three ADRs carry the durable decisions. The contract matrix lives in
+`docs/user/integrations.md`.
+
+**Against the original purpose.** The purpose was one reviewed contract that later plans can
+implement without reopening the boundary, and that holds: EP-2 through EP-4 can consume these
+types without renegotiating who owns identity. The purpose also said the contract should be
+"visible as public types, a permission mapping, conformance fixtures, and an ADR". Three of those
+four are literal; the permission *mapping* is a seam rather than a table of names, because the
+schema it would map onto does not exist yet.
+
+**What is not done, and why that is the right answer.** The literal object type and permission
+names are unpinned. Kikan-En IR-1 is still `status: proposed`, and its live schema has no `space`
+object and no `person`/`team` subject types. Guessing names would have produced a plan that looked
+finished and a claim of ACL compatibility no test could support. Instead the names are a required
+host input, and `mkMemoryAuthorizationBinding` refuses a partial one. When the owner ships, the
+change is a default binding and one fixture — no type changes anywhere.
+
+**Lessons.** Two are worth carrying forward. First, checking the *registry* rather than the source
+tree changed the plan's shape: the plan allowed for an adapter "if that dependency is published",
+and finding four 404s converted an optional branch into the only branch. Second, the record-update
+hole was invisible in the design and obvious in the test — exporting `MemoryAccessContext`'s
+fields would have let any caller widen an authorized decision without ever naming the constructor
+the design carefully kept internal. Making a constructor private is not enough on its own; the
+field selectors have to go too.
+
+**Task-local notes.** `okf validate docs/adr` reports `OK: 3 concepts`. The adjacent
+`docs/improvement-requests` bundle reports a pre-existing log-ordering warning that belongs to
+uncommitted work outside this plan and was left alone.
 
 
 ## Context and Orientation
@@ -198,8 +238,21 @@ The authoritative portfolio seams are:
 - `mori://shinzui/kikan-en/okf/improvement-requests/concepts/IR-1` for the proposed portfolio
   principal and space vocabulary.
 
-No relevant local ADR exists. This plan creates the first local ADRs because the boundary is
-durable architecture, not task-local implementation detail.
+No relevant local ADR existed when this plan was written; `docs/adr/` did not exist at all. This
+plan created the first three, and they are now the durable record of the boundary:
+
+- [ADR-1](../adr/kioku-owns-memory-not-identity.md) — Kioku owns memory data, never identity or
+  authorization, and takes no build dependency on any identity service.
+- [ADR-2](../adr/namespace-is-not-a-security-boundary.md) — namespaces organize memory; only an
+  explicit memory space isolates it.
+- [ADR-3](../adr/legacy-data-lands-in-one-explicit-space.md) — legacy data is backfilled into the
+  explicit `kioku_legacy` space, so absence of a partition never means unrestricted access.
+
+Kioku must remain usable on its own. Its dependency set is Baikai, the
+Keiro/Keiki/Kiroku/Shibuya cohort, Shikumi, and ordinary Hackage libraries, and this plan added
+nothing to it: `Kioku.Api.Access` compiles against `base`, `containers`, `text`, and `aeson`. The
+identity seams are records of plain functions, and a host with no identity stack uses
+`assumeAuthorizedMemoryContext` and never touches them.
 
 
 ## Plan of Work
@@ -276,6 +329,23 @@ Acceptance requires:
 - A conformance test demonstrates `AtLeastAsFresh` forwarding.
 - Local ADRs state ownership, the legacy-space rule, and why namespace is not tenancy.
 
+Each was checked on 2026-08-06 and holds. Person, team, agent, and service fixtures use rendered
+principal ids and Kioku defines no competing identity vocabulary — `PrincipalRef` accepts a prefix
+Kioku has never heard of, which is the test that would fail if a kind vocabulary had leaked in.
+The subject resolves through `PrincipalDirectory` before any check, and the fixtures assert the
+authorizer is called zero times when it does not. Two spaces produce two different object
+references and a grant on one is denied on the other, under one identical namespace and scope. The
+four denials are separate constructors, and none of them is a successful empty result.
+`AtLeastAsFresh` forwarding is demonstrated end to end: a grant written ahead of the replica is
+denied on a default read and allowed when the write's token is forwarded, and the minted context
+carries that token so a follow-up read chains from it.
+
+```text
+kioku-api:  All 57 tests passed
+kioku-core: All 19 tests passed   (-p "Portfolio access contract")
+okf validate docs/adr: OK: 3 concepts
+```
+
 
 ## Idempotence and Recovery
 
@@ -287,26 +357,100 @@ unreleased feature. Re-running conformance is read-only outside its ephemeral te
 
 ## Interfaces and Dependencies
 
-The public types should be equivalent to:
+Kioku's dependency set is Baikai, the Keiro/Keiki/Kiroku/Shibuya cohort, Shikumi, and ordinary
+Hackage libraries. This plan added nothing to it, and no later plan in this initiative may. The
+identity stack is consumed through function records, never through a `build-depends` entry.
+
+As shipped in `kioku-api/src/Kioku/Api/Access.hs`:
 
 ```haskell
+-- Opaque, built through validating constructors that return 'Either Text'.
 newtype MemorySpaceId = MemorySpaceId Text
 newtype PrincipalRef = PrincipalRef Text
+newtype MemoryActor = MemoryActor PrincipalRef
+newtype MemoryOwner = MemoryOwner PrincipalRef
+newtype MemoryDecisionToken = MemoryDecisionToken Text
 
 data MemoryPermission
-  = MemoryRead
-  | MemoryRecord
-  | MemoryDistill
-  | MemoryForget
-  | MemoryAdmin
+  = MemoryRead | MemoryRecord | MemoryDistill | MemoryForget | MemoryAdmin
 
+data MemoryFreshness
+  = MemoryFreshnessDefault
+  | MemoryFreshnessAtLeast MemoryDecisionToken
+
+data MemoryAccessDenial
+  = MemoryCoarseScopeMissing MemoryCoarseScope
+  | MemoryPrincipalUnresolved Text
+  | MemoryPermissionDenied MemorySpaceId MemoryPermission
+  | MemoryDecisionConditional MemorySpaceId MemoryPermission [Text]
+
+-- Constructor lives in Kioku.Api.Access.Internal; fields are read-only accessors.
 data MemoryAccessContext = MemoryAccessContext
   { memorySpaceId :: MemorySpaceId
-  , actorPrincipal :: PrincipalRef
-  , decisionToken :: Maybe Text
+  , actor :: MemoryActor
+  , grantedPermissions :: Set MemoryPermission
+  , decisionToken :: Maybe MemoryDecisionToken
   }
+
+newtype PrincipalDirectory m = PrincipalDirectory
+  { resolvePrincipal :: Text -> m (Maybe PrincipalRef) }
+
+newtype PermissionChecker m = PermissionChecker
+  { checkMemoryPermission ::
+      MemoryFreshness -> PrincipalRef -> MemoryPermissionName -> MemoryObjectRef -> m MemoryDecision
+  }
+
+authorizeMemoryAccess ::
+  Monad m =>
+  MemoryAuthorizationBinding ->
+  PrincipalDirectory m ->
+  PermissionChecker m ->
+  MemoryFreshness ->
+  AuthenticatedSubject ->
+  MemorySpaceId ->
+  NonEmpty MemoryPermission ->
+  m (Either MemoryAccessDenial MemoryAccessContext)
+
+assumeAuthorizedMemoryContext :: MemorySpaceId -> MemoryActor -> MemoryAccessContext
 ```
 
-Exact field names may change during API review. The dependency direction must not: Kioku core
-accepts a validated context; Shomei, Meibo, and En adapters produce it. The future HTTP service
-IR owns the live Servant wiring.
+Three shapes differ from the original sketch, each recorded in the Decision Log: the context
+carries the set of permissions it was minted for rather than only a space and an actor; the
+decision token is a newtype rather than bare `Text`; and the fields are read-only accessors so an
+authorized decision cannot be widened by record update.
+
+The dependency direction is unchanged and is the part that must not move: Kioku's core accepts a
+validated context, and adapters produce it. The object type and permission names come in as a
+`MemoryAuthorizationBinding`, so an adapter for any identity stack is a separate package that
+depends on Kioku. The future HTTP service IR owns the live Servant wiring.
+
+
+## Revision Notes
+
+### 2026-08-06 — implementation
+
+Milestones 1 through 3 were implemented and the plan revised to match what shipped.
+
+Dependency verification turned an optional branch into the only branch. The plan allowed for a
+`meibo-api` adapter "only if that dependency is published and PVP compatible"; all four
+dependencies proved unreleased, so Kioku takes the opaque-rendered-id path throughout. The
+evidence is recorded under Surprises & Discoveries.
+
+Milestone 3 was reshaped rather than deferred. It was written to begin "once the owner schema
+exists", and that schema still does not — Kikan-En IR-1 is `status: proposed` and its live schema
+has no `space` object. Rather than stall the milestone or invent names, the object type,
+permission names, and coarse scopes became a required host input
+(`MemoryAuthorizationBinding`), and the conformance fixtures supply their own. Everything else in
+the milestone — object-reference formation, `AtLeastAsFresh` forwarding, and the six fixtures —
+landed in full. The one genuinely blocked item is called out as such in Progress.
+
+Three API shapes changed from the Interfaces sketch during implementation, each with its own
+Decision Log entry: the context carries the permission set it was minted for; the decision token
+is a newtype; and the context's fields are read-only accessors rather than exported record fields,
+which closed a record-update hole that would have let any caller widen an authorized decision.
+
+A standing constraint was added during implementation on the user's instruction and is recorded in
+both the Decision Log and Context and Orientation: Kioku must remain usable independently of the
+Kikan projects, with dependencies limited to Baikai, the Keiro cohort, and Shikumi. This plan added
+none, and the identity seams were renamed from vendor-flavoured names to `PrincipalDirectory` and
+`PermissionChecker` to keep the public API free of any implied stack.
