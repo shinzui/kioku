@@ -121,10 +121,32 @@ every namespace in it. If you need "these memories belong to this customer, and 
 agents must never see them", that is a *memory space* — the isolation boundary described below —
 not a namespace.
 
-## The portfolio trust triad
+## Who decides access
 
-Kioku is one of several services in the Kikan portfolio. Three of its siblings own the pieces of
-identity and access control that Kioku deliberately does **not** implement:
+Kioku never decides access itself. It carries an already-made decision, which means a host has to
+supply one. There are two supported ways to do that, and the first one is the default:
+
+1. **Trusted, in-process.** A CLI, a test, or a library embedded in an application that has
+   already authenticated its user calls `assumeAuthorizedMemoryContext` and is done. No identity
+   service, no configuration, no extra dependency. This is how `kioku` the CLI works, and it is
+   why Kioku is usable on its own.
+2. **Behind a service boundary**, where the caller is a stranger until proven otherwise. Then a
+   host wires up authentication, a directory, and an authorization engine, and Kioku consumes
+   their answers through two records of plain functions — `PrincipalDirectory` and
+   `PermissionChecker`.
+
+**Kioku's build closure contains none of the services named below**, and it never will: its
+dependencies are Baikai, the Keiro/Keiki/Kiroku/Shibuya cohort, Shikumi, and ordinary Hackage
+libraries. Every type in `Kioku.Api.Access` is plain `base`, `containers`, `text`, and `aeson`.
+The section that follows describes one integration a host *may* choose; substitute your own
+identity stack and nothing in Kioku changes.
+
+## One worked integration: the Kikan trust triad
+
+The Kikan portfolio splits identity and access control across three services. They are worth
+documenting in full because they are the integration the design was validated against, and
+because the split generalizes — most identity stacks have these same three pieces under other
+names.
 
 - **Shomei** (証明, "proof") — authentication. It verifies a credential (a JWT, a session cookie)
   and hands the caller a verified *subject* string plus coarse claims: roles and OAuth-style
@@ -187,8 +209,10 @@ with no release tag, and none resolves on Hackage. Kikan-En's schema
 (project-relative `src/Kikan/En/Schema.hs`) still has `agent` as its only subject type and has no
 `space` object and no `can_view` permission family; IR-1, which adds them, is `status: proposed`.
 
-Kioku therefore takes **no build dependency** on any of them. It accepts the rendered principal id
-as opaque text at its boundary, and it takes the En object type and permission names from the host
-as a `MemoryAuthorizationBinding` rather than hard-coding names the schema owner has not published.
-When those packages ship, an adapter maps them onto the types in
-`kioku-api/src/Kioku/Api/Access.hs`; nothing in Kioku's core has to change.
+That is a reason Kioku *cannot* depend on them today, but it is not the reason it *does not*. Even
+fully released, these would stay out of Kioku's build closure: a memory library that drags a
+specific authentication service in behind it is unusable by anyone who has a different one. Kioku
+accepts the rendered principal id as opaque text at its boundary, and takes the object type and
+permission names from the host as a `MemoryAuthorizationBinding` rather than hard-coding names it
+does not own. When those packages ship, a **separate adapter package** maps them onto the types in
+`kioku-api/src/Kioku/Api/Access.hs`; neither `kioku-api` nor `kioku-core` changes.

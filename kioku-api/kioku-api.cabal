@@ -45,6 +45,8 @@ library
   import:          warnings, shared
   hs-source-dirs:  src
   exposed-modules:
+    Kioku.Api.Access
+    Kioku.Api.Access.Internal
     Kioku.Api.Scope
     Kioku.Api.Types
     Kioku.Id
@@ -58,3 +60,20 @@ library
     , mmzk-typeid  >=0.7  && <0.8
     , text         >=2.1  && <2.2
     , time         >=1.12 && <1.15
+
+test-suite kioku-api-test
+  import:         warnings, shared
+  type:           exitcode-stdio-1.0
+  main-is:        Main.hs
+  hs-source-dirs: test
+  other-modules:  Kioku.Api.AccessSpec
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , aeson        >=2.2  && <2.3
+    , base         >=4.21 && <5
+    , bytestring   >=0.11 && <0.13
+    , containers   >=0.6  && <0.8
+    , kioku-api
+    , tasty        >=1.5  && <1.6
+    , tasty-hunit  >=0.10 && <0.11
+    , text         >=2.1  && <2.2

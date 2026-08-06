@@ -34,9 +34,12 @@ This section must always reflect the actual current state of the work.
 - [x] Verify released Meibo, Shomei, En, and Kikan-En APIs and versions through Mori, upstream
   tags, and authoritative registries. (2026-08-06 — none are released; see Surprises.)
 - [x] Write the contract matrix into `docs/user/integrations.md`. (2026-08-06)
-- [ ] Define the memory-space object, principal-reference, actor/owner, and permission vocabulary.
-- [ ] Specify the Shomei → Meibo → En request flow and consistency-token handling.
-- [ ] Add public Kioku API types and pure wire-format tests without copying directory policy.
+- [x] Define the memory-space object, principal-reference, actor/owner, and permission vocabulary.
+  (2026-08-06 — `kioku-api/src/Kioku/Api/Access/Internal.hs`.)
+- [x] Specify the Shomei → Meibo → En request flow and consistency-token handling.
+  (2026-08-06 — `authorizeMemoryAccess` in `kioku-api/src/Kioku/Api/Access.hs`.)
+- [x] Add public Kioku API types and pure wire-format tests without copying directory policy.
+  (2026-08-06 — 57 cases in `kioku-api/test/Kioku/Api/AccessSpec.hs`, all passing.)
 - [ ] Add cross-project conformance fixtures for person, team, agent, and service principals.
 - [ ] Record the final boundary and legacy-space policy in local ADRs.
 
@@ -122,6 +125,49 @@ Record every decision made while working on the plan.
   forbids vendoring source or loosening bounds around an unreleased feature, and a Git pin would
   make Kioku's own Hackage releases unbuildable. Kioku accepts the rendered principal id as
   opaque text instead; an adapter can be added without changing core once the packages ship.
+  Date: 2026-08-06
+
+- Decision: Kioku stays independently usable, and independence is a standing constraint rather
+  than a consequence of the previous decision. Kioku's dependency set remains Baikai, the
+  Keiro/Keiki/Kiroku/Shibuya cohort, Shikumi, and ordinary Hackage libraries; the identity seams
+  are records of plain functions named for their role (`PrincipalDirectory`, `PermissionChecker`),
+  not for any vendor, and `Kioku.Api.Access` compiles against `base`, `containers`, `text`, and
+  `aeson` only. When the portfolio packages ship, the mapping lives in a separate adapter package.
+  Rationale: A memory library that pulls a specific authentication service in behind it is
+  unusable by anyone who already has a different one. Verified 2026-08-06: no `.cabal` file or
+  `cabal.project` in this repository names any portfolio package.
+  Date: 2026-08-06 (user directive during implementation)
+
+- Decision: `MemoryAccessContext` exports read-only accessors (`memoryContextSpace`,
+  `memoryContextActor`, `memoryContextPermissions`, `memoryContextDecisionToken`) rather than its
+  record fields.
+  Rationale: Exporting fields exports record-update syntax with them, and
+  `context { grantedPermissions = everything }` widens an authorized decision without ever naming
+  the constructor — the exact hole that keeping the constructor internal is supposed to close.
+  Date: 2026-08-06
+
+- Decision: The context records `grantedPermissions :: Set MemoryPermission`, extending the
+  three-field sketch in Interfaces and Dependencies.
+  Rationale: A context is a decision, and a decision is about specific actions. Without the set,
+  a context minted by checking `read` would silently authorize `forget`. `authorizeMemoryAccess`
+  checks every requested permission for the same reason.
+  Date: 2026-08-06
+
+- Decision: Kioku ships no default `MemoryAuthorizationBinding`, and construction rejects any
+  binding that omits an action.
+  Rationale: The object type, permission names, and coarse scopes belong to schemas Kioku does
+  not own — and the memory-space object does not exist in the current Kikan-En schema at all.
+  Shipping plausible names would claim a compatibility no test can demonstrate. Requiring the
+  host to supply all five makes the dependency visible at the call site and keeps
+  `memoryPermissionBinding` total, so a rarely-exercised path cannot discover a hole in
+  production.
+  Date: 2026-08-06
+
+- Decision: `MemoryAccessContext` gets no `ToJSON`/`FromJSON` instance, though every leaf
+  identifier does.
+  Rationale: A serializable authorized decision can be written down, stored, and replayed against
+  a grant that has since been revoked. EP-2 persists the space, actor, and owner — the facts —
+  not the decision.
   Date: 2026-08-06
 
 
