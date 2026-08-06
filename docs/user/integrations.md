@@ -111,3 +111,84 @@ kioku recall "prior incident handling" --scope shikigami:agent:watcher-01
 
 Because all hosts share one database and schema, a single `kioku worker` process can serve
 embeddings and distillation for every namespace at once.
+
+## Namespace is organization, not a security boundary
+
+Everything above is *organization*. A namespace keeps `rei`'s memories from colliding with
+`mori`'s inside one deployment; it does not decide who is allowed to read them. Nothing in the
+scope machinery authenticates a caller, and any process that can open the database can read
+every namespace in it. If you need "these memories belong to this customer, and that customer's
+agents must never see them", that is a *memory space* — the isolation boundary described below —
+not a namespace.
+
+## The portfolio trust triad
+
+Kioku is one of several services in the Kikan portfolio. Three of its siblings own the pieces of
+identity and access control that Kioku deliberately does **not** implement:
+
+- **Shomei** (証明, "proof") — authentication. It verifies a credential (a JWT, a session cookie)
+  and hands the caller a verified *subject* string plus coarse claims: roles and OAuth-style
+  scopes. Its Haskell surface is `mori://shinzui/shomei/packages/shomei-servant`, whose `AuthUser`
+  record carries `authUserId`, `authSessionId`, `authRoles`, `authScopes`, and `authPermissions`.
+  Those claims are static: they were minted at login and say nothing about any particular memory
+  space.
+- **Meibo** (名簿, "roster") — the directory. It is the canonical list of *principals* — people,
+  agents, teams, roles, services, connectors, and organizations — and it owns the mapping from a
+  Shomei subject to a principal, agent lifecycle (including the kill switch that pauses an
+  agent), and team membership. Its canonical identifier type lives at
+  `mori://shinzui/meibo/docs/initial-spec` and is implemented in the project-relative
+  `meibo-api/src/Meibo/Api/Id.hs` as `PrincipalId`, with exactly one renderer,
+  `principalIdText`, producing kind-prefixed TypeIDs: `person_01h…`, `agent_01h…`, `team_01h…`,
+  `role_01h…`, `service_01h…`, `connector_01h…`, `org_01h…`.
+- **En** (縁, "relationship") — authorization. It is a Zanzibar-style relationship-based engine:
+  you ask it `check(subject, permission, object)` and it answers `Allowed`, `Denied`, or
+  `Conditional`. Its transport-neutral core is `mori://shinzui/en/packages/en-core`; its Servant
+  guard is `mori://shinzui/en/packages/en-servant`. Every answer comes back with a
+  `ConsistencyToken` (`checkedAt`) that a later read can present as `AtLeastAsFresh` to be sure it
+  observes at least everything the first one did.
+
+The portfolio-wide vocabulary that names memory spaces and user-facing principals inside En is
+tracked by `mori://shinzui/kikan-en/okf/improvement-requests/concepts/IR-1`.
+
+### Contract matrix
+
+Read this as: what Kioku receives, who owns it, what Kioku does with it, and — the load-bearing
+column — what Kioku must never infer from it.
+
+| Value Kioku receives | Owner | How Kioku uses it | What Kioku must never infer |
+|---|---|---|---|
+| Verified subject + roles/scopes | Shomei | Coarse per-action gate before any space-specific work; a failure is `MemoryCoarseScopeMissing` | That the subject may touch a particular memory space. Shomei claims are static and space-blind. |
+| Rendered principal id (`person_…`, `team_…`, `agent_…`, `service_…`, `org_…`) | Meibo | Stored verbatim as the actor and, where applicable, the owner of a memory | The principal's kind, profile, handle, memberships, or lifecycle. Kioku never parses the prefix. |
+| Shomei subject → principal resolution | Meibo | Turns an authenticated subject into an actor before any En call | That an unresolved subject is merely "new". A paused agent or an unlinked credential also arrives as unresolved, and both must fail closed. |
+| `Allowed` / `Denied` / `Conditional` + `checkedAt` token | En | Mints a `MemoryAccessContext` recording the space, actor, granted permissions, and token | That a `Conditional` answer is an allow, or that a denial on one space says anything about another. |
+| Memory-space object type and permission names | Kikan-En (schema owner) | Supplied to Kioku as a `MemoryAuthorizationBinding`; Kioku renders `type:spaceId` object refs from it | The names themselves. Kioku ships no default binding, because the owning schema has not shipped. |
+| `MemorySpaceId` | Kioku | The isolation partition on every command, query, worker, and (from a later plan) every row | That a *missing* space means "visible everywhere". Absence is never permission. |
+
+### The request order, and why it is that order
+
+Authorization runs in three steps, and no one of them can stand in for another:
+
+1. **Shomei** proves the credential is real and carries the coarse scope for the action. Skipping
+   this means trusting an unauthenticated subject string.
+2. **Meibo** resolves that subject to a canonical principal. Skipping this means Kioku invents its
+   own user table, or trusts a caller-supplied principal id.
+3. **En** decides whether *that principal* may perform *that permission* on *this memory space*.
+   Skipping this means a coarse `kioku:read` scope grants every space in the deployment.
+
+The failures are kept distinct on purpose. A missing coarse scope, an unresolved principal, and an
+En denial are three different errors, and none of them may be quietly turned into a successful
+recall that happens to return zero rows — a caller cannot tell "you may not look here" from "there
+is nothing here", and the difference matters.
+
+### What is not available yet
+
+None of Meibo, Shomei, En, or Kikan-En is a published package: each is at an in-tree `0.1.0.0`
+with no release tag, and none resolves on Hackage. Kikan-En's schema
+(project-relative `src/Kikan/En/Schema.hs`) still has `agent` as its only subject type and has no
+`space` object and no `can_view` permission family; IR-1, which adds them, is `status: proposed`.
+
+Kioku therefore takes **no build dependency** on any of them. It accepts the rendered principal id
+as opaque text at its boundary, and it takes the En object type and permission names from the host
+as a `MemoryAuthorizationBinding` rather than hard-coding names the schema owner has not published.
+When those packages ship, an adapter maps them onto the types in
+`kioku-api/src/Kioku/Api/Access.hs`; nothing in Kioku's core has to change.
