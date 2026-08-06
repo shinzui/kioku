@@ -45,9 +45,19 @@ This section must always reflect the actual current state of the work.
 - [x] Record the final boundary and legacy-space policy in local ADRs.
   (2026-08-06 — `docs/adr/` ADR-1, ADR-2, ADR-3; `okf validate docs/adr` reports `OK: 3 concepts`.)
 - [ ] **Remaining, blocked externally:** pin the literal object type and permission names against
-  the owning schema. Kikan-En IR-1 is `status: proposed` and its schema has no `space` object, so
-  Kioku ships the `MemoryAuthorizationBinding` seam and no default binding. Closing this item
-  needs only a default binding plus a fixture asserting the agreed names; no type changes.
+  the owning schema. Kikan-En IR-1 is `status: proposed` and its live schema has no `space`
+  object, so Kioku ships the `MemoryAuthorizationBinding` seam and no binding values at all.
+
+  Unblocked when Kikan-En IR-1 reaches `status: accepted` and its schema declares the space
+  object with its permission family. Check with
+  `mori path mori://shinzui/kikan-en/okf/improvement-requests/concepts/IR-1` and the object list
+  in that project's `src/Kikan/En/Schema.hs`.
+
+  Closing it needs no change to `kioku-api` or `kioku-core`, and specifically **must not** add a
+  Kikan-named binding to either: a binding naming that schema belongs in a separate adapter
+  package that depends on Kioku, per [ADR-1](../adr/kioku-owns-memory-not-identity.md). What lands
+  in this repository is the agreed names recorded in `docs/user/integrations.md` and a fixture in
+  `kioku-core/test/Kioku/PortfolioAccessSpec.hs` that builds a binding from them.
 
 
 ## Surprises & Discoveries
