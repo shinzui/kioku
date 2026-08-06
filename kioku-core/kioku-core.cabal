@@ -125,6 +125,7 @@ test-suite kioku-test
     Kioku.DistillSpec
     Kioku.EmbeddingWorkerSpec
     Kioku.IdempotencySpec
+    Kioku.PortfolioAccessSpec
     Kioku.ReadModelReconcileSpec
     Kioku.RecallHarness
     Kioku.RecallSpec
