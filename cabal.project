@@ -7,14 +7,14 @@ packages:
 
 with-compiler: ghc-9.12.4
 
--- keiki-codec-json IS in the build closure: Keiro 0.4 depends on it directly,
+-- keiki-codec-json IS in the build closure: Keiro 0.11 depends on it directly,
 -- so this constraint must track the cohort or it becomes a hard solver failure.
 -- The PGMQ entries below remain forward-looking pins for optional integrations
 -- Kioku does not build, keeping their released cohort explicit so a consumer
 -- cannot revive the former Git-pinned PGMQ stack at an older version.
 constraints:
-  keiki-codec-json ^>=0.4.0.0,
-  keiro-pgmq ^>=0.4.0.1,
+  keiki-codec-json ^>=0.9.0.0,
+  keiro-pgmq ^>=0.11.0.0,
   pgmq-core ^>=0.4.0.0,
   pgmq-effectful ^>=0.4.0.0,
   pgmq-hasql ^>=0.4.0.0,
