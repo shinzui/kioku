@@ -17,17 +17,28 @@ module Kioku.CodecCompatSpec
 where
 
 import Control.Monad ((<=<))
-import Data.Aeson (Value, eitherDecode)
+import Data.Aeson (Value, eitherDecode, encode)
 import Data.Bifunctor (first)
 import Data.ByteString.Lazy (ByteString)
+import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
 import Data.Time.Format.ISO8601 (iso8601ParseM)
+import Kioku.Api.Access
+  ( LegacyPrincipalRef,
+    MemorySpaceId,
+    PrincipalRef,
+    RecordedPrincipal (..),
+    legacyMemorySpaceId,
+    legacyPrincipalRef,
+    mkPrincipalRef,
+    recordedPrincipalText,
+  )
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
-import Kioku.Id (idText)
+import Kioku.Id (MemoryId, SessionId, idText, parseId)
 import Kioku.Memory.Domain
   ( MemoryArchivedData (..),
     MemoryConfidenceUpdatedData (..),
@@ -37,7 +48,9 @@ import Kioku.Memory.Domain
     MemorySupersededData (..),
     MemoryTagsUpdatedData (..),
   )
+import Kioku.Memory.Domain qualified as MemoryDomain
 import Kioku.Memory.EventStream (parseMemoryEvent)
+import Kioku.Prelude (toJSON)
 import Kioku.Session.Domain
   ( InteractiveSessionRecordedData (..),
     SessionAwaitingData (..),
@@ -48,9 +61,11 @@ import Kioku.Session.Domain
     SessionStartedData (..),
     TurnRecordedData (..),
   )
+import Kioku.Session.Domain qualified as SessionDomain
 import Kioku.Session.EventStream (parseSessionEvent)
+import Kioku.SpaceFixtures (testActorPrincipal, testSpace)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
 tests :: TestTree
 tests =
@@ -58,8 +73,170 @@ tests =
     "pre-upgrade event payloads still decode"
     [ testGroup "memory events" memoryTests,
       testGroup "session events" sessionTests,
-      testGroup "the legacy fallback still exists" fallbackTests
+      testGroup "the legacy fallback still exists" fallbackTests,
+      testGroup "pre-partition payloads land in the legacy space" partitionTests,
+      testGroup "partitioned payloads round-trip" roundTripTests
     ]
+
+-- * The memory-space partition
+
+--
+-- Every fixture above was captured before memory spaces existed, which makes them the exact
+-- input the compatibility rules were written for. These assert what those rules produce.
+--
+-- Two things are being pinned. First, that a payload with no partition decodes into one
+-- explicit space rather than into "no space" — absence of a partition must never read as
+-- unrestricted access. Second, that a historical @agentId@ stays marked as the free-text label
+-- it is: promoting @agent-1@ to a directory principal would put an identity nobody issued into
+-- an audit trail, and every later authorization decision about it would be a decision about a
+-- string somebody typed.
+
+partitionTests :: [TestTree]
+partitionTests =
+  [ testCase "a pre-partition memory_recorded lands in the legacy space" do
+      decodeMemory memoryRecordedJson >>= \case
+        MemoryRecorded d -> do
+          d.memorySpaceId @?= legacyMemorySpaceId
+          d.actorPrincipal @?= LegacyPrincipal (legacyPrincipalRef "agent-1")
+          d.ownerPrincipal @?= Nothing
+        other -> unexpected "MemoryRecorded" other,
+    testCase "a legacy agent label is not a directory principal" do
+      -- The rendering carries the marker, so nothing downstream can mistake it for one.
+      decodeMemory memoryRecordedJson >>= \case
+        MemoryRecorded d -> recordedPrincipalText d.actorPrincipal @?= "kioku:legacy:agent-1"
+        other -> unexpected "MemoryRecorded" other,
+    testCase "a pre-partition memory_archived records no actor at all" do
+      -- Archiving never carried an agent, so there is nothing to attribute it to. Inventing
+      -- one would be worse than saying so.
+      decodeMemory memoryArchivedJson >>= \case
+        MemoryArchived d -> do
+          d.memorySpaceId @?= legacyMemorySpaceId
+          d.actorPrincipal @?= UnattributedPrincipal
+        other -> unexpected "MemoryArchived" other,
+    testCase "every other pre-partition memory event lands in the legacy space" do
+      spaces <- traverse (fmap memoryEventSpace . decodeMemory) allMemoryFixtures
+      spaces @?= replicate (length allMemoryFixtures) legacyMemorySpaceId,
+    testCase "a pre-partition session_started lands in the legacy space" do
+      decodeSession sessionStartedJson >>= \case
+        SessionStarted d -> do
+          d.memorySpaceId @?= legacyMemorySpaceId
+          d.actorPrincipal @?= LegacyPrincipal (legacyPrincipalRef "agent-1")
+          d.ownerPrincipal @?= Nothing
+        other -> unexpected "SessionStarted" other,
+    testCase "a pre-partition turn_recorded records no actor at all" do
+      decodeSession turnRecordedJson >>= \case
+        TurnRecorded d -> do
+          d.memorySpaceId @?= legacyMemorySpaceId
+          d.actorPrincipal @?= UnattributedPrincipal
+        other -> unexpected "TurnRecorded" other,
+    testCase "every other pre-partition session event lands in the legacy space" do
+      spaces <- traverse (fmap sessionEventSpace . decodeSession) allSessionFixtures
+      spaces @?= replicate (length allSessionFixtures) legacyMemorySpaceId,
+    testCase "a legacy Rei payload lands in the legacy space too" do
+      decodeMemory legacyReiMemoryRecordedJson >>= \case
+        MemoryRecorded d -> do
+          d.memorySpaceId @?= legacyMemorySpaceId
+          d.actorPrincipal @?= LegacyPrincipal (legacyPrincipalRef "agent-1")
+        other -> unexpected "MemoryRecorded" other
+  ]
+
+-- | Encoding emits only the new form, so a value written today has to survive the same
+-- decoder the fixtures above go through — with its space and actor intact rather than
+-- defaulted.
+roundTripTests :: [TestTree]
+roundTripTests =
+  [ testCase "a partitioned memory event survives encode and decode" do
+      let event = MemoryRecorded partitionedRecord
+      decoded <- either (assertFailure . Text.unpack) pure (parseMemoryEvent (toJSON event))
+      decoded @?= event,
+    testCase "the encoded form actually contains the partition" do
+      -- Without this, the round-trip above would still pass if both sides defaulted.
+      let encoded = toJSON (MemoryRecorded partitionedRecord)
+      assertBool "names the space" (encodedContains "space_test" encoded)
+      assertBool "names the actor" (encodedContains "agent_01h9xk3v7hf8b9c0d1e2f3g4h5" encoded),
+    testCase "a partitioned session event survives encode and decode" do
+      let event = SessionStarted partitionedStart
+      decoded <- either (assertFailure . Text.unpack) pure (parseSessionEvent (toJSON event))
+      decoded @?= event,
+    testCase "a legacy-marked actor survives encode and decode" do
+      -- A stream rebuilt and re-encoded must not launder its legacy actor into a real one.
+      let event = MemoryRecorded partitionedRecord {actorPrincipal = LegacyPrincipal (legacyPrincipalRef "demo-agent")}
+      decoded <- either (assertFailure . Text.unpack) pure (parseMemoryEvent (toJSON event))
+      decoded @?= event
+  ]
+
+partitionedRecord :: MemoryRecordedData
+partitionedRecord =
+  MemoryRecordedData
+    { memoryId = fixtureMemoryId,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
+      ownerPrincipal = Just ownerRef,
+      agentId = "agent-1",
+      sessionId = Just fixtureSessionId,
+      scope = fixtureScope,
+      memoryType = MemoryFact,
+      content = "the build is green",
+      priority = 3,
+      confidence = HighConfidence,
+      tags = Set.fromList ["build", "ci"],
+      supersedes = Nothing,
+      recordedAt = at "2026-06-24T21:30:00Z"
+    }
+
+partitionedStart :: SessionStartedData
+partitionedStart =
+  SessionStartedData
+    { sessionId = fixtureSessionId,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
+      ownerPrincipal = Just ownerRef,
+      agentId = "agent-1",
+      focus = "ship the release",
+      scope = fixtureScope,
+      subjectRef = Just "kioku",
+      previousSessionId = Nothing,
+      parentSessionId = Nothing,
+      delegationDepth = 0,
+      startedAt = at "2026-06-24T21:30:00Z"
+    }
+
+ownerRef :: PrincipalRef
+ownerRef = either (error . Text.unpack) id (mkPrincipalRef "person_01h9xk3v7hf8b9c0d1e2f3g4h9")
+
+memoryEventSpace :: MemoryEvent -> MemorySpaceId
+memoryEventSpace = MemoryDomain.eventMemorySpaceId
+
+sessionEventSpace :: SessionEvent -> MemorySpaceId
+sessionEventSpace = SessionDomain.eventMemorySpaceId
+
+fixtureMemoryId :: MemoryId
+fixtureMemoryId = either (error . Text.unpack) id (parseId memoryIdText)
+
+fixtureSessionId :: SessionId
+fixtureSessionId = either (error . Text.unpack) id (parseId sessionIdText)
+
+encodedContains :: Text -> Value -> Bool
+encodedContains needle = Text.isInfixOf needle . Text.pack . LBS8.unpack . encode
+
+allMemoryFixtures :: [ByteString]
+allMemoryFixtures =
+  [ memorySupersededJson,
+    memoryArchivedJson,
+    memoryTagsUpdatedJson,
+    memoryConfidenceUpdatedJson,
+    memoryMergedJson
+  ]
+
+allSessionFixtures :: [ByteString]
+allSessionFixtures =
+  [ sessionCompletedJson,
+    sessionFailedJson,
+    sessionAwaitingJson,
+    sessionResumedJson,
+    interactiveSessionRecordedJson,
+    turnRecordedJson
+  ]
 
 -- * Memory events
 

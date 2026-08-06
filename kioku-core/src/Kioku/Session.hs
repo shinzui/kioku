@@ -1,6 +1,32 @@
+-- | Starting, driving, and reading agent sessions.
+--
+-- Every write takes a 'MemoryAccessContext' first, for the reasons set out in "Kioku.Memory":
+-- Kioku's core never decides who may write where, it only refuses to write without a decision.
+-- All session writes ask for the 'MemoryRecord' permission — a session, its turns, and its
+-- lifecycle are memory being recorded.
+--
+-- A session belongs to the space it was started in, and the aggregate refuses every later
+-- command that names a different one. That includes 'forceResumeWithContext': waiving the
+-- correlation-key check is an operator override for a lost key, not for the isolation boundary.
+--
+-- The unsuffixed functions ('start', 'complete', …) remain for one release as deprecated
+-- compatibility wrappers confined to 'legacyMemorySpaceId'. Reads are not partitioned yet; see
+-- "Kioku.Memory" and @docs\/user\/upgrading-to-memory-spaces.md@.
 module Kioku.Session
   ( SessionRow (..),
     SessionWriteError (..),
+
+    -- * Writing sessions
+    startWithContext,
+    awaitInputWithContext,
+    resumeWithContext,
+    forceResumeWithContext,
+    completeWithContext,
+    failSessionWithContext,
+    recordInteractiveWithContext,
+    recordTurnWithContext,
+
+    -- * Deprecated compatibility wrappers, confined to the legacy memory space
     start,
     awaitInput,
     resume,
@@ -9,6 +35,8 @@ module Kioku.Session
     failSession,
     recordInteractive,
     recordTurn,
+
+    -- * Reading sessions
     getById,
     getRecentInNamespace,
     getByScope,
@@ -28,6 +56,16 @@ import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
+import Kioku.Api.Access
+  ( MemoryAccessContext,
+    MemoryPermission (..),
+    MemorySpaceId,
+    RecordedPrincipal (..),
+    legacyMemorySpaceId,
+    memoryContextAllows,
+    memoryContextRecordedActor,
+    memoryContextSpace,
+  )
 import Kioku.Api.Scope (MemoryScope, Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Timer (l1TimerScheduleProjection)
 import Kioku.Id (SessionId, idText)
@@ -70,18 +108,76 @@ data SessionWriteError
   | SessionCorrelationMismatch
   | SessionInvalidLineage !Text
   | SessionConflict !Text
+  | -- | the context authorized other actions, but not this one
+    SessionNotPermitted !MemoryPermission
+  | -- | the command names a memory space the context was not minted for:
+    -- @SessionSpaceMismatch requested authorized@
+    SessionSpaceMismatch !MemorySpaceId !MemorySpaceId
+  | -- | the command attributes the write to somebody other than the context's own principal
+    SessionActorMismatch !RecordedPrincipal !RecordedPrincipal
   deriving stock (Generic, Show)
+
+-- | Gate a write on the decision that authorized it. See 'Kioku.Memory.underContext' — same
+-- three checks, same reasons: a context minted for one action cannot be spent on another, on
+-- another space, or in somebody else's name.
+underContext ::
+  (Applicative f) =>
+  MemoryAccessContext ->
+  MemoryPermission ->
+  MemorySpaceId ->
+  RecordedPrincipal ->
+  f (Either SessionWriteError a) ->
+  f (Either SessionWriteError a)
+underContext context permission space actor run
+  | not (memoryContextAllows permission context) =
+      pure (Left (SessionNotPermitted permission))
+  | space /= authorizedSpace =
+      pure (Left (SessionSpaceMismatch space authorizedSpace))
+  | actor /= authorizedActor =
+      pure (Left (SessionActorMismatch actor authorizedActor))
+  | otherwise = run
+  where
+    authorizedSpace = memoryContextSpace context
+    authorizedActor = memoryContextRecordedActor context
+
+-- | Gate a deprecated wrapper on the one space it is allowed to touch.
+inLegacySpaceOnly ::
+  (Applicative f) =>
+  MemorySpaceId ->
+  f (Either SessionWriteError a) ->
+  f (Either SessionWriteError a)
+inLegacySpaceOnly space run
+  | space /= legacyMemorySpaceId = pure (Left (SessionSpaceMismatch space legacyMemorySpaceId))
+  | otherwise = run
 
 -- | The deepest delegation chain a session may declare. Far above any legitimate agent
 -- hierarchy; it exists to bound absurd input, not to express a product limit.
 maxDelegationDepth :: Int
 maxDelegationDepth = 64
 
+-- | Start a session in the space the context authorizes.
+startWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  StartSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+startWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (startIn cmdData)
+
+{-# DEPRECATED start "Use startWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: start a session in the legacy memory space, with no authorization context.
 start ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   StartSessionData ->
   Eff es (Either SessionWriteError SessionId)
-start cmdData =
+start cmdData = inLegacySpaceOnly cmdData.memorySpaceId (startIn cmdData)
+
+startIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  StartSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+startIn cmdData =
   case validateLineage cmdData of
     Just reason -> pure (Left (SessionInvalidLineage reason))
     Nothing -> do
@@ -257,11 +353,29 @@ sessionFailFields :: [FieldCheck FailSessionData]
 sessionFailFields =
   [("errorMessage", \d row -> row.errorMessage == Just d.errorMessage)]
 
+-- | Complete a session in the space the context authorizes.
+completeWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  CompleteSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+completeWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (completeIn cmdData)
+
+{-# DEPRECATED complete "Use completeWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: complete within the legacy memory space, with no authorization context.
 complete ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   CompleteSessionData ->
   Eff es (Either SessionWriteError SessionId)
-complete cmdData =
+complete cmdData = inLegacySpaceOnly cmdData.memorySpaceId (completeIn cmdData)
+
+completeIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  CompleteSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+completeIn cmdData =
   withExistingSession cmdData.sessionId \row status ->
     case status of
       StatusRunning -> runComplete
@@ -276,11 +390,29 @@ complete cmdData =
       runSessionCommand cmdData.sessionId (CompleteSession cmdData)
         >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . completeMismatch)
 
+-- | Fail a session in the space the context authorizes.
+failSessionWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  FailSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+failSessionWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (failSessionIn cmdData)
+
+{-# DEPRECATED failSession "Use failSessionWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: fail within the legacy memory space, with no authorization context.
 failSession ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   FailSessionData ->
   Eff es (Either SessionWriteError SessionId)
-failSession cmdData =
+failSession cmdData = inLegacySpaceOnly cmdData.memorySpaceId (failSessionIn cmdData)
+
+failSessionIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  FailSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+failSessionIn cmdData =
   withExistingSession cmdData.sessionId \row status ->
     case status of
       StatusRunning -> runFail
@@ -296,11 +428,29 @@ failSession cmdData =
       runSessionCommand cmdData.sessionId (FailSession cmdData)
         >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . failMismatch)
 
+-- | Park a session in the space the context authorizes.
+awaitInputWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  AwaitInputData ->
+  Eff es (Either SessionWriteError SessionId)
+awaitInputWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (awaitInputIn cmdData)
+
+{-# DEPRECATED awaitInput "Use awaitInputWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: park within the legacy memory space, with no authorization context.
 awaitInput ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   AwaitInputData ->
   Eff es (Either SessionWriteError SessionId)
-awaitInput cmdData =
+awaitInput cmdData = inLegacySpaceOnly cmdData.memorySpaceId (awaitInputIn cmdData)
+
+awaitInputIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  AwaitInputData ->
+  Eff es (Either SessionWriteError SessionId)
+awaitInputIn cmdData =
   withExistingSession cmdData.sessionId \row status ->
     case status of
       StatusAwaiting -> pure (idempotentOr "awaitInput" awaitMismatch row cmdData.sessionId)
@@ -320,11 +470,28 @@ awaitInput cmdData =
 -- The precheck below only shapes a friendly early error. The real enforcement is the
 -- aggregate's own guard, which keiro re-evaluates after any optimistic-concurrency retry —
 -- so a stale caller cannot resume a wait that was already resumed and re-parked.
+resumeWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  ResumeSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+resumeWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (resumeIn cmdData)
+
+{-# DEPRECATED resume "Use resumeWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: resume within the legacy memory space, with no authorization context.
 resume ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   ResumeSessionData ->
   Eff es (Either SessionWriteError SessionId)
-resume cmdData =
+resume cmdData = inLegacySpaceOnly cmdData.memorySpaceId (resumeIn cmdData)
+
+resumeIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  ResumeSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+resumeIn cmdData =
   withExistingSession cmdData.sessionId \row status ->
     case status of
       -- Already running: a re-delivery of *this* resume is a success; a different input
@@ -344,7 +511,25 @@ resume cmdData =
 --
 -- An operator/host override for unsticking a session whose awaited key is lost or wrong.
 -- It is inherently last-writer-wins: if the session is concurrently re-parked on a new
--- wait, a force resume may answer the wrong one. Prefer 'resume'.
+-- wait, a force resume may answer the wrong one. Prefer 'resumeWithContext'.
+--
+-- @force@ waives the correlation-key check and nothing else. The session must still belong to
+-- the space this context authorizes, and the aggregate enforces that independently.
+forceResumeWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  SessionId ->
+  Text ->
+  UTCTime ->
+  Eff es (Either SessionWriteError SessionId)
+forceResumeWithContext context sid input resumedAt =
+  resumeWithContext
+    context
+    (forcedResumeData (memoryContextSpace context) (memoryContextRecordedActor context) sid input resumedAt)
+
+{-# DEPRECATED forceResume "Use forceResumeWithContext. This wrapper acts only in legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: force-resume within the legacy memory space, with no authorization context.
 forceResume ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
@@ -352,20 +537,43 @@ forceResume ::
   UTCTime ->
   Eff es (Either SessionWriteError SessionId)
 forceResume sid input resumedAt =
-  resume
-    ResumeSessionData
-      { sessionId = sid,
-        correlationKey = Nothing,
-        force = True,
-        input,
-        resumedAt
-      }
+  resumeIn (forcedResumeData legacyMemorySpaceId UnattributedPrincipal sid input resumedAt)
 
+forcedResumeData :: MemorySpaceId -> RecordedPrincipal -> SessionId -> Text -> UTCTime -> ResumeSessionData
+forcedResumeData memorySpaceId actorPrincipal sid input resumedAt =
+  ResumeSessionData
+    { sessionId = sid,
+      memorySpaceId,
+      actorPrincipal,
+      correlationKey = Nothing,
+      force = True,
+      input,
+      resumedAt
+    }
+
+-- | Record an interactive session in the space the context authorizes.
+recordInteractiveWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  RecordInteractiveSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+recordInteractiveWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (recordInteractiveIn cmdData)
+
+{-# DEPRECATED recordInteractive "Use recordInteractiveWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: record an interactive session in the legacy memory space, with no context.
 recordInteractive ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   RecordInteractiveSessionData ->
   Eff es (Either SessionWriteError SessionId)
-recordInteractive cmdData = do
+recordInteractive cmdData = inLegacySpaceOnly cmdData.memorySpaceId (recordInteractiveIn cmdData)
+
+recordInteractiveIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  RecordInteractiveSessionData ->
+  Eff es (Either SessionWriteError SessionId)
+recordInteractiveIn cmdData = do
   existing <- getById cmdData.sessionId
   case existing of
     Left err -> pure (Left (SessionReadFailed err))
@@ -387,11 +595,28 @@ recordInteractive cmdData = do
 -- surfaced as @StoreFailed@: turn ids are host-generated, so a cross-session collision is a
 -- caller bug, and mapping that specific SQL error from inside keiro's projection
 -- transaction is not worth the machinery.
+recordTurnWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  RecordTurnData ->
+  Eff es (Either SessionWriteError SessionId)
+recordTurnWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (recordTurnIn cmdData)
+
+{-# DEPRECATED recordTurn "Use recordTurnWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: record a turn within the legacy memory space, with no authorization context.
 recordTurn ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   RecordTurnData ->
   Eff es (Either SessionWriteError SessionId)
-recordTurn cmdData =
+recordTurn cmdData = inLegacySpaceOnly cmdData.memorySpaceId (recordTurnIn cmdData)
+
+recordTurnIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  RecordTurnData ->
+  Eff es (Either SessionWriteError SessionId)
+recordTurnIn cmdData =
   withExistingSession cmdData.sessionId \_row status ->
     case status of
       StatusRunning -> do

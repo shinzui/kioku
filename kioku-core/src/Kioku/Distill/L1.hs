@@ -36,6 +36,13 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.ReadModel (ReadModelError)
+import Kioku.Api.Access
+  ( MemoryAccessContext,
+    MemoryPermission (..),
+    memoryContextAllows,
+    memoryContextRecordedActor,
+    memoryContextSpace,
+  )
 import Kioku.Api.Scope (MemoryScope, scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..), confidenceFromText, memoryTypeFromText)
 import Kioku.Distill.Consolidate
@@ -73,6 +80,8 @@ data L1Error
   | L1ExtractionFailed !Text
   | L1ConsolidationFailed !Text
   | L1MemoryWriteFailed !Memory.MemoryWriteError
+  | -- | the context does not authorize distillation in this space
+    L1NotPermitted !MemoryPermission
   deriving stock (Generic, Show)
 
 data L1Summary = L1Summary
@@ -142,50 +151,58 @@ data AuditRow = AuditRow
 -- skipped before any LLM call, which is what makes keiro's at-least-once timer
 -- re-fires cheap. The watermark advances only when the whole fold succeeds, so
 -- a failed pass is retried in full.
+--
+-- The pass writes memories, so it needs a 'MemoryAccessContext' — the one for the memory space
+-- the session belongs to. It demands 'MemoryDistill' before anything else, so an unauthorized
+-- pass fails before it spends a single LLM token rather than after, at the first write.
 distillSessionL1 ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
   L1RunMode ->
   DistillRuntime ->
   FindMergeCandidates es ->
   SessionId ->
   Eff es (Either L1Error L1Outcome)
-distillSessionL1 mode rt finder sid = do
-  sessionResult <- Session.getById sid
-  case sessionResult of
-    Left err -> pure (Left (L1SessionReadFailed err))
-    Right Nothing -> pure (Left (L1SessionNotFound sid))
-    Right (Just session) -> do
-      turnsResult <- Session.getTurns sid
-      case turnsResult of
-        Left err -> pure (Left (L1TurnReadFailed err))
-        Right turns -> do
-          let maxTurnIndex = maximum (0 : fmap (.turnIndex) turns)
-          upToDate <- watermarkCovers mode sid maxTurnIndex
-          if upToDate
-            then pure (Right L1SkippedUpToDate)
-            else do
-              inputResult <- buildExtractInput sid session turns
-              case inputResult of
-                Left err -> pure (Left err)
-                Right input -> do
-                  extractedResult <- liftIO (runExtraction rt input)
-                  case extractedResult of
-                    Left err -> pure (Left (L1ExtractionFailed (Text.pack (show err))))
-                    Right output -> do
-                      foldResult <-
-                        foldM
-                          (stepAtom maxTurnIndex session)
-                          (Right emptySummary {extracted = length output.atoms})
-                          output.atoms
-                      case foldResult of
-                        Left err -> pure (Left err)
-                        Right summary -> do
-                          writeWatermark sid maxTurnIndex
-                          pure (Right (L1Distilled summary))
+distillSessionL1 context mode rt finder sid
+  | not (memoryContextAllows MemoryDistill context) =
+      pure (Left (L1NotPermitted MemoryDistill))
+  | otherwise = do
+      sessionResult <- Session.getById sid
+      case sessionResult of
+        Left err -> pure (Left (L1SessionReadFailed err))
+        Right Nothing -> pure (Left (L1SessionNotFound sid))
+        Right (Just session) -> do
+          turnsResult <- Session.getTurns sid
+          case turnsResult of
+            Left err -> pure (Left (L1TurnReadFailed err))
+            Right turns -> do
+              let maxTurnIndex = maximum (0 : fmap (.turnIndex) turns)
+              upToDate <- watermarkCovers mode sid maxTurnIndex
+              if upToDate
+                then pure (Right L1SkippedUpToDate)
+                else do
+                  inputResult <- buildExtractInput sid session turns
+                  case inputResult of
+                    Left err -> pure (Left err)
+                    Right input -> do
+                      extractedResult <- liftIO (runExtraction rt input)
+                      case extractedResult of
+                        Left err -> pure (Left (L1ExtractionFailed (Text.pack (show err))))
+                        Right output -> do
+                          foldResult <-
+                            foldM
+                              (stepAtom maxTurnIndex session)
+                              (Right emptySummary {extracted = length output.atoms})
+                              output.atoms
+                          case foldResult of
+                            Left err -> pure (Left err)
+                            Right summary -> do
+                              writeWatermark sid maxTurnIndex
+                              pure (Right (L1Distilled summary))
   where
     stepAtom _ _ (Left err) _ = pure (Left err)
     stepAtom maxTurnIndex session (Right summary) atom =
-      applyAtom rt finder sid session maxTurnIndex summary atom
+      applyAtom context rt finder sid session maxTurnIndex summary atom
 
 watermarkCovers ::
   (Store :> es) =>
@@ -290,6 +307,7 @@ fallbackMemoryText sid scope = do
 
 applyAtom ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
   DistillRuntime ->
   FindMergeCandidates es ->
   SessionId ->
@@ -298,7 +316,7 @@ applyAtom ::
   L1Summary ->
   ExtractedAtom ->
   Eff es (Either L1Error L1Summary)
-applyAtom rt finder sid session maxTurnIndex summary atom = do
+applyAtom context rt finder sid session maxTurnIndex summary atom = do
   candidatesResult <- finder.runFindMergeCandidates (sessionScope session) (unField atom.content)
   case candidatesResult of
     Left err -> pure (Left (L1MemoryReadFailed err))
@@ -315,7 +333,7 @@ applyAtom rt finder sid session maxTurnIndex summary atom = do
       case decisionResult of
         Left err -> pure (Left (L1ConsolidationFailed (Text.pack (show err))))
         Right decision -> do
-          appliedResult <- applyDecision sid session atom decision
+          appliedResult <- applyDecision context sid session atom decision
           case appliedResult of
             Left err -> pure (Left err)
             Right applied -> do
@@ -328,12 +346,13 @@ applyAtom rt finder sid session maxTurnIndex summary atom = do
 -- keiro's at-least-once timer contract.
 applyDecision ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
   SessionId ->
   SessionRow ->
   ExtractedAtom ->
   ConsolidationDecision ->
   Eff es (Either L1Error AppliedDecision)
-applyDecision sid session atom decision =
+applyDecision context sid session atom decision =
   case decision.action of
     SkipAtom -> pure (Right (appliedSkip Nothing))
     StoreAtom -> storeWinner Nothing Nothing
@@ -360,7 +379,7 @@ applyDecision sid session atom decision =
                 appliedNote = note
               }
         )
-        <$> recordAtom sid session atom decision winner supersedes
+        <$> recordAtom context sid session atom decision winner supersedes
 
     mergeInto action = do
       let requested = nub (parsedTargetIds decision)
@@ -383,11 +402,14 @@ applyDecision sid session atom decision =
                 Left err -> pure (Left err)
                 Right [] -> storeWinner (Just degradeNote) Nothing
                 Right targets@(firstTarget : _) -> do
-                  winnerResult <- recordAtom sid session atom decision winner (Just firstTarget)
+                  winnerResult <- recordAtom context sid session atom decision winner (Just firstTarget)
                   case winnerResult of
                     Left err -> pure (Left err)
                     Right stored -> do
-                      mergeResults <- traverse (\target -> requireMemoryWrite =<< Memory.merge target stored) targets
+                      mergeResults <-
+                        traverse
+                          (\target -> requireMemoryWrite =<< Memory.mergeWithContext context target stored)
+                          targets
                       pure $
                         case lefts mergeResults of
                           err : _ -> Left err
@@ -428,8 +450,13 @@ retiredWinnerNote :: Text -> Text
 retiredWinnerNote status =
   "this atom was already distilled and is now " <> status <> "; already represented"
 
+-- | The distilled memory belongs to the space the pass was authorized for, and is attributed to
+-- that context's principal — the thing that ran the distillation, not the agent whose session
+-- produced the evidence. @agentId@ still carries that agent, unchanged, as the organizing label
+-- it always was.
 recordAtom ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
   SessionId ->
   SessionRow ->
   ExtractedAtom ->
@@ -437,12 +464,16 @@ recordAtom ::
   MemoryId ->
   Maybe MemoryId ->
   Eff es (Either L1Error MemoryId)
-recordAtom sid session atom decision memoryId supersedes = do
+recordAtom context sid session atom decision memoryId supersedes = do
   now <- liftIO getCurrentTime
   requireMemoryWrite
-    =<< Memory.record
+    =<< Memory.recordWithContext
+      context
       RecordMemoryData
         { memoryId,
+          memorySpaceId = memoryContextSpace context,
+          actorPrincipal = memoryContextRecordedActor context,
+          ownerPrincipal = Nothing,
           agentId = session.agentId,
           sessionId = Just sid,
           scope = sessionScope session,

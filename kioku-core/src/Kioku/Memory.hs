@@ -1,11 +1,51 @@
+-- | Writing and reading memories.
+--
+-- Every write takes a 'MemoryAccessContext' first. That record is the statement "somebody has
+-- already decided this caller may do this here" — obtained from
+-- 'Kioku.Api.Access.authorizeMemoryAccess' behind a service boundary, or from
+-- 'Kioku.Api.Access.assumeAuthorizedMemoryContext' in a trusted in-process host. Kioku's core
+-- never derives one.
+--
+-- Each write asks the context for one permission:
+--
+-- * 'MemoryRecord' — 'recordWithContext', 'updateTagsWithContext',
+--   'updateConfidenceWithContext'. These create or amend a memory.
+-- * 'MemoryForget' — 'supersedeWithContext', 'archiveWithContext', 'mergeWithContext'. These
+--   retire one.
+--
+-- The context is checked against the command, not merged into it: the payload names its own
+-- memory space and actor, and a payload that disagrees with the context that authorized it is
+-- rejected rather than quietly rewritten. That keeps the stored event and the decision that
+-- allowed it the same fact.
+--
+-- The unsuffixed functions ('record', 'archive', …) remain for one release as deprecated
+-- compatibility wrappers. They take no context and refuse any payload naming a space other than
+-- 'legacyMemorySpaceId', so they cannot reach data belonging to anybody else.
+--
+-- Reads are /not/ partitioned yet. The read-model tables have no memory-space column until the
+-- projection migration lands, so the query functions below still return rows from every space
+-- and deliberately do not take a context: a query that accepted one would claim an isolation it
+-- cannot perform. See @docs\/user\/upgrading-to-memory-spaces.md@.
 module Kioku.Memory
   ( MemoryWriteError (..),
+
+    -- * Writing memory
+    recordWithContext,
+    supersedeWithContext,
+    archiveWithContext,
+    updateTagsWithContext,
+    updateConfidenceWithContext,
+    mergeWithContext,
+
+    -- * Deprecated compatibility wrappers, confined to the legacy memory space
     record,
     supersede,
     archive,
     updateTags,
     updateConfidence,
     merge,
+
+    -- * Reading memory
     getMemoryRowById,
     getActiveRowsInNamespace,
     getActiveRowsByScope,
@@ -21,6 +61,16 @@ import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
+import Kioku.Api.Access
+  ( MemoryAccessContext,
+    MemoryPermission (..),
+    MemorySpaceId,
+    RecordedPrincipal (..),
+    legacyMemorySpaceId,
+    memoryContextAllows,
+    memoryContextRecordedActor,
+    memoryContextSpace,
+  )
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryType, confidenceToText, memoryTypeToText)
 import Kioku.Distill.L2 (l2SceneTimerScheduleProjection)
@@ -54,13 +104,78 @@ data MemoryWriteError
   | MemoryNotFound
   | MemoryNotActive
   | MemoryConflict !Text
+  | -- | the context authorized other actions, but not this one
+    MemoryNotPermitted !MemoryPermission
+  | -- | the command names a memory space the context was not minted for:
+    -- @MemorySpaceMismatch requested authorized@
+    MemorySpaceMismatch !MemorySpaceId !MemorySpaceId
+  | -- | the command attributes the write to somebody other than the context's own principal
+    MemoryActorMismatch !RecordedPrincipal !RecordedPrincipal
   deriving stock (Generic, Show)
 
+-- | Gate a write on the decision that authorized it.
+--
+-- Three things have to agree and none of them is redundant. The permission check is what stops a
+-- context minted for reading from being spent on a write. The space check is the isolation
+-- boundary itself. The actor check is what stops a caller authorized as one principal from
+-- writing an event that says another principal acted — which would be a forged audit trail, and
+-- is the reason the actor is checked rather than merely defaulted.
+underContext ::
+  (Applicative f) =>
+  MemoryAccessContext ->
+  MemoryPermission ->
+  MemorySpaceId ->
+  RecordedPrincipal ->
+  f (Either MemoryWriteError a) ->
+  f (Either MemoryWriteError a)
+underContext context permission space actor run
+  | not (memoryContextAllows permission context) =
+      pure (Left (MemoryNotPermitted permission))
+  | space /= authorizedSpace =
+      pure (Left (MemorySpaceMismatch space authorizedSpace))
+  | actor /= authorizedActor =
+      pure (Left (MemoryActorMismatch actor authorizedActor))
+  | otherwise = run
+  where
+    authorizedSpace = memoryContextSpace context
+    authorizedActor = memoryContextRecordedActor context
+
+-- | Gate a deprecated wrapper on the one space it is allowed to touch.
+--
+-- A wrapper that silently retargeted a payload into the legacy space would reintroduce exactly
+-- the defaulting this whole change exists to remove, so it refuses instead.
+inLegacySpaceOnly ::
+  (Applicative f) =>
+  MemorySpaceId ->
+  f (Either MemoryWriteError a) ->
+  f (Either MemoryWriteError a)
+inLegacySpaceOnly space run
+  | space /= legacyMemorySpaceId = pure (Left (MemorySpaceMismatch space legacyMemorySpaceId))
+  | otherwise = run
+
+-- | Record a new memory in the space the context authorizes.
+recordWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  RecordMemoryData ->
+  Eff es (Either MemoryWriteError MemoryId)
+recordWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (recordIn cmdData)
+
+{-# DEPRECATED record "Use recordWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: record into the legacy memory space, with no authorization context.
 record ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   RecordMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
-record cmdData = do
+record cmdData = inLegacySpaceOnly cmdData.memorySpaceId (recordIn cmdData)
+
+recordIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  RecordMemoryData ->
+  Eff es (Either MemoryWriteError MemoryId)
+recordIn cmdData = do
   existing <- lookupMemory cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
@@ -71,11 +186,29 @@ record cmdData = do
   where
     recordMismatch = mismatchOf memoryRecordFields cmdData
 
+-- | Retire a memory in favour of a newer one, in the space the context authorizes.
+supersedeWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  SupersedeMemoryData ->
+  Eff es (Either MemoryWriteError MemoryId)
+supersedeWithContext context cmdData =
+  underContext context MemoryForget cmdData.memorySpaceId cmdData.actorPrincipal (supersedeIn cmdData)
+
+{-# DEPRECATED supersede "Use supersedeWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: supersede within the legacy memory space, with no authorization context.
 supersede ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SupersedeMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
-supersede cmdData = do
+supersede cmdData = inLegacySpaceOnly cmdData.memorySpaceId (supersedeIn cmdData)
+
+supersedeIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  SupersedeMemoryData ->
+  Eff es (Either MemoryWriteError MemoryId)
+supersedeIn cmdData = do
   existing <- lookupMemory cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
@@ -90,11 +223,29 @@ supersede cmdData = do
   where
     supersedeMismatch = mismatchOf memorySupersedeFields cmdData
 
+-- | Archive a memory, in the space the context authorizes.
+archiveWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  ArchiveMemoryData ->
+  Eff es (Either MemoryWriteError MemoryId)
+archiveWithContext context cmdData =
+  underContext context MemoryForget cmdData.memorySpaceId cmdData.actorPrincipal (archiveIn cmdData)
+
+{-# DEPRECATED archive "Use archiveWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: archive within the legacy memory space, with no authorization context.
 archive ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   ArchiveMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
-archive cmdData = do
+archive cmdData = inLegacySpaceOnly cmdData.memorySpaceId (archiveIn cmdData)
+
+archiveIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  ArchiveMemoryData ->
+  Eff es (Either MemoryWriteError MemoryId)
+archiveIn cmdData = do
   existing <- lookupMemory cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
@@ -107,11 +258,29 @@ archive cmdData = do
   where
     archiveMismatch = mismatchOf memoryArchiveFields cmdData
 
+-- | Replace a memory's tags, in the space the context authorizes.
+updateTagsWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  UpdateMemoryTagsData ->
+  Eff es (Either MemoryWriteError MemoryId)
+updateTagsWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (updateTagsIn cmdData)
+
+{-# DEPRECATED updateTags "Use updateTagsWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: retag within the legacy memory space, with no authorization context.
 updateTags ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   UpdateMemoryTagsData ->
   Eff es (Either MemoryWriteError MemoryId)
-updateTags cmdData = do
+updateTags cmdData = inLegacySpaceOnly cmdData.memorySpaceId (updateTagsIn cmdData)
+
+updateTagsIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  UpdateMemoryTagsData ->
+  Eff es (Either MemoryWriteError MemoryId)
+updateTagsIn cmdData = do
   existing <- lookupMemory cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
@@ -121,11 +290,29 @@ updateTags cmdData = do
       | row.tags == cmdData.tags -> pure (Right cmdData.memoryId)
       | otherwise -> runMemoryCommand cmdData.memoryId (UpdateMemoryTags cmdData)
 
+-- | Re-score a memory's confidence, in the space the context authorizes.
+updateConfidenceWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  UpdateMemoryConfidenceData ->
+  Eff es (Either MemoryWriteError MemoryId)
+updateConfidenceWithContext context cmdData =
+  underContext context MemoryRecord cmdData.memorySpaceId cmdData.actorPrincipal (updateConfidenceIn cmdData)
+
+{-# DEPRECATED updateConfidence "Use updateConfidenceWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: re-score within the legacy memory space, with no authorization context.
 updateConfidence ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   UpdateMemoryConfidenceData ->
   Eff es (Either MemoryWriteError MemoryId)
-updateConfidence cmdData = do
+updateConfidence cmdData = inLegacySpaceOnly cmdData.memorySpaceId (updateConfidenceIn cmdData)
+
+updateConfidenceIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  UpdateMemoryConfidenceData ->
+  Eff es (Either MemoryWriteError MemoryId)
+updateConfidenceIn cmdData = do
   existing <- lookupMemory cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
@@ -135,18 +322,49 @@ updateConfidence cmdData = do
       | row.confidence == confidenceToText cmdData.confidence -> pure (Right cmdData.memoryId)
       | otherwise -> runMemoryCommand cmdData.memoryId (UpdateMemoryConfidence cmdData)
 
--- | Merge @loser@ into @winner@.
+-- | Merge @loser@ into @winner@, in the space the context authorizes.
 --
 -- Unlike the other writes, @mergedAt@ is generated here rather than supplied by the caller,
 -- so a retry cannot re-deliver an identical timestamp. Idempotency therefore matches on the
 -- merge target alone: merging into the same winner twice is a duplicate, merging into a
 -- different one is a conflict.
+--
+-- Both memories must live in the authorized space. The loser is checked by the aggregate guard
+-- on the command below; the winner is only referenced, and 'Kioku.Distill.L1' — the one caller
+-- that supplies a winner it did not just write — resolves both from the same session.
+mergeWithContext ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  MemoryId ->
+  MemoryId ->
+  Eff es (Either MemoryWriteError MemoryId)
+mergeWithContext context loser winner =
+  underContext context MemoryForget space actor (mergeIn space actor loser winner)
+  where
+    space = memoryContextSpace context
+    actor = memoryContextRecordedActor context
+
+{-# DEPRECATED merge "Use mergeWithContext. This wrapper writes only into legacyMemorySpaceId and will be removed." #-}
+
+-- | Deprecated: merge within the legacy memory space, with no authorization context.
+--
+-- The recorded actor is 'UnattributedPrincipal' rather than an invented one: this path has no
+-- context, so nothing here knows who is merging.
 merge ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   MemoryId ->
   MemoryId ->
   Eff es (Either MemoryWriteError MemoryId)
-merge loser winner = do
+merge = mergeIn legacyMemorySpaceId UnattributedPrincipal
+
+mergeIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemorySpaceId ->
+  RecordedPrincipal ->
+  MemoryId ->
+  MemoryId ->
+  Eff es (Either MemoryWriteError MemoryId)
+mergeIn memorySpaceId actorPrincipal loser winner = do
   existing <- lookupMemory loser
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
@@ -155,7 +373,17 @@ merge loser winner = do
       | row.status /= "active" -> pure (idempotentOr "merge" mergeMismatch row loser)
       | otherwise -> do
           now <- liftIO getCurrentTime
-          runMemoryCommand loser (MergeMemory (MergeMemoryData loser winner now))
+          runMemoryCommand
+            loser
+            ( MergeMemory
+                MergeMemoryData
+                  { memoryId = loser,
+                    memorySpaceId,
+                    actorPrincipal,
+                    mergedInto = winner,
+                    mergedAt = now
+                  }
+            )
             >>= acceptRejectedIfMatches loser (isNothing . mergeMismatch)
   where
     mergeMismatch = mismatchOf memoryMergeFields winner
@@ -177,6 +405,13 @@ type FieldCheck cmd = (Text, cmd -> MemoryRow -> Bool)
 -- Everything that carries meaning — content, scope, type, priority, confidence, tags,
 -- lineage, and the merge/supersession target — is compared, which is what the review
 -- actually asked for: a reused id with different /content/ must not report success.
+--
+-- The memory space is deliberately absent from these comparisons, and that is a known gap
+-- rather than an oversight: 'MemoryRow' has no space column until the read-model migration adds
+-- one. Until then, a caller that presents the id of a memory in /another/ space can learn from
+-- an idempotent answer that the id exists and whether it is still active. It cannot change
+-- anything — the aggregate's own guard refuses every command naming the wrong space — and it
+-- cannot read any content back. Closing the residual oracle needs the column.
 mismatchOf :: [FieldCheck cmd] -> cmd -> MemoryRow -> Maybe Text
 mismatchOf checks cmd row =
   fst <$> find (\(_, matches) -> not (matches cmd row)) checks

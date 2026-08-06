@@ -59,6 +59,7 @@ import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..))
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), StartSessionData (..))
+import Kioku.SpaceFixtures (testActorPrincipal, testContext, testContextProvider, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -85,7 +86,7 @@ tests =
   testGroup
     "Distillation pyramid"
     [ testCase "replay distills duplicate turns into merged atom scene and persona" testReplayDistillation,
-      testCase "re-running distillSessionL1 creates no new memories or audit rows" testRerunIdempotent,
+      testCase "re-running distillSessionL1 testContext creates no new memories or audit rows" testRerunIdempotent,
       testCase "consolidation failure stores nothing and fails the pass" testConsolidationFailure,
       testCase "merge with a missing target drops it and stays convergent" testMergeMissingTarget,
       testCase "watermark skips re-extraction until a new turn arrives" testWatermarkSkip,
@@ -131,7 +132,7 @@ confidencePropagationTests =
 -- the only thing standing between that mistake and production, so it asserts the
 -- count rises on *both* changes, not just the first.
 --
--- The walk is genuinely @high -> medium -> low@ on purpose: 'Memory.updateConfidence'
+-- The walk is genuinely @high -> medium -> low@ on purpose: 'Memory.updateConfidenceWithContext'
 -- refuses to emit an event when the confidence is unchanged, so re-applying the same
 -- value would schedule nothing and pass this test for the wrong reason.
 --
@@ -150,15 +151,17 @@ testConfidenceSchedulesDistinctSceneTimers = withDistillEnv \env -> do
       afterRecord <- countDueTimers horizon
 
       lowered <-
-        Memory.updateConfidence
-          UpdateMemoryConfidenceData {memoryId, confidence = MediumConfidence, updatedAt = now}
-      void (liftIO (expectRight "Memory.updateConfidence to medium" lowered))
+        Memory.updateConfidenceWithContext
+          testContext
+          UpdateMemoryConfidenceData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId, confidence = MediumConfidence, updatedAt = now}
+      void (liftIO (expectRight "Memory.updateConfidenceWithContext testContext to medium" lowered))
       afterFirst <- countDueTimers horizon
 
       loweredAgain <-
-        Memory.updateConfidence
-          UpdateMemoryConfidenceData {memoryId, confidence = LowConfidence, updatedAt = now}
-      void (liftIO (expectRight "Memory.updateConfidence to low" loweredAgain))
+        Memory.updateConfidenceWithContext
+          testContext
+          UpdateMemoryConfidenceData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId, confidence = LowConfidence, updatedAt = now}
+      void (liftIO (expectRight "Memory.updateConfidenceWithContext testContext to low" loweredAgain))
       afterSecond <- countDueTimers horizon
       pure (afterRecord, afterFirst, afterSecond)
   case result of
@@ -184,12 +187,13 @@ testTagsUpdateSchedulesNoSceneTimer = withDistillEnv \env -> do
       recordForgetFixture memoryId scope "Content for the tags timer test" now
       afterRecord <- countDueTimers horizon
 
-      -- A genuinely different tag set: 'Memory.updateTags' short-circuits on an
+      -- A genuinely different tag set: 'Memory.updateTagsWithContext' short-circuits on an
       -- unchanged one, which would make this pass for the wrong reason.
       retagResult <-
-        Memory.updateTags
-          UpdateMemoryTagsData {memoryId, tags = Set.fromList ["retagged"], updatedAt = now}
-      void (liftIO (expectRight "Memory.updateTags" retagResult))
+        Memory.updateTagsWithContext
+          testContext
+          UpdateMemoryTagsData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId, tags = Set.fromList ["retagged"], updatedAt = now}
+      void (liftIO (expectRight "Memory.updateTagsWithContext" retagResult))
       afterRetag <- countDueTimers horizon
       pure (afterRecord, afterRetag)
   case result of
@@ -220,9 +224,10 @@ testWorkerPropagatesConfidence = withDistillWorkspaceEnv \env workspace -> do
       personaRunsBefore <- liftIO (readIORef calls.personaCalls)
 
       lowered <-
-        Memory.updateConfidence
-          UpdateMemoryConfidenceData {memoryId, confidence = LowConfidence, updatedAt = now}
-      void (liftIO (expectRight "Memory.updateConfidence" lowered))
+        Memory.updateConfidenceWithContext
+          testContext
+          UpdateMemoryConfidenceData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId, confidence = LowConfidence, updatedAt = now}
+      void (liftIO (expectRight "Memory.updateConfidenceWithContext" lowered))
       void (drainTimers runtime)
 
       refreshedScene <-
@@ -358,14 +363,14 @@ testEmptyScopeDeletesArtifacts = withDistillWorkspaceEnv \env workspace -> do
         liftIO ((&&) <$> doesFileExist scenePath <*> doesFileExist personaPath)
 
       -- Forget one of the two: the scene must rebuild from the survivor alone.
-      archivedAlpha <- Memory.archive ArchiveMemoryData {memoryId = alphaId, archivedAt = now}
-      void (liftIO (expectRight "Memory.archive alpha" archivedAlpha))
+      archivedAlpha <- Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = alphaId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archiveWithContext testContext alpha" archivedAlpha))
       afterOne <- regenerateScene runtime scope
       survivorScene <- liftIO (expectJustRow "the scene survives one forget" afterOne)
 
       -- Forget the last one: nothing may be left to regenerate from.
-      archivedBeta <- Memory.archive ArchiveMemoryData {memoryId = betaId, archivedAt = now}
-      void (liftIO (expectRight "Memory.archive beta" archivedBeta))
+      archivedBeta <- Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = betaId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archiveWithContext testContext beta" archivedBeta))
       emptyScene <- regenerateScene runtime scope
       emptyPersona <- regeneratePersona runtime scope
 
@@ -425,22 +430,25 @@ testForgetSchedulesSceneTimers = withDistillEnv \env -> do
         [archivedId, supersededId, supersederId, loserId, winnerId]
       afterRecords <- countDueTimers horizon
 
-      archived <- Memory.archive ArchiveMemoryData {memoryId = archivedId, archivedAt = now}
-      void (liftIO (expectRight "Memory.archive" archived))
+      archived <- Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = archivedId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archiveWithContext" archived))
       afterArchive <- countDueTimers horizon
 
       superseded <-
-        Memory.supersede
+        Memory.supersedeWithContext
+          testContext
           SupersedeMemoryData
             { memoryId = supersededId,
+              memorySpaceId = testSpace,
+              actorPrincipal = testActorPrincipal,
               supersededBy = supersederId,
               supersededAt = now
             }
-      void (liftIO (expectRight "Memory.supersede" superseded))
+      void (liftIO (expectRight "Memory.supersedeWithContext" superseded))
       afterSupersede <- countDueTimers horizon
 
-      merged <- Memory.merge loserId winnerId
-      void (liftIO (expectRight "Memory.merge" merged))
+      merged <- Memory.mergeWithContext testContext loserId winnerId
+      void (liftIO (expectRight "Memory.mergeWithContext" merged))
       afterMerge <- countDueTimers horizon
       pure (afterRecords, afterArchive, afterSupersede, afterMerge)
   case result of
@@ -476,15 +484,15 @@ testWorkerPropagatesArchive = withDistillWorkspaceEnv \env workspace -> do
       builtMirrors <- liftIO ((&&) <$> doesFileExist scenePath <*> doesFileExist personaPath)
 
       -- Forget alpha. The worker has to rebuild the scene from the survivor.
-      archivedAlpha <- Memory.archive ArchiveMemoryData {memoryId = alphaId, archivedAt = now}
-      void (liftIO (expectRight "Memory.archive alpha" archivedAlpha))
+      archivedAlpha <- Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = alphaId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archiveWithContext testContext alpha" archivedAlpha))
       void (drainTimers runtime)
       survivorScene <- getScenesByScope scope >>= liftIO . expectOneScene "after forgetting alpha"
       survivorMirror <- liftIO (TextIO.readFile scenePath)
 
       -- Forget beta, the last one. Every artifact has to go with it.
-      archivedBeta <- Memory.archive ArchiveMemoryData {memoryId = betaId, archivedAt = now}
-      void (liftIO (expectRight "Memory.archive beta" archivedBeta))
+      archivedBeta <- Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = betaId, archivedAt = now}
+      void (liftIO (expectRight "Memory.archiveWithContext testContext beta" archivedBeta))
       void (drainTimers runtime)
       emptyScenes <- getScenesByScope scope
       emptyPersona <- getPersonaByScope scope
@@ -551,9 +559,10 @@ testWorkerPropagatesSupersedeAndMerge = withDistillWorkspaceEnv \env workspace -
       recordForgetFixture newId supersedeScope newAddressContent now
       void (drainTimers supersedeRuntime)
       superseded <-
-        Memory.supersede
-          SupersedeMemoryData {memoryId = oldId, supersededBy = newId, supersededAt = now}
-      void (liftIO (expectRight "Memory.supersede" superseded))
+        Memory.supersedeWithContext
+          testContext
+          SupersedeMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = oldId, supersededBy = newId, supersededAt = now}
+      void (liftIO (expectRight "Memory.supersedeWithContext" superseded))
       void (drainTimers supersedeRuntime)
       supersedeScene <-
         getScenesByScope supersedeScope >>= liftIO . expectOneScene "after superseding"
@@ -562,8 +571,8 @@ testWorkerPropagatesSupersedeAndMerge = withDistillWorkspaceEnv \env workspace -
       recordForgetFixture loserId mergeScope loserContent now
       recordForgetFixture winnerId mergeScope winnerContent now
       void (drainTimers mergeRuntime)
-      merged <- Memory.merge loserId winnerId
-      void (liftIO (expectRight "Memory.merge" merged))
+      merged <- Memory.mergeWithContext testContext loserId winnerId
+      void (liftIO (expectRight "Memory.mergeWithContext" merged))
       void (drainTimers mergeRuntime)
       mergeScene <- getScenesByScope mergeScope >>= liftIO . expectOneScene "after merging"
 
@@ -603,6 +612,7 @@ drainTimers rt = go (50 :: Int) 0
           claimed <-
             runKiokuTimerWorkerOnce
               Nothing
+              testContextProvider
               rt
               (scopedScanCandidates 5)
               (addUTCTime 3600 realNow)
@@ -632,9 +642,13 @@ recordForgetFixture ::
   Eff es ()
 recordForgetFixture memoryId scope content now = do
   recorded <-
-    Memory.record
+    Memory.recordWithContext
+      testContext
       RecordMemoryData
-        { memoryId,
+        { memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
+          ownerPrincipal = Nothing,
+          memoryId,
           agentId = "test-agent",
           sessionId = Nothing,
           scope,
@@ -646,7 +660,7 @@ recordForgetFixture memoryId scope content now = do
           supersedes = Nothing,
           recordedAt = now
         }
-  void (liftIO (expectRight "Memory.record" recorded))
+  void (liftIO (expectRight "Memory.recordWithContext" recorded))
 
 -- | Pure tests over the 'Validatable' instances; no database, no LLM.
 validationTests :: TestTree
@@ -777,8 +791,8 @@ testReplayDistillation = withDistillWorkspaceEnv \env workspace -> do
   result <-
     runAppIO env do
       writeFixtureSession sid scope now
-      distillResult <- distillSessionL1 RespectWatermark runtime (scopedScanCandidates 5) sid
-      summary <- liftIO (expectDistilled "distillSessionL1" distillResult)
+      distillResult <- distillSessionL1 testContext RespectWatermark runtime (scopedScanCandidates 5) sid
+      summary <- liftIO (expectDistilled "distillSessionL1 testContext" distillResult)
       sceneResult <- regenerateScene runtime scope
       _scene <- liftIO (expectRight "regenerateScene" sceneResult)
       personaResult <- regeneratePersona runtime scope
@@ -817,11 +831,11 @@ testRerunIdempotent = withDistillEnv \env -> do
   result <-
     runAppIO env do
       writeFixtureSession sid fixtureScope now
-      first <- distillSessionL1 RespectWatermark runtime (scopedScanCandidates 5) sid
+      first <- distillSessionL1 testContext RespectWatermark runtime (scopedScanCandidates 5) sid
       summary1 <- liftIO (expectDistilled "first pass" first)
       memories1 <- loadMemoryStatuses fixtureScope
       audits1 <- loadAuditCount fixtureScope
-      second <- distillSessionL1 IgnoreWatermark runtime (scopedScanCandidates 5) sid
+      second <- distillSessionL1 testContext IgnoreWatermark runtime (scopedScanCandidates 5) sid
       summary2 <- liftIO (expectDistilled "second pass" second)
       memories2 <- loadMemoryStatuses fixtureScope
       audits2 <- loadAuditCount fixtureScope
@@ -851,7 +865,7 @@ testConsolidationFailure = withDistillEnv \env -> do
   result <-
     runAppIO env do
       writeFixtureSession sid fixtureScope now
-      distilled <- distillSessionL1 RespectWatermark runtime (scopedScanCandidates 5) sid
+      distilled <- distillSessionL1 testContext RespectWatermark runtime (scopedScanCandidates 5) sid
       memories <- loadMemoryStatuses fixtureScope
       audits <- loadAuditCount fixtureScope
       pure (distilled, memories, audits)
@@ -883,11 +897,11 @@ testMergeMissingTarget = withDistillEnv \env -> do
     runAppIO env do
       writeFixtureSession sid fixtureScope now
       seedMemory existingId sid fixtureScope "The user likes concise answers." now
-      first <- distillSessionL1 RespectWatermark runtime (scopedScanCandidates 5) sid
+      first <- distillSessionL1 testContext RespectWatermark runtime (scopedScanCandidates 5) sid
       summary1 <- liftIO (expectDistilled "first pass" first)
       memories1 <- loadMemoryStatuses fixtureScope
       audits1 <- loadAuditRows fixtureScope
-      second <- distillSessionL1 IgnoreWatermark runtime (scopedScanCandidates 5) sid
+      second <- distillSessionL1 testContext IgnoreWatermark runtime (scopedScanCandidates 5) sid
       void (liftIO (expectDistilled "second pass" second))
       memories2 <- loadMemoryStatuses fixtureScope
       audits2 <- loadAuditRows fixtureScope
@@ -921,11 +935,11 @@ testWatermarkSkip = withDistillEnv \env -> do
   result <-
     runAppIO env do
       writeRunningFixtureSession sid fixtureScope now
-      first <- distillSessionL1 RespectWatermark working (scopedScanCandidates 5) sid
+      first <- distillSessionL1 testContext RespectWatermark working (scopedScanCandidates 5) sid
       void (liftIO (expectDistilled "first pass" first))
-      skipped <- distillSessionL1 RespectWatermark exploding (scopedScanCandidates 5) sid
+      skipped <- distillSessionL1 testContext RespectWatermark exploding (scopedScanCandidates 5) sid
       recordFixtureTurn sid now 4 "Never deploy on a Friday."
-      afterNewTurn <- distillSessionL1 RespectWatermark exploding (scopedScanCandidates 5) sid
+      afterNewTurn <- distillSessionL1 testContext RespectWatermark exploding (scopedScanCandidates 5) sid
       pure (skipped, afterNewTurn)
   case result of
     Left storeErr -> assertFailure ("store error: " <> show storeErr)
@@ -1009,6 +1023,7 @@ testRecallCandidateWindow = withDistillEnv \env -> do
       seedCandidateWindow recallSid recallScope now recallDuplicateId
       recallOutcome <-
         distillSessionL1
+          testContext
           RespectWatermark
           (runtimeFor recallDuplicateId)
           (recallCandidates dummyEmbeddingModel capability 8)
@@ -1020,6 +1035,7 @@ testRecallCandidateWindow = withDistillEnv \env -> do
       seedCandidateWindow scanSid scanScope now scanDuplicateId
       scanOutcome <-
         distillSessionL1
+          testContext
           RespectWatermark
           (runtimeFor scanDuplicateId)
           (scopedScanCandidates 5)
@@ -1102,9 +1118,13 @@ seedMemoryWith ::
   Eff es ()
 seedMemoryWith memoryId sid scope content priority now = do
   recorded <-
-    Memory.record
+    Memory.recordWithContext
+      testContext
       RecordMemoryData
-        { memoryId,
+        { memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
+          ownerPrincipal = Nothing,
+          memoryId,
           agentId = "test-agent",
           sessionId = Just sid,
           scope,
@@ -1116,7 +1136,7 @@ seedMemoryWith memoryId sid scope content priority now = do
           supersedes = Nothing,
           recordedAt = now
         }
-  void (liftIO (expectRight "Memory.record" recorded))
+  void (liftIO (expectRight "Memory.recordWithContext" recorded))
 
 -- | Turn @n@ is recorded one minute after turn @n-1@, so the single debounced
 -- idle timer's @fire_at@ is observably re-armed forward by each turn.
@@ -1141,9 +1161,13 @@ writeRunningFixtureSession ::
   Eff es ()
 writeRunningFixtureSession sid scope now = do
   startResult <-
-    Session.start
+    Session.startWithContext
+      testContext
       StartSessionData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
+          ownerPrincipal = Nothing,
           agentId = "test-agent",
           focus = "style preference capture",
           scope,
@@ -1153,7 +1177,7 @@ writeRunningFixtureSession sid scope now = do
           delegationDepth = 0,
           startedAt = now
         }
-  void (liftIO (expectRight "Session.start" startResult))
+  void (liftIO (expectRight "Session.startWithContext" startResult))
   traverse_ (uncurry (recordFixtureTurn sid now)) fixtureTurns
 
 recordFixtureTurn ::
@@ -1165,9 +1189,12 @@ recordFixtureTurn ::
   Eff es ()
 recordFixtureTurn sid now turnIndex content = do
   turnResult <-
-    Session.recordTurn
+    Session.recordTurnWithContext
+      testContext
       RecordTurnData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
           turnId = idText sid <> "-turn-" <> Text.pack (show turnIndex),
           turnIndex,
           role = "user",
@@ -1177,7 +1204,7 @@ recordFixtureTurn sid now turnIndex content = do
           outputTokens = Nothing,
           recordedAt = turnRecordedAt now turnIndex
         }
-  void (liftIO (expectRight "Session.recordTurn" turnResult))
+  void (liftIO (expectRight "Session.recordTurnWithContext" turnResult))
 
 writeFixtureSession ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
@@ -1188,14 +1215,17 @@ writeFixtureSession ::
 writeFixtureSession sid scope now = do
   writeRunningFixtureSession sid scope now
   completeResult <-
-    Session.complete
+    Session.completeWithContext
+      testContext
       CompleteSessionData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
           completedAt = turnRecordedAt now (length fixtureTurns),
           modelUsed = Just "test-model",
           summary = Just "Captured style preferences."
         }
-  void (liftIO (expectRight "Session.complete" completeResult))
+  void (liftIO (expectRight "Session.completeWithContext" completeResult))
 
 replayRuntime :: IO DistillRuntime
 replayRuntime = do

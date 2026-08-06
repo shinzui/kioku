@@ -19,18 +19,20 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), scheduleTimerTx)
+import Kioku.Api.Access (MemorySpaceId)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L1 (scopedScanCandidates)
 import Kioku.Distill.L2 (l2SceneProcessManagerName)
 import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
-import Kioku.Distill.Timer (l1ExtractProcessManagerName)
+import Kioku.Distill.Timer (L1TimerPayload (..), l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
 import Kioku.Id (SessionId, genSessionId, idText)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
+import Kioku.SpaceFixtures (testActorPrincipal, testContext, testContextProvider, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -46,6 +48,8 @@ tests =
     "Timer worker"
     [ testCase "permanent failure dead-letters the timer" testPermanentFailureDeadLetters,
       testCase "transient failure reschedules with backoff" testTransientFailureReschedules,
+      testCase "a timer scheduled before memory spaces fires in the legacy space" testPrePartitionPayloadFiresInLegacySpace,
+      testCase "a malformed L1 payload dead-letters" testMalformedL1PayloadDeadLetters,
       testCase "unknown process manager requeues with a long delay" testUnknownProcessManagerRequeues,
       testCase "the attempt ceiling dead-letters" testAttemptCeilingDeadLetters,
       testCase "success marks the timer fired" testSuccessMarksFired,
@@ -79,7 +83,7 @@ testTransientFailureReschedules =
     before <- getCurrentTime
     row <- runOrFail env do
       startFixtureSession sid
-      scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) Aeson.Null (-1)
+      scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) (l1Payload testSpace) (-1)
       fireOnce failing
       fetchTimer timerId
     row.status @?= "scheduled"
@@ -87,6 +91,48 @@ testTransientFailureReschedules =
     -- and the first backoff step is 30s.
     row.attempts @?= 1
     assertDelayNear "first retry" before 30 row.fireAt
+
+-- | An L1 timer written before memory spaces existed has no @memorySpaceId@ in its payload.
+--
+-- It must still fire, in the legacy space, exactly like a stored event with no partition. The
+-- proof is indirect but decisive: the pass runs (and here fails on the stubbed extractor, so the
+-- timer is rescheduled) rather than dead-lettering, which is what an unreadable payload or a
+-- refused space would do.
+testPrePartitionPayloadFiresInLegacySpace :: Assertion
+testPrePartitionPayloadFiresInLegacySpace =
+  withTimerEnv \env rt -> do
+    timerId <- freshTimerId
+    sid <- genSessionId
+    let failing = rt {runExtract = \_ -> pure (Left (ProviderFailure "the model is down"))}
+        prePartitionPayload = Aeson.object ["kind" Aeson..= ("idle" :: Text), "turnCount" Aeson..= (1 :: Int)]
+    row <- runOrFail env do
+      startFixtureSession sid
+      scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) prePartitionPayload (-1)
+      fireOnce failing
+      fetchTimer timerId
+    row.status @?= "scheduled"
+
+-- | A payload this handler cannot read will not become readable on the next attempt, so it
+-- dead-letters where an operator can see it rather than retrying for an hour first.
+testMalformedL1PayloadDeadLetters :: Assertion
+testMalformedL1PayloadDeadLetters =
+  withTimerEnv \env rt -> do
+    timerId <- freshTimerId
+    sid <- genSessionId
+    row <- runOrFail env do
+      startFixtureSession sid
+      scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) Aeson.Null (-1)
+      fireOnce rt
+      fetchTimer timerId
+    row.status @?= "dead"
+    assertBool
+      ("last_error names the payload, got: " <> show row.lastError)
+      (maybe False (Text.isInfixOf "payload") row.lastError)
+
+-- | An L1 timer payload as the projection writes one today.
+l1Payload :: MemorySpaceId -> Aeson.Value
+l1Payload space =
+  Aeson.toJSON L1TimerPayload {kind = "idle", turnCount = Just 1, memorySpaceId = space}
 
 -- | keiro's claimDueTimer claims the earliest due timer regardless of process
 -- manager, so a timer no handler owns cannot be left alone — it must be put
@@ -148,7 +194,7 @@ testDrainProcessesAllDueTimers =
     (processed, rows) <- runOrFail env do
       forM_ timerIds \timerId ->
         scheduleTestTimer timerId l1ExtractProcessManagerName "not-a-session-id" Aeson.Null (-1)
-      processed <- drainKiokuTimers Nothing rt (scopedScanCandidates 5)
+      processed <- drainKiokuTimers Nothing testContextProvider rt (scopedScanCandidates 5)
       rows <- traverse fetchTimer timerIds
       pure (processed, rows)
     processed @?= 3
@@ -160,7 +206,7 @@ fireOnce ::
   Eff es ()
 fireOnce rt = do
   now <- liftIO getCurrentTime
-  void (runKiokuTimerWorkerOnce Nothing rt (scopedScanCandidates 5) now)
+  void (runKiokuTimerWorkerOnce Nothing testContextProvider rt (scopedScanCandidates 5) now)
 
 -- | Schedule a timer @offset@ seconds from now (negative means already due).
 scheduleTestTimer ::
@@ -190,9 +236,13 @@ startFixtureSession ::
 startFixtureSession sid = do
   now <- liftIO getCurrentTime
   started <-
-    Session.start
+    Session.startWithContext
+      testContext
       StartSessionData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
+          ownerPrincipal = Nothing,
           agentId = "test-agent",
           focus = "timer worker spec",
           scope = emptyScope,
@@ -202,7 +252,7 @@ startFixtureSession sid = do
           delegationDepth = 0,
           startedAt = now
         }
-  void (liftIO (expectRight "Session.start" started))
+  void (liftIO (expectRight "Session.startWithContext" started))
 
 -- | Drive the row to the brink of the ceiling so the next claim trips it.
 forceAttempts :: (Store :> es) => TimerId -> Int -> Eff es ()

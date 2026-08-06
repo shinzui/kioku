@@ -10,6 +10,7 @@ module Kioku.Distill.Timer.Worker
   )
 where
 
+import Data.Aeson qualified as Aeson
 import Data.Text qualified as Text
 import Data.Time (NominalDiffTime, addUTCTime)
 import Effectful (Eff, IOE, (:>))
@@ -24,11 +25,12 @@ import Keiro.Timer
     runTimerWorkerWith,
     scheduleTimerTx,
   )
+import Kioku.Api.Access (MemoryContextProvider (..))
 import Kioku.Distill.L1 (FindMergeCandidates, L1Error (..), L1RunMode (..), distillSessionL1)
 import Kioku.Distill.L2 (fireL2SceneTimer)
 import Kioku.Distill.L3 (fireL3PersonaTimer)
 import Kioku.Distill.Runtime (DistillRuntime)
-import Kioku.Distill.Timer (l1ExtractProcessManagerName)
+import Kioku.Distill.Timer (L1TimerPayload (..), l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Outcome
   ( FireOutcome (..),
     fireRetryDelay,
@@ -55,13 +57,22 @@ kiokuTimerWorkerOptions :: TimerWorkerOptions
 kiokuTimerWorkerOptions =
   TimerWorkerOptions {maxAttempts = Just 8, requeueStuckAfter = Just 300}
 
+-- | Fire one L1 distillation timer.
+--
+-- A background pass discovers its own work, so it cannot arrive holding an authorization
+-- context the way an interactive caller does. It reads the memory space out of the timer
+-- payload — put there by the projection from the session event, and defaulted to the legacy
+-- space for timers scheduled before that field existed — and asks the provider for a decision
+-- about /that/ space. An embedded host wires the provider to
+-- 'Kioku.Api.Access.assumeAuthorizedContextProvider'.
 fireL1Timer ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryContextProvider (Eff es) ->
   DistillRuntime ->
   FindMergeCandidates es ->
   TimerRow ->
   Eff es FireOutcome
-fireL1Timer rt finder row
+fireL1Timer contexts rt finder row
   | row.processManagerName /= l1ExtractProcessManagerName =
       pure FireNotMine
   | otherwise =
@@ -73,18 +84,34 @@ fireL1Timer rt finder row
             ( FireFailedPermanently
                 ("L1 timer correlation id is not a session id: " <> row.correlationId)
             )
-        Right sid -> do
-          result <- distillSessionL1 RespectWatermark rt finder sid
-          pure $
-            case result of
-              -- Both a real pass and a watermark skip mean this timer is done.
-              Right _outcome -> FireCompleted (timerMarkerEventId row.timerId)
-              -- A session may legitimately be gone (deleted data); nothing to do.
-              Left (L1SessionNotFound _) -> FireCompleted (timerMarkerEventId row.timerId)
-              -- Everything else — a failed LLM extraction or consolidation, a
-              -- read-model error, a failed write — is worth another attempt, and
-              -- the attempt ceiling bounds how many.
-              Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
+        Right sid ->
+          -- A payload this handler cannot parse will not parse on the next attempt either.
+          case Aeson.fromJSON @L1TimerPayload row.payload of
+            Aeson.Error err ->
+              pure (FireFailedPermanently ("L1 timer payload is malformed: " <> Text.pack err))
+            Aeson.Success payload -> do
+              decision <- contexts.contextForSpace payload.memorySpaceId
+              case decision of
+                -- Dead-letter rather than retry: a refusal to distill this space is a
+                -- configuration fact, and quietly retrying it every 30 seconds forever would
+                -- hide it. The dead-letter row is where an operator can see and requeue it.
+                Left denial ->
+                  pure
+                    ( FireFailedPermanently
+                        ("L1 timer is not authorized for its memory space: " <> Text.pack (show denial))
+                    )
+                Right context -> do
+                  result <- distillSessionL1 context RespectWatermark rt finder sid
+                  pure $
+                    case result of
+                      -- Both a real pass and a watermark skip mean this timer is done.
+                      Right _outcome -> FireCompleted (timerMarkerEventId row.timerId)
+                      -- A session may legitimately be gone (deleted data); nothing to do.
+                      Left (L1SessionNotFound _) -> FireCompleted (timerMarkerEventId row.timerId)
+                      -- Everything else — a failed LLM extraction or consolidation, a
+                      -- read-model error, a failed write — is worth another attempt, and
+                      -- the attempt ceiling bounds how many.
+                      Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
 
 -- | Offer the timer to each handler in turn. The handlers identify their own
 -- work by process-manager name, so a 'FireNotMine' simply falls through to the
@@ -92,12 +119,13 @@ fireL1Timer rt finder row
 -- the runner decides what to do about that.
 fireKiokuTimer ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryContextProvider (Eff es) ->
   DistillRuntime ->
   FindMergeCandidates es ->
   TimerRow ->
   Eff es FireOutcome
-fireKiokuTimer rt finder row = do
-  l1Result <- fireL1Timer rt finder row
+fireKiokuTimer contexts rt finder row = do
+  l1Result <- fireL1Timer contexts rt finder row
   case l1Result of
     FireNotMine -> do
       l2Result <- fireL2SceneTimer rt row
@@ -161,13 +189,14 @@ rescheduleClaimedTimer row delay = do
 runKiokuTimerWorkerOnce ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   Maybe KeiroMetrics ->
+  MemoryContextProvider (Eff es) ->
   DistillRuntime ->
   FindMergeCandidates es ->
   UTCTime ->
   Eff es (Maybe TimerRow)
-runKiokuTimerWorkerOnce metrics rt finder now =
+runKiokuTimerWorkerOnce metrics contexts rt finder now =
   runTimerWorkerWith metrics kiokuTimerWorkerOptions now \row ->
-    fireKiokuTimer rt finder row >>= applyFireOutcome row
+    fireKiokuTimer contexts rt finder row >>= applyFireOutcome row
 
 -- | Claim and fire due timers until none remain, returning how many were
 -- processed.
@@ -180,14 +209,15 @@ runKiokuTimerWorkerOnce metrics rt finder now =
 drainKiokuTimers ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   Maybe KeiroMetrics ->
+  MemoryContextProvider (Eff es) ->
   DistillRuntime ->
   FindMergeCandidates es ->
   Eff es Int
-drainKiokuTimers metrics rt finder = go 0
+drainKiokuTimers metrics contexts rt finder = go 0
   where
     go processed = do
       now <- liftIO getCurrentTime
-      claimed <- runKiokuTimerWorkerOnce metrics rt finder now
+      claimed <- runKiokuTimerWorkerOnce metrics contexts rt finder now
       case claimed of
         Nothing -> pure processed
         Just _ -> go (processed + 1)

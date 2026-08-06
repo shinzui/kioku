@@ -17,6 +17,7 @@ import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
 import Keiro.EventStream.Validate (ValidatedEventStream, mkEventStreamOrThrow)
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
+import Kioku.Api.Access (RecordedPrincipal (..), legacyMemorySpaceId, legacyPrincipalRef)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Id (MemoryId, SessionId, idText, parseIdLenient)
 import Kioku.Memory.Domain
@@ -92,18 +93,26 @@ parseLegacyMemoryEvent =
       "agent_memory_confidence_updated" -> MemoryConfidenceUpdated <$> parseLegacyMemoryConfidenceUpdated payload
       other -> fail ("Unknown Rei AgentMemoryEvent tag: " <> Text.unpack other)
 
+-- | Rei payloads predate memory spaces by even more than Kioku's own older events do, so they
+-- take the same two rules: the legacy space, and the legacy agent label kept verbatim. Rei's
+-- @agentId@ is exactly the free-text label 'LegacyPrincipal' exists to mark.
 parseLegacyMemoryRecorded :: Value -> Parser MemoryRecordedData
 parseLegacyMemoryRecorded =
   withObject "Rei AgentMemoryRecordedData" $ \o -> do
     memoryId <- parseLegacyMemoryId =<< o .: "memoryId"
+    agentId <- o .: "agentId"
     sessionId <- traverse parseLegacySessionId =<< o .:? "sessionId"
     scope <- parseLegacyAnchor =<< o .: "anchor"
     supersedes <- traverse parseLegacyMemoryId =<< o .:? "supersedes"
-    MemoryRecordedData memoryId
-      <$> o .: "agentId"
-      <*> pure sessionId
-      <*> pure scope
-      <*> o .: "memoryType"
+    MemoryRecordedData
+      memoryId
+      legacyMemorySpaceId
+      (LegacyPrincipal (legacyPrincipalRef agentId))
+      Nothing
+      agentId
+      sessionId
+      scope
+      <$> o .: "memoryType"
       <*> o .: "content"
       <*> pure 100
       <*> o .: "confidence"
@@ -116,6 +125,8 @@ parseLegacyMemorySuperseded =
   withObject "Rei AgentMemorySupersededData" $ \o ->
     MemorySupersededData
       <$> (parseLegacyMemoryId =<< o .: "memoryId")
+      <*> pure legacyMemorySpaceId
+      <*> pure UnattributedPrincipal
       <*> (parseLegacyMemoryId =<< o .: "supersededBy")
       <*> o .: "supersededAt"
 
@@ -124,6 +135,8 @@ parseLegacyMemoryArchived =
   withObject "Rei AgentMemoryArchivedData" $ \o ->
     MemoryArchivedData
       <$> (parseLegacyMemoryId =<< o .: "memoryId")
+      <*> pure legacyMemorySpaceId
+      <*> pure UnattributedPrincipal
       <*> o .: "archivedAt"
 
 parseLegacyMemoryTagsUpdated :: Value -> Parser MemoryTagsUpdatedData
@@ -131,6 +144,8 @@ parseLegacyMemoryTagsUpdated =
   withObject "Rei AgentMemoryTagsUpdatedData" $ \o ->
     MemoryTagsUpdatedData
       <$> (parseLegacyMemoryId =<< o .: "memoryId")
+      <*> pure legacyMemorySpaceId
+      <*> pure UnattributedPrincipal
       <*> o .: "tags"
       <*> o .: "updatedAt"
 
@@ -139,6 +154,8 @@ parseLegacyMemoryConfidenceUpdated =
   withObject "Rei AgentMemoryConfidenceUpdatedData" $ \o ->
     MemoryConfidenceUpdatedData
       <$> (parseLegacyMemoryId =<< o .: "memoryId")
+      <*> pure legacyMemorySpaceId
+      <*> pure UnattributedPrincipal
       <*> o .: "confidence"
       <*> o .: "updatedAt"
 

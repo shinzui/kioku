@@ -8,6 +8,7 @@ where
 
 import Data.Text qualified as Text
 import Kioku.App (runAppIO, withNoopAppEnv)
+import Kioku.Cli.Context (cliMemoryContext)
 import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Distill.L1 (L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
@@ -68,6 +69,7 @@ runDistill :: DistillOptions -> IO ()
 runDistill opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
   rt <- newDistillRuntime
+  context <- cliMemoryContext
   recallConfig <-
     case opts.candidateSource of
       CandidateScan -> pure Nothing
@@ -81,7 +83,7 @@ runDistill opts = do
             pure (recallCandidates (toEmbeddingModel config) capability opts.candidateLimit)
           _ ->
             pure (scopedScanCandidates opts.candidateLimit)
-      distillSessionL1 (runMode opts) rt finder opts.sessionId
+      distillSessionL1 context (runMode opts) rt finder opts.sessionId
     case result of
       Left storeErr -> ioError (userError ("kioku distill store error: " <> show storeErr))
       Right (Left l1Err) -> ioError (userError ("kioku distill error: " <> show l1Err))

@@ -96,6 +96,8 @@ module Kioku.Api.Access
     -- * The seams Kioku does not implement
     PrincipalDirectory (..),
     PermissionChecker (..),
+    MemoryContextProvider (..),
+    assumeAuthorizedContextProvider,
 
     -- * The authorized decision
     MemoryAccessContext,

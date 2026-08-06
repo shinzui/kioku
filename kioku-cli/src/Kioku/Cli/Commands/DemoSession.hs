@@ -7,8 +7,10 @@ where
 
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
+import Kioku.Api.Access (memoryContextRecordedActor, memoryContextSpace)
 import Kioku.App (runAppIO, withNoopAppEnv)
 import Kioku.Cli.Commands.Demo (demoScope)
+import Kioku.Cli.Context (cliMemoryContext)
 import Kioku.Cli.Options (redactConnectionString, yesWriteEventsFlag)
 import Kioku.Id (genSessionId, idText)
 import Kioku.Session qualified as Session
@@ -31,13 +33,19 @@ runDemoSession DemoSessionOptions = do
   putStrLn ("Target: " <> Text.unpack (redactConnectionString (Text.pack connStr)))
   putStrLn "Scope:  kioku_demo/demo/demo"
   putStrLn "Note:   completing this session schedules a distillation timer; a running worker will process it (an LLM call)."
+  context <- cliMemoryContext
   withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
     sid <- genSessionId
     now <- getCurrentTime
     let scope = demoScope
+        space = memoryContextSpace context
+        actor = memoryContextRecordedActor context
         startPayload =
           StartSessionData
             { sessionId = sid,
+              memorySpaceId = space,
+              actorPrincipal = actor,
+              ownerPrincipal = Nothing,
               agentId = "demo-agent",
               focus = "demo",
               scope = scope,
@@ -50,6 +58,8 @@ runDemoSession DemoSessionOptions = do
         turnPayload =
           RecordTurnData
             { sessionId = sid,
+              memorySpaceId = space,
+              actorPrincipal = actor,
               turnId = idText sid <> "-turn-1",
               turnIndex = 1,
               role = "user",
@@ -62,14 +72,16 @@ runDemoSession DemoSessionOptions = do
         completePayload =
           CompleteSessionData
             { sessionId = sid,
+              memorySpaceId = space,
+              actorPrincipal = actor,
               completedAt = now,
               modelUsed = Just "demo-model",
               summary = Just "Demo session completed"
             }
     result <- runAppIO env do
-      startResult <- Session.start startPayload
-      turnResult <- Session.recordTurn turnPayload
-      completeResult <- Session.complete completePayload
+      startResult <- Session.startWithContext context startPayload
+      turnResult <- Session.recordTurnWithContext context turnPayload
+      completeResult <- Session.completeWithContext context completePayload
       rowResult <- Session.getById sid
       turnsResult <- Session.getTurns sid
       pure (startResult, turnResult, completeResult, rowResult, turnsResult)

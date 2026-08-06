@@ -20,6 +20,7 @@ import Kioku.Session.Domain
   )
 import Kioku.Session.EventStream (parseSessionEvent, sessionStream)
 import Kioku.Session.ReadModel (SessionRow (..))
+import Kioku.SpaceFixtures (testActorPrincipal, testContext, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -113,9 +114,12 @@ testCorrelationMismatchRejected =
     parkFixture sid "k1"
     now <- liftIO getCurrentTime
     result <-
-      Session.resume
+      Session.resumeWithContext
+        testContext
         ResumeSessionData
           { sessionId = sid,
+            memorySpaceId = testSpace,
+            actorPrincipal = testActorPrincipal,
             correlationKey = Just "k2",
             force = False,
             input = "approved",
@@ -136,14 +140,17 @@ testCompleteAwaitingSession =
     parkFixture sid "approval_req_1"
     now <- liftIO getCurrentTime
     completeResult <-
-      Session.complete
+      Session.completeWithContext
+        testContext
         CompleteSessionData
           { sessionId = sid,
+            memorySpaceId = testSpace,
+            actorPrincipal = testActorPrincipal,
             completedAt = now,
             modelUsed = Just "test-model",
             summary = Just "completed while parked"
           }
-    void (liftEither "Session.complete" completeResult)
+    void (liftEither "Session.completeWithContext" completeResult)
     completed <- getExisting sid
     events <- readSessionEvents sid
     liftIO do
@@ -160,13 +167,16 @@ testFailAwaitingSession =
     parkFixture sid "approval_req_1"
     now <- liftIO getCurrentTime
     failResult <-
-      Session.failSession
+      Session.failSessionWithContext
+        testContext
         FailSessionData
           { sessionId = sid,
+            memorySpaceId = testSpace,
+            actorPrincipal = testActorPrincipal,
             failedAt = now,
             errorMessage = "timed out"
           }
-    void (liftEither "Session.failSession" failResult)
+    void (liftEither "Session.failSessionWithContext" failResult)
     failed <- getExisting sid
     events <- readSessionEvents sid
     liftIO do
@@ -195,9 +205,13 @@ startFixture = do
   sid <- liftIO genSessionId
   now <- liftIO getCurrentTime
   result <-
-    Session.start
+    Session.startWithContext
+      testContext
       StartSessionData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
+          ownerPrincipal = Nothing,
           agentId = "test-agent",
           focus = "awaiting lifecycle",
           scope = testScope,
@@ -207,7 +221,7 @@ startFixture = do
           delegationDepth = 0,
           startedAt = now
         }
-  void (liftEither "Session.start" result)
+  void (liftEither "Session.startWithContext" result)
   pure sid
 
 parkFixture ::
@@ -218,15 +232,18 @@ parkFixture ::
 parkFixture sid key = do
   now <- liftIO getCurrentTime
   result <-
-    Session.awaitInput
+    Session.awaitInputWithContext
+      testContext
       AwaitInputData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
           reason = "approval",
           correlationKey = Just key,
           deadline = Nothing,
           awaitedAt = now
         }
-  void (liftEither "Session.awaitInput" result)
+  void (liftEither "Session.awaitInputWithContext" result)
 
 resumeFixture ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
@@ -237,15 +254,18 @@ resumeFixture ::
 resumeFixture sid key input = do
   now <- liftIO getCurrentTime
   result <-
-    Session.resume
+    Session.resumeWithContext
+      testContext
       ResumeSessionData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
           correlationKey = key,
           force = False,
           input,
           resumedAt = now
         }
-  void (liftEither "Session.resume" result)
+  void (liftEither "Session.resumeWithContext" result)
 
 getExisting ::
   (IOE :> es, Store :> es) =>

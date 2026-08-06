@@ -32,6 +32,7 @@ import Kioku.Session.Domain
     StartSessionData (..),
   )
 import Kioku.Session.EventStream (sessionStream)
+import Kioku.SpaceFixtures (testActorPrincipal, testContext, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -78,8 +79,8 @@ testStartDuplicate =
     sid <- liftIO genSessionId
     now <- liftIO getCurrentTime
     let cmd = startData sid now
-    void (expectRight "first start" =<< Session.start cmd)
-    void (expectRight "duplicate start" =<< Session.start cmd)
+    void (expectRight "first start" =<< Session.startWithContext testContext cmd)
+    void (expectRight "duplicate start" =<< Session.startWithContext testContext cmd)
     assertSessionEvents sid 1
 
 testStartConflict :: Assertion
@@ -88,9 +89,9 @@ testStartConflict =
     sid <- liftIO genSessionId
     now <- liftIO getCurrentTime
     let cmd = startData sid now
-    void (expectRight "first start" =<< Session.start cmd)
+    void (expectRight "first start" =<< Session.startWithContext testContext cmd)
     expectConflict "start with a different focus"
-      =<< Session.start cmd {focus = "a different focus"}
+      =<< Session.startWithContext testContext cmd {focus = "a different focus"}
     assertSessionEvents sid 1
 
 testAwaitDuplicate :: Assertion
@@ -99,8 +100,8 @@ testAwaitDuplicate =
     sid <- startedSession
     now <- liftIO getCurrentTime
     let cmd = awaitData sid now
-    void (expectRight "first awaitInput" =<< Session.awaitInput cmd)
-    void (expectRight "duplicate awaitInput" =<< Session.awaitInput cmd)
+    void (expectRight "first awaitInput" =<< Session.awaitInputWithContext testContext cmd)
+    void (expectRight "duplicate awaitInput" =<< Session.awaitInputWithContext testContext cmd)
     assertSessionEvents sid 2
 
 testAwaitConflict :: Assertion
@@ -109,9 +110,9 @@ testAwaitConflict =
     sid <- startedSession
     now <- liftIO getCurrentTime
     let cmd = awaitData sid now
-    void (expectRight "first awaitInput" =<< Session.awaitInput cmd)
+    void (expectRight "first awaitInput" =<< Session.awaitInputWithContext testContext cmd)
     expectConflict "awaitInput with a different reason"
-      =<< Session.awaitInput cmd {reason = "a different reason"}
+      =<< Session.awaitInputWithContext testContext cmd {reason = "a different reason"}
     assertSessionEvents sid 2
 
 testResumeDuplicate :: Assertion
@@ -119,10 +120,10 @@ testResumeDuplicate =
   withApp do
     sid <- startedSession
     now <- liftIO getCurrentTime
-    void (expectRight "awaitInput" =<< Session.awaitInput (awaitData sid now))
+    void (expectRight "awaitInput" =<< Session.awaitInputWithContext testContext (awaitData sid now))
     let cmd = resumeData sid now "approved"
-    void (expectRight "first resume" =<< Session.resume cmd)
-    void (expectRight "duplicate resume" =<< Session.resume cmd)
+    void (expectRight "first resume" =<< Session.resumeWithContext testContext cmd)
+    void (expectRight "duplicate resume" =<< Session.resumeWithContext testContext cmd)
     assertSessionEvents sid 3
 
 testResumeConflict :: Assertion
@@ -130,12 +131,12 @@ testResumeConflict =
   withApp do
     sid <- startedSession
     now <- liftIO getCurrentTime
-    void (expectRight "awaitInput" =<< Session.awaitInput (awaitData sid now))
-    void (expectRight "first resume" =<< Session.resume (resumeData sid now "approved"))
+    void (expectRight "awaitInput" =<< Session.awaitInputWithContext testContext (awaitData sid now))
+    void (expectRight "first resume" =<< Session.resumeWithContext testContext (resumeData sid now "approved"))
     -- The session is running again; a re-delivery carrying a *different* answer is not this
     -- request's own echo.
     expectConflict "resume with different input"
-      =<< Session.resume (resumeData sid now "rejected")
+      =<< Session.resumeWithContext testContext (resumeData sid now "rejected")
     assertSessionEvents sid 3
 
 testCompleteDuplicate :: Assertion
@@ -144,8 +145,8 @@ testCompleteDuplicate =
     sid <- startedSession
     now <- liftIO getCurrentTime
     let cmd = completeData sid now
-    void (expectRight "first complete" =<< Session.complete cmd)
-    void (expectRight "duplicate complete" =<< Session.complete cmd)
+    void (expectRight "first complete" =<< Session.completeWithContext testContext cmd)
+    void (expectRight "duplicate complete" =<< Session.completeWithContext testContext cmd)
     assertSessionEvents sid 2
 
 -- | The headline regression: this used to return @Right@ and report success for a session
@@ -155,8 +156,8 @@ testCompleteAfterFail =
   withApp do
     sid <- startedSession
     now <- liftIO getCurrentTime
-    void (expectRight "failSession" =<< Session.failSession (failData sid now))
-    expectConflict "complete after fail" =<< Session.complete (completeData sid now)
+    void (expectRight "failSession" =<< Session.failSessionWithContext testContext (failData sid now))
+    expectConflict "complete after fail" =<< Session.completeWithContext testContext (completeData sid now)
     assertSessionEvents sid 2
 
 testFailAfterComplete :: Assertion
@@ -164,8 +165,8 @@ testFailAfterComplete =
   withApp do
     sid <- startedSession
     now <- liftIO getCurrentTime
-    void (expectRight "complete" =<< Session.complete (completeData sid now))
-    expectConflict "fail after complete" =<< Session.failSession (failData sid now)
+    void (expectRight "complete" =<< Session.completeWithContext testContext (completeData sid now))
+    expectConflict "fail after complete" =<< Session.failSessionWithContext testContext (failData sid now)
     assertSessionEvents sid 2
 
 -- * Memories
@@ -176,8 +177,8 @@ testRecordDuplicate =
     mid <- liftIO genMemoryId
     now <- liftIO getCurrentTime
     let cmd = recordData mid now "the original content"
-    void (expectRightM "first record" =<< Memory.record cmd)
-    void (expectRightM "duplicate record" =<< Memory.record cmd)
+    void (expectRightM "first record" =<< Memory.recordWithContext testContext cmd)
+    void (expectRightM "duplicate record" =<< Memory.recordWithContext testContext cmd)
     assertMemoryEvents mid 1
 
 -- | @recordedAt@ must not participate in conflict detection. Distillation depends on this:
@@ -191,9 +192,9 @@ testRecordRetriedWithNewClock =
     mid <- liftIO genMemoryId
     firstAt <- liftIO getCurrentTime
     let content = "identical content, later clock"
-    void (expectRightM "first record" =<< Memory.record (recordData mid firstAt content))
+    void (expectRightM "first record" =<< Memory.recordWithContext testContext (recordData mid firstAt content))
     laterAt <- liftIO getCurrentTime
-    void (expectRightM "retry with a fresh clock" =<< Memory.record (recordData mid laterAt content))
+    void (expectRightM "retry with a fresh clock" =<< Memory.recordWithContext testContext (recordData mid laterAt content))
     assertMemoryEvents mid 1
     lookedUp <- Memory.getMemoryRowById mid
     liftIO case lookedUp of
@@ -206,9 +207,9 @@ testRecordConflict =
   withApp do
     mid <- liftIO genMemoryId
     now <- liftIO getCurrentTime
-    void (expectRightM "first record" =<< Memory.record (recordData mid now "the original content"))
+    void (expectRightM "first record" =<< Memory.recordWithContext testContext (recordData mid now "the original content"))
     expectConflictM "record with different content"
-      =<< Memory.record (recordData mid now "something else entirely")
+      =<< Memory.recordWithContext testContext (recordData mid now "something else entirely")
     assertMemoryEvents mid 1
 
 testSupersedeDuplicate :: Assertion
@@ -217,9 +218,9 @@ testSupersedeDuplicate =
     loser <- recordedMemory "loser"
     winner <- recordedMemory "winner"
     now <- liftIO getCurrentTime
-    let cmd = SupersedeMemoryData {memoryId = loser, supersededBy = winner, supersededAt = now}
-    void (expectRightM "first supersede" =<< Memory.supersede cmd)
-    void (expectRightM "duplicate supersede" =<< Memory.supersede cmd)
+    let cmd = SupersedeMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = loser, supersededBy = winner, supersededAt = now}
+    void (expectRightM "first supersede" =<< Memory.supersedeWithContext testContext cmd)
+    void (expectRightM "duplicate supersede" =<< Memory.supersedeWithContext testContext cmd)
     assertMemoryEvents loser 2
 
 -- | The other headline regression: supersede by X, then by Y, used to report success for Y
@@ -233,9 +234,9 @@ testSupersedeConflict =
     now <- liftIO getCurrentTime
     void $
       expectRightM "supersede by X"
-        =<< Memory.supersede SupersedeMemoryData {memoryId = loser, supersededBy = winnerX, supersededAt = now}
+        =<< Memory.supersedeWithContext testContext SupersedeMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = loser, supersededBy = winnerX, supersededAt = now}
     expectConflictM "supersede by Y after X"
-      =<< Memory.supersede SupersedeMemoryData {memoryId = loser, supersededBy = winnerY, supersededAt = now}
+      =<< Memory.supersedeWithContext testContext SupersedeMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = loser, supersededBy = winnerY, supersededAt = now}
     assertMemoryEvents loser 2
 
 testArchiveAfterSupersede :: Assertion
@@ -246,9 +247,9 @@ testArchiveAfterSupersede =
     now <- liftIO getCurrentTime
     void $
       expectRightM "supersede"
-        =<< Memory.supersede SupersedeMemoryData {memoryId = loser, supersededBy = winner, supersededAt = now}
+        =<< Memory.supersedeWithContext testContext SupersedeMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = loser, supersededBy = winner, supersededAt = now}
     expectConflictM "archive after supersede"
-      =<< Memory.archive ArchiveMemoryData {memoryId = loser, archivedAt = now}
+      =<< Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = loser, archivedAt = now}
     assertMemoryEvents loser 2
 
 testMergeDuplicate :: Assertion
@@ -256,8 +257,8 @@ testMergeDuplicate =
   withApp do
     loser <- recordedMemory "loser"
     winner <- recordedMemory "winner"
-    void (expectRightM "first merge" =<< Memory.merge loser winner)
-    void (expectRightM "duplicate merge" =<< Memory.merge loser winner)
+    void (expectRightM "first merge" =<< Memory.mergeWithContext testContext loser winner)
+    void (expectRightM "duplicate merge" =<< Memory.mergeWithContext testContext loser winner)
     assertMemoryEvents loser 2
 
 testMergeConflict :: Assertion
@@ -266,8 +267,8 @@ testMergeConflict =
     loser <- recordedMemory "loser"
     winnerX <- recordedMemory "winner x"
     winnerY <- recordedMemory "winner y"
-    void (expectRightM "merge into X" =<< Memory.merge loser winnerX)
-    expectConflictM "merge into Y after X" =<< Memory.merge loser winnerY
+    void (expectRightM "merge into X" =<< Memory.mergeWithContext testContext loser winnerX)
+    expectConflictM "merge into Y after X" =<< Memory.mergeWithContext testContext loser winnerY
     assertMemoryEvents loser 2
 
 -- * Fixtures
@@ -276,6 +277,9 @@ startData :: SessionId -> UTCTime -> StartSessionData
 startData sid startedAt =
   StartSessionData
     { sessionId = sid,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
+      ownerPrincipal = Nothing,
       agentId = "test-agent",
       focus = "idempotency",
       scope = testScope,
@@ -290,6 +294,8 @@ awaitData :: SessionId -> UTCTime -> AwaitInputData
 awaitData sid awaitedAt =
   AwaitInputData
     { sessionId = sid,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
       reason = "approval",
       correlationKey = Just "k1",
       deadline = Nothing,
@@ -300,6 +306,8 @@ resumeData :: SessionId -> UTCTime -> Text -> ResumeSessionData
 resumeData sid resumedAt input =
   ResumeSessionData
     { sessionId = sid,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
       correlationKey = Just "k1",
       force = False,
       input,
@@ -310,6 +318,8 @@ completeData :: SessionId -> UTCTime -> CompleteSessionData
 completeData sid completedAt =
   CompleteSessionData
     { sessionId = sid,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
       completedAt,
       modelUsed = Just "test-model",
       summary = Just "done"
@@ -319,6 +329,8 @@ failData :: SessionId -> UTCTime -> FailSessionData
 failData sid failedAt =
   FailSessionData
     { sessionId = sid,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
       failedAt,
       errorMessage = "boom"
     }
@@ -327,6 +339,9 @@ recordData :: MemoryId -> UTCTime -> Text -> RecordMemoryData
 recordData mid recordedAt content =
   RecordMemoryData
     { memoryId = mid,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
+      ownerPrincipal = Nothing,
       agentId = "test-agent",
       sessionId = Nothing,
       scope = testScope,
@@ -345,7 +360,7 @@ startedSession ::
 startedSession = do
   sid <- liftIO genSessionId
   now <- liftIO getCurrentTime
-  void (expectRight "Session.start" =<< Session.start (startData sid now))
+  void (expectRight "Session.startWithContext" =<< Session.startWithContext testContext (startData sid now))
   pure sid
 
 recordedMemory ::
@@ -355,7 +370,7 @@ recordedMemory ::
 recordedMemory content = do
   mid <- liftIO genMemoryId
   now <- liftIO getCurrentTime
-  void (expectRightM "Memory.record" =<< Memory.record (recordData mid now content))
+  void (expectRightM "Memory.recordWithContext" =<< Memory.recordWithContext testContext (recordData mid now content))
   pure mid
 
 -- * Assertions

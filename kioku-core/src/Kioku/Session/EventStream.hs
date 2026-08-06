@@ -17,6 +17,7 @@ import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
 import Keiro.EventStream.Validate (ValidatedEventStream, mkEventStreamOrThrow)
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
+import Kioku.Api.Access (RecordedPrincipal (..), legacyMemorySpaceId, legacyPrincipalRef)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Id (SessionId, idText, parseIdLenient)
 import Kioku.Prelude
@@ -93,15 +94,23 @@ parseLegacySessionEvent =
       "interactive_session_recorded" -> InteractiveSessionRecorded <$> parseLegacyInteractiveSessionRecorded payload
       other -> fail ("Unknown Rei AgentSessionEvent tag: " <> Text.unpack other)
 
+-- | Rei payloads predate memory spaces, so they take the legacy space; their @agentId@ is the
+-- free-text label 'LegacyPrincipal' exists to mark, and is never rewritten into a
+-- directory-issued principal id.
 parseLegacySessionStarted :: Value -> Parser SessionStartedData
 parseLegacySessionStarted =
   withObject "Rei AgentSessionStartedData" $ \o -> do
     sessionId <- parseLegacySessionId =<< o .: "sessionId"
+    agentId <- o .: "agentId"
     intentionId <- o .:? "intentionId"
     previousSessionId <- traverse parseLegacySessionId =<< o .:? "previousSessionId"
-    SessionStartedData sessionId
-      <$> o .: "agentId"
-      <*> (normalizeLegacyFocus <$> o .: "focusType")
+    SessionStartedData
+      sessionId
+      legacyMemorySpaceId
+      (LegacyPrincipal (legacyPrincipalRef agentId))
+      Nothing
+      agentId
+      <$> (normalizeLegacyFocus <$> o .: "focusType")
       <*> pure (sessionScope intentionId)
       <*> o .:? "focusTarget"
       <*> pure previousSessionId
@@ -114,6 +123,8 @@ parseLegacySessionCompleted =
   withObject "Rei AgentSessionCompletedData" $ \o ->
     SessionCompletedData
       <$> (parseLegacySessionId =<< o .: "sessionId")
+      <*> pure legacyMemorySpaceId
+      <*> pure UnattributedPrincipal
       <*> o .: "completedAt"
       <*> o .:? "modelUsed"
       <*> o .:? "summary"
@@ -123,6 +134,8 @@ parseLegacySessionFailed =
   withObject "Rei AgentSessionFailedData" $ \o ->
     SessionFailedData
       <$> (parseLegacySessionId =<< o .: "sessionId")
+      <*> pure legacyMemorySpaceId
+      <*> pure UnattributedPrincipal
       <*> o .: "failedAt"
       <*> o .: "errorMessage"
 
@@ -130,10 +143,15 @@ parseLegacyInteractiveSessionRecorded :: Value -> Parser InteractiveSessionRecor
 parseLegacyInteractiveSessionRecorded =
   withObject "Rei InteractiveSessionRecordedData" $ \o -> do
     sessionId <- parseLegacySessionId =<< o .: "sessionId"
+    agentId <- o .: "agentId"
     intentionId <- o .:? "intentionId"
-    InteractiveSessionRecordedData sessionId
-      <$> o .: "agentId"
-      <*> (normalizeLegacyFocus <$> o .: "focusType")
+    InteractiveSessionRecordedData
+      sessionId
+      legacyMemorySpaceId
+      (LegacyPrincipal (legacyPrincipalRef agentId))
+      Nothing
+      agentId
+      <$> (normalizeLegacyFocus <$> o .: "focusType")
       <*> pure (sessionScope intentionId)
       <*> pure Nothing
       <*> o .: "startedAt"

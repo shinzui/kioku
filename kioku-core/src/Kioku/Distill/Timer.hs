@@ -7,10 +7,12 @@ module Kioku.Distill.Timer
     l1IdleTimerId,
     l1RampTimerId,
     l1TimerScheduleProjection,
+    L1TimerPayload (..),
   )
 where
 
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Types (withObject, (.:), (.:?))
 import Data.ByteString qualified as BS
 import Data.Foldable (traverse_)
 import Data.Text qualified as Text
@@ -21,7 +23,9 @@ import Data.UUID qualified as UUID
 import Data.UUID.V5 qualified as UUIDv5
 import Keiro.Projection (InlineProjection (..))
 import Keiro.Timer (TimerId (..), TimerRequest (..), scheduleTimerTx)
+import Kioku.Api.Access (MemorySpaceId)
 import Kioku.Id (SessionId, idText)
+import Kioku.Partition (parsePartitionSpace)
 import Kioku.Prelude
 import Kioku.Session.Domain
   ( InteractiveSessionRecordedData (..),
@@ -70,48 +74,73 @@ l1RampTimerId sid turnIndex =
 l1FinalTimerId :: SessionId -> TimerId
 l1FinalTimerId sid = l1TimerIdFor (idText sid <> ":final")
 
+-- | What a scheduled L1 pass needs to know before it can write anything.
+--
+-- @memorySpaceId@ is the load-bearing field: distillation records and merges memories, and a
+-- worker that could not tell which space a session belongs to would have to guess. Timers
+-- scheduled before this field existed decode into 'Kioku.Api.Access.legacyMemorySpaceId', the
+-- same rule stored events follow.
+--
+-- @turnCount@ is diagnostic only; the real freshness check is the @kioku_l1_watermarks@ read
+-- inside the pass.
+data L1TimerPayload = L1TimerPayload
+  { kind :: !Text,
+    turnCount :: !(Maybe Int),
+    memorySpaceId :: !MemorySpaceId
+  }
+  deriving stock (Generic, Eq, Show)
+  deriving anyclass (ToJSON)
+
+instance FromJSON L1TimerPayload where
+  parseJSON =
+    withObject "L1TimerPayload" \o ->
+      L1TimerPayload
+        <$> o .: "kind"
+        <*> o .:? "turnCount"
+        <*> parsePartitionSpace o
+
 timerRequestsForEvent :: SessionEvent -> [TimerRequest]
 timerRequestsForEvent = \case
   SessionStarted d ->
-    [idleRequest d.sessionId (addUTCTime idleFlushSeconds d.startedAt) (Just 0)]
+    [idleRequest d.sessionId d.memorySpaceId (addUTCTime idleFlushSeconds d.startedAt) (Just 0)]
   InteractiveSessionRecorded d ->
-    [idleRequest d.sessionId (addUTCTime idleFlushSeconds d.startedAt) (Just 0)]
+    [idleRequest d.sessionId d.memorySpaceId (addUTCTime idleFlushSeconds d.startedAt) (Just 0)]
   SessionCompleted d ->
-    [finalRequest d.sessionId d.completedAt]
+    [finalRequest d.sessionId d.memorySpaceId d.completedAt]
   SessionFailed d ->
-    [finalRequest d.sessionId (failedAt d)]
+    [finalRequest d.sessionId d.memorySpaceId (failedAt d)]
   SessionAwaiting _ -> []
   SessionResumed _ -> []
   TurnRecorded d ->
-    let idle = idleRequest d.sessionId (addUTCTime idleFlushSeconds d.recordedAt) (Just d.turnIndex)
-        ramp = rampRequest d.sessionId d.turnIndex d.recordedAt
+    let idle = idleRequest d.sessionId d.memorySpaceId (addUTCTime idleFlushSeconds d.recordedAt) (Just d.turnIndex)
+        ramp = rampRequest d.sessionId d.memorySpaceId d.turnIndex d.recordedAt
      in if isRampTurn d.turnIndex then [ramp, idle] else [idle]
 
-idleRequest :: SessionId -> UTCTime -> Maybe Int -> TimerRequest
-idleRequest sid = l1TimerRequest (l1IdleTimerId sid) sid "idle"
+idleRequest :: SessionId -> MemorySpaceId -> UTCTime -> Maybe Int -> TimerRequest
+idleRequest sid space = l1TimerRequest (l1IdleTimerId sid) sid space "idle"
 
-rampRequest :: SessionId -> Int -> UTCTime -> TimerRequest
-rampRequest sid turnIndex fireAt =
-  l1TimerRequest (l1RampTimerId sid turnIndex) sid "ramp" fireAt (Just turnIndex)
+rampRequest :: SessionId -> MemorySpaceId -> Int -> UTCTime -> TimerRequest
+rampRequest sid space turnIndex fireAt =
+  l1TimerRequest (l1RampTimerId sid turnIndex) sid space "ramp" fireAt (Just turnIndex)
 
-finalRequest :: SessionId -> UTCTime -> TimerRequest
-finalRequest sid fireAt =
-  l1TimerRequest (l1FinalTimerId sid) sid "final" fireAt Nothing
+finalRequest :: SessionId -> MemorySpaceId -> UTCTime -> TimerRequest
+finalRequest sid space fireAt =
+  l1TimerRequest (l1FinalTimerId sid) sid space "final" fireAt Nothing
 
--- | @turnCount@ in the payload is diagnostic only; the real freshness check is
--- the @kioku_l1_watermarks@ read inside the pass.
-l1TimerRequest :: TimerId -> SessionId -> Text -> UTCTime -> Maybe Int -> TimerRequest
-l1TimerRequest timerId sid kind fireAt turnCount =
+-- | The timer /id/ deliberately does not include the memory space.
+--
+-- It does not need to: a session id is globally unique and the aggregate pins each session to
+-- exactly one space, so two spaces cannot produce the same @(session, kind)@ pair. Folding the
+-- space in would also change every id, which would leave a second idle timer armed for every
+-- session already in flight at upgrade time.
+l1TimerRequest :: TimerId -> SessionId -> MemorySpaceId -> Text -> UTCTime -> Maybe Int -> TimerRequest
+l1TimerRequest timerId sid memorySpaceId kind fireAt turnCount =
   TimerRequest
     { timerId,
       processManagerName = l1ExtractProcessManagerName,
       correlationId = idText sid,
       fireAt,
-      payload =
-        Aeson.object
-          [ "kind" Aeson..= kind,
-            "turnCount" Aeson..= turnCount
-          ]
+      payload = Aeson.toJSON L1TimerPayload {kind, turnCount, memorySpaceId}
     }
 
 isRampTurn :: Int -> Bool

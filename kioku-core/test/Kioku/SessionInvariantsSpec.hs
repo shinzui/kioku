@@ -5,7 +5,8 @@
 module Kioku.SessionInvariantsSpec (tests) where
 
 import Control.Monad (void)
-import Data.Aeson (Value, object, toJSON, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Text (Text)
 import Data.Time (UTCTime (..), fromGregorian, getCurrentTime)
 import Data.Vector qualified as Vector
@@ -14,6 +15,12 @@ import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.Stream qualified as Stream
+import Kioku.Api.Access
+  ( MemorySpaceId,
+    RecordedPrincipal (..),
+    legacyMemorySpaceId,
+    legacyPrincipalRef,
+  )
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
 import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Distill.Timer (l1TimerScheduleProjection)
@@ -33,6 +40,7 @@ import Kioku.Session.Domain
   )
 import Kioku.Session.EventStream (parseSessionEvent, sessionEventStream, sessionStream)
 import Kioku.Session.ReadModel (SessionRow (..), sessionInlineProjection)
+import Kioku.SpaceFixtures (testActorPrincipal, testContext, testSpace)
 import Kiroku.Store.Append (appendToStream)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
@@ -85,6 +93,8 @@ testAggregateRejectsMismatchedKey =
         ( ResumeSession
             ResumeSessionData
               { sessionId = sid,
+                memorySpaceId = testSpace,
+                actorPrincipal = testActorPrincipal,
                 correlationKey = Just "k2",
                 force = False,
                 input = "approved",
@@ -112,13 +122,15 @@ testStaleResumeAfterRepark =
     let staleResume =
           ResumeSessionData
             { sessionId = sid,
+              memorySpaceId = testSpace,
+              actorPrincipal = testActorPrincipal,
               correlationKey = Just "k1",
               force = False,
               input = "stale answer",
               resumedAt = now
             }
     -- Through the public API the precheck catches it early ...
-    apiResult <- Session.resume staleResume
+    apiResult <- Session.resumeWithContext testContext staleResume
     case apiResult of
       Left Session.SessionCorrelationMismatch -> pure ()
       other -> liftIO (assertFailure ("expected SessionCorrelationMismatch, got " <> show other))
@@ -138,8 +150,8 @@ testForceResume =
     sid <- startFixture
     parkFixture sid (Just "k1")
     now <- liftIO getCurrentTime
-    result <- Session.forceResume sid "forced answer" now
-    void (liftEither "Session.forceResume" result)
+    result <- Session.forceResumeWithContext testContext sid "forced answer" now
+    void (liftEither "Session.forceResumeWithContext" result)
     row <- getExisting sid
     liftIO do
       assertEqual "force resume ran" "running" row.status
@@ -180,6 +192,8 @@ testKeyedResumeOfKeylessWait =
         ( ResumeSession
             ResumeSessionData
               { sessionId = sid,
+                memorySpaceId = testSpace,
+                actorPrincipal = testActorPrincipal,
                 correlationKey = Just "unexpected",
                 force = False,
                 input = "approved",
@@ -217,7 +231,7 @@ testHydratesLegacyKeyedResume = hydrateLegacyStream (Just "k1")
 -- through the new guard: a rejected historical event would surface as
 -- 'HydrationReplayFailed' instead.
 --
--- The command runs through 'runCommandWithProjections' rather than 'Session.awaitInput'
+-- The command runs through 'runCommandWithProjections' rather than 'Session.awaitInputWithContext'
 -- because a hand-appended stream has no read-model row, and the public API's precheck
 -- would fail with 'SessionNotFound' before hydration was ever attempted.
 hydrateLegacyStream :: Maybe Text -> Assertion
@@ -228,7 +242,10 @@ hydrateLegacyStream resumedKey =
     let started =
           SessionStarted
             SessionStartedData
-              { sessionId = sid,
+              { memorySpaceId = legacyMemorySpaceId,
+                actorPrincipal = LegacyPrincipal (legacyPrincipalRef "test-agent"),
+                ownerPrincipal = Nothing,
+                sessionId = sid,
                 agentId = "test-agent",
                 focus = "legacy replay",
                 scope = testScope,
@@ -241,33 +258,38 @@ hydrateLegacyStream resumedKey =
         awaiting =
           SessionAwaiting
             SessionAwaitingData
-              { sessionId = sid,
+              { memorySpaceId = legacyMemorySpaceId,
+                actorPrincipal = UnattributedPrincipal,
+                sessionId = sid,
                 reason = "approval",
                 correlationKey = Just "k1",
                 deadline = Nothing,
                 awaitedAt = now
               }
+    -- Written as an older kioku wrote them: no partition keys at all.
     void $
       appendToStream
         (Stream.streamName (sessionStream sid))
         NoStream
-        [ rawEvent "SessionStarted" (toJSON started),
-          rawEvent "SessionAwaiting" (toJSON awaiting),
+        [ rawEvent "SessionStarted" (withoutPartitionKeys (toJSON started)),
+          rawEvent "SessionAwaiting" (withoutPartitionKeys (toJSON awaiting)),
           rawEvent "SessionResumed" (legacyResumedPayload sid resumedKey now)
         ]
-    -- The stream now ends in Running. A fresh AwaitInput must hydrate it and be accepted.
+    -- A command in some *other* space must not be able to drive this session. The events
+    -- carry no partition, so this is the assertion that a missing partition resolves to the
+    -- legacy space rather than to "any space".
+    crossSpace <-
+      runSessionCommandDirect sid (AwaitInput (awaitIn testSpace testActorPrincipal sid now))
+    case crossSpace of
+      Left _ -> pure ()
+      Right _ ->
+        liftIO (assertFailure "a command in another memory space drove a legacy session")
+    -- The stream ends in Running. A fresh AwaitInput in the legacy space must hydrate it and
+    -- be accepted.
     result <-
       runSessionCommandDirect
         sid
-        ( AwaitInput
-            AwaitInputData
-              { sessionId = sid,
-                reason = "approval",
-                correlationKey = Just "k2",
-                deadline = Nothing,
-                awaitedAt = now
-              }
-        )
+        (AwaitInput (awaitIn legacyMemorySpaceId UnattributedPrincipal sid now))
     case result of
       Right _ -> pure ()
       Left err ->
@@ -279,6 +301,29 @@ hydrateLegacyStream resumedKey =
         ["SessionStarted", "SessionAwaiting", "SessionResumed", "SessionAwaiting"]
         (eventName <$> events)
 
+-- | An @AwaitInput@ for a given space, so the two attempts above differ in exactly one thing.
+awaitIn :: MemorySpaceId -> RecordedPrincipal -> SessionId -> UTCTime -> AwaitInputData
+awaitIn memorySpaceId actorPrincipal sid now =
+  AwaitInputData
+    { sessionId = sid,
+      memorySpaceId,
+      actorPrincipal,
+      reason = "approval",
+      correlationKey = Just "k2",
+      deadline = Nothing,
+      awaitedAt = now
+    }
+
+-- | Strip the partition keys an older kioku never wrote.
+--
+-- Building the value and then removing the keys keeps the fixture honest in both directions: it
+-- is exactly the current encoder's output minus the fields this change added, so it cannot
+-- drift away from the real shape and cannot accidentally test the new one.
+withoutPartitionKeys :: Value -> Value
+withoutPartitionKeys = \case
+  Object o -> Object (foldr KeyMap.delete o ["memorySpaceId", "actorPrincipal", "ownerPrincipal"])
+  other -> other
+
 -- * Turn identity
 
 testTurnReRecordIsDuplicate :: Assertion
@@ -286,8 +331,8 @@ testTurnReRecordIsDuplicate =
   withApp do
     sid <- startFixture
     let turn = turnData sid "turn-a" 0 "hello"
-    void (liftEither "first recordTurn" =<< Session.recordTurn turn)
-    void (liftEither "duplicate recordTurn" =<< Session.recordTurn turn)
+    void (liftEither "first recordTurn" =<< Session.recordTurnWithContext testContext turn)
+    void (liftEither "duplicate recordTurn" =<< Session.recordTurnWithContext testContext turn)
     events <- readSessionEvents sid
     liftIO $
       assertEqual
@@ -301,8 +346,8 @@ testTurnSameIndexConflict :: Assertion
 testTurnSameIndexConflict =
   withApp do
     sid <- startFixture
-    void (liftEither "first recordTurn" =<< Session.recordTurn (turnData sid "turn-a" 0 "hello"))
-    result <- Session.recordTurn (turnData sid "turn-a" 0 "something else")
+    void (liftEither "first recordTurn" =<< Session.recordTurnWithContext testContext (turnData sid "turn-a" 0 "hello"))
+    result <- Session.recordTurnWithContext testContext (turnData sid "turn-a" 0 "something else")
     liftIO $ assertConflict "same index, different content" result
     events <- readSessionEvents sid
     liftIO $
@@ -312,8 +357,8 @@ testTurnIdReuseConflict :: Assertion
 testTurnIdReuseConflict =
   withApp do
     sid <- startFixture
-    void (liftEither "first recordTurn" =<< Session.recordTurn (turnData sid "turn-a" 0 "hello"))
-    result <- Session.recordTurn (turnData sid "turn-a" 1 "a new turn reusing the id")
+    void (liftEither "first recordTurn" =<< Session.recordTurnWithContext testContext (turnData sid "turn-a" 0 "hello"))
+    result <- Session.recordTurnWithContext testContext (turnData sid "turn-a" 1 "a new turn reusing the id")
     liftIO $ assertConflict "turn id reused at a different index" result
     events <- readSessionEvents sid
     liftIO $
@@ -325,8 +370,8 @@ testAggregateRejectsNonIncreasingTurn :: Assertion
 testAggregateRejectsNonIncreasingTurn =
   withApp do
     sid <- startFixture
-    void (liftEither "recordTurn 0" =<< Session.recordTurn (turnData sid "turn-a" 0 "hello"))
-    void (liftEither "recordTurn 1" =<< Session.recordTurn (turnData sid "turn-b" 1 "again"))
+    void (liftEither "recordTurn 0" =<< Session.recordTurnWithContext testContext (turnData sid "turn-a" 0 "hello"))
+    void (liftEither "recordTurn 1" =<< Session.recordTurnWithContext testContext (turnData sid "turn-b" 1 "again"))
     now <- liftIO getCurrentTime
     result <-
       runSessionCommandDirect
@@ -334,6 +379,8 @@ testAggregateRejectsNonIncreasingTurn =
         ( RecordTurn
             RecordTurnData
               { sessionId = sid,
+                memorySpaceId = testSpace,
+                actorPrincipal = testActorPrincipal,
                 turnId = "turn-c",
                 turnIndex = 1,
                 role = "user",
@@ -353,6 +400,8 @@ turnData :: SessionId -> Text -> Int -> Text -> RecordTurnData
 turnData sid turnId turnIndex content =
   RecordTurnData
     { sessionId = sid,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
       turnId,
       turnIndex,
       role = "user",
@@ -436,9 +485,13 @@ startFixture = do
   sid <- liftIO genSessionId
   now <- liftIO getCurrentTime
   result <-
-    Session.start
+    Session.startWithContext
+      testContext
       StartSessionData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
+          ownerPrincipal = Nothing,
           agentId = "test-agent",
           focus = "session invariants",
           scope = testScope,
@@ -448,7 +501,7 @@ startFixture = do
           delegationDepth = 0,
           startedAt = now
         }
-  void (liftEither "Session.start" result)
+  void (liftEither "Session.startWithContext" result)
   pure sid
 
 parkFixture ::
@@ -459,15 +512,18 @@ parkFixture ::
 parkFixture sid key = do
   now <- liftIO getCurrentTime
   result <-
-    Session.awaitInput
+    Session.awaitInputWithContext
+      testContext
       AwaitInputData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
           reason = "approval",
           correlationKey = key,
           deadline = Nothing,
           awaitedAt = now
         }
-  void (liftEither "Session.awaitInput" result)
+  void (liftEither "Session.awaitInputWithContext" result)
 
 resumeFixture ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
@@ -478,15 +534,18 @@ resumeFixture ::
 resumeFixture sid key input = do
   now <- liftIO getCurrentTime
   result <-
-    Session.resume
+    Session.resumeWithContext
+      testContext
       ResumeSessionData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
           correlationKey = key,
           force = False,
           input,
           resumedAt = now
         }
-  void (liftEither "Session.resume" result)
+  void (liftEither "Session.resumeWithContext" result)
 
 getExisting ::
   (IOE :> es, Store :> es) =>

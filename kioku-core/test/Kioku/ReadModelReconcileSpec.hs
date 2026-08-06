@@ -33,6 +33,7 @@ import Kioku.ReadModel
   )
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
+import Kioku.SpaceFixtures (testActorPrincipal, testContext, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -151,9 +152,13 @@ startFixture ::
 startFixture sid = do
   now <- liftIO getCurrentTime
   result <-
-    Session.start
+    Session.startWithContext
+      testContext
       StartSessionData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
+          ownerPrincipal = Nothing,
           agentId = "test-agent",
           focus = "read-model reconciliation",
           scope = ScopeGlobal (Namespace "kioku-test"),
@@ -164,5 +169,5 @@ startFixture sid = do
           startedAt = now
         }
   case result of
-    Left err -> liftIO (assertFailure ("Session.start: " <> show err))
+    Left err -> liftIO (assertFailure ("Session.startWithContext testContext: " <> show err))
     Right _ -> pure ()

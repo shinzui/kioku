@@ -77,6 +77,8 @@ module Kioku.Api.Access.Internal
     -- * The seams Kioku does not implement
     PrincipalDirectory (..),
     PermissionChecker (..),
+    MemoryContextProvider (..),
+    assumeAuthorizedContextProvider,
 
     -- * The authorized decision
     MemoryAccessContext (..),
@@ -512,6 +514,27 @@ newtype PermissionChecker m = PermissionChecker
       MemoryObjectRef ->
       m MemoryDecision
   }
+
+-- | How a process that /discovers/ its own work obtains authorization for it.
+--
+-- Interactive callers arrive holding a context. A background worker does not: it claims a due
+-- timer or a queued task, reads which memory space that work belongs to, and only then needs a
+-- decision about that space. This is the seam that lets it ask for one without inventing it.
+--
+-- A trusted in-process host uses 'assumeAuthorizedContextProvider'. A host behind a service
+-- boundary wires this to its own authorizer, typically a partially applied
+-- 'Kioku.Api.Access.authorizeMemoryAccess' over the credential the worker runs under.
+newtype MemoryContextProvider m = MemoryContextProvider
+  { contextForSpace :: MemorySpaceId -> m (Either MemoryAccessDenial MemoryAccessContext)
+  }
+
+-- | The embedded-host provider: assume authorization for every space, as one named actor.
+--
+-- Named to be conspicuous for the same reason 'assumeAuthorizedMemoryContext' is. A worker
+-- wired to this one will happily act in any space a timer names.
+assumeAuthorizedContextProvider :: (Applicative m) => MemoryActor -> MemoryContextProvider m
+assumeAuthorizedContextProvider actor =
+  MemoryContextProvider (pure . Right . (`assumeAuthorizedMemoryContext` actor))
 
 -- | The proof that an authorization decision was made, carried into Kioku's core.
 --

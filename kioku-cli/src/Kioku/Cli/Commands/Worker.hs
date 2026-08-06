@@ -10,8 +10,10 @@ import Control.Concurrent.Async (race)
 import Control.Exception (SomeException, displayException, try)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
-import Effectful (IOE, (:>))
-import Kioku.App (AppEnv, runAppIO, withNoopAppEnv)
+import Effectful (Eff, IOE, (:>))
+import Kioku.Api.Access (MemoryContextProvider)
+import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
+import Kioku.Cli.Context (cliContextProvider)
 import Kioku.Distill.L1 (FindMergeCandidates, recallCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
@@ -182,10 +184,11 @@ dieWorker msg = do
 runTimerOnce :: AppEnv -> EmbeddingConfig -> IO ()
 runTimerOnce env config = do
   rt <- newDistillRuntime
+  contexts <- cliContextProvider @(Eff AppEffects)
   now <- getCurrentTime
   result <- runAppIO env do
     capability <- detectVectorCapability config.dimensions
-    runKiokuTimerWorkerOnce Nothing rt (mergeCandidateFinder config capability) now
+    runKiokuTimerWorkerOnce Nothing contexts rt (mergeCandidateFinder config capability) now
   case result of
     Left storeErr -> ioError (userError ("kioku timer worker store error: " <> show storeErr))
     Right Nothing -> putStrLn "No due kioku distillation timers."
@@ -206,9 +209,10 @@ runTimerOnce env config = do
 runTimerLoop :: AppEnv -> VectorCapability -> EmbeddingConfig -> IO ()
 runTimerLoop env capability config = do
   rt <- newDistillRuntime
+  contexts <- cliContextProvider @(Eff AppEffects)
   putStrLn "kioku timer worker started."
   let go failures = do
-        result <- runAppIO env (drainKiokuTimers Nothing rt (mergeCandidateFinder config capability))
+        result <- runAppIO env (drainKiokuTimers Nothing contexts rt (mergeCandidateFinder config capability))
         case result of
           Left storeErr -> do
             hPutStrLn stderr ("kioku timer worker: store error (will retry): " <> show storeErr)

@@ -15,6 +15,7 @@ import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
 import Kioku.Session.ReadModel (SessionRow (..))
+import Kioku.SpaceFixtures (testActorPrincipal, testContext, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -83,6 +84,9 @@ baseStart :: LineageCase
 baseStart sid _other startedAt =
   StartSessionData
     { sessionId = sid,
+      memorySpaceId = testSpace,
+      actorPrincipal = testActorPrincipal,
+      ownerPrincipal = Nothing,
       agentId = "test-agent",
       focus = "delegation lineage",
       scope = ScopeGlobal (Namespace "kioku-test"),
@@ -108,7 +112,7 @@ assertInvalidLineage mkCommand =
       sid <- genSessionId
       other <- genSessionId
       now <- getCurrentTime
-      result <- runAppIO env (Session.start (mkCommand sid other now))
+      result <- runAppIO env (Session.startWithContext testContext (mkCommand sid other now))
       case result of
         Left storeErr -> assertFailure ("store error: " <> show storeErr)
         Right (Left (Session.SessionInvalidLineage _)) -> pure ()
@@ -126,9 +130,13 @@ startFixture ::
   Eff es ()
 startFixture sid agent previous parent depth startedAt = do
   result <-
-    Session.start
+    Session.startWithContext
+      testContext
       StartSessionData
         { sessionId = sid,
+          memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
+          ownerPrincipal = Nothing,
           agentId = agent,
           focus = "delegation lineage",
           scope = ScopeGlobal (Namespace "kioku-test"),
@@ -138,9 +146,9 @@ startFixture sid agent previous parent depth startedAt = do
           delegationDepth = depth,
           startedAt
         }
-  void (liftEither "Session.start" result)
+  void (liftEither "Session.startWithContext" result)
 
--- | Insert two sessions that name each other as predecessor, bypassing 'Session.start'
+-- | Insert two sessions that name each other as predecessor, bypassing 'Session.startWithContext'
 -- (which now refuses to create a cycle), then walk the chain. The assertion is simply that
 -- the query returns at all — and returns each session exactly once, rather than looping.
 testChainTerminatesOnCycle :: IO ()

@@ -33,6 +33,7 @@ import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
+import Kioku.SpaceFixtures (testActorPrincipal, testContext, testSpace)
 import Kioku.Worker.Failure (embeddingRetryDelay, isTransientStoreError)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
@@ -154,9 +155,13 @@ recordFixtureMemory content = do
   memoryId <- liftIO genMemoryId
   now <- liftIO getCurrentTime
   recorded <-
-    Memory.record
+    Memory.recordWithContext
+      testContext
       RecordMemoryData
-        { memoryId,
+        { memorySpaceId = testSpace,
+          actorPrincipal = testActorPrincipal,
+          ownerPrincipal = Nothing,
+          memoryId,
           agentId = "test-agent",
           sessionId = Nothing,
           scope = fixtureScope,
@@ -168,7 +173,7 @@ recordFixtureMemory content = do
           supersedes = Nothing,
           recordedAt = now
         }
-  void (liftIO (expectRight "Memory.record" recorded))
+  void (liftIO (expectRight "Memory.recordWithContext" recorded))
   events <- readStreamForward (Stream.streamName (memoryStream memoryId)) (StreamVersion 0) 10
   case Vector.toList events of
     event : _ -> pure (memoryId, event)

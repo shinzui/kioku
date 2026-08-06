@@ -9,9 +9,11 @@ where
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
+import Kioku.Api.Access (memoryContextRecordedActor, memoryContextSpace)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..))
 import Kioku.App (runAppIO, withNoopAppEnv)
+import Kioku.Cli.Context (cliMemoryContext)
 import Kioku.Cli.Options (redactConnectionString, yesWriteEventsFlag)
 import Kioku.Id (genMemoryId, idText)
 import Kioku.Memory qualified as Memory
@@ -42,6 +44,7 @@ runDemo DemoOptions = do
   putStrLn "kioku demo appends permanent memory events (kioku has no delete)."
   putStrLn ("Target: " <> Text.unpack (redactConnectionString (Text.pack connStr)))
   putStrLn "Scope:  kioku_demo/demo/demo"
+  context <- cliMemoryContext
   withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
     mid <- genMemoryId
     now <- getCurrentTime
@@ -49,6 +52,9 @@ runDemo DemoOptions = do
         payload =
           RecordMemoryData
             { memoryId = mid,
+              memorySpaceId = memoryContextSpace context,
+              actorPrincipal = memoryContextRecordedActor context,
+              ownerPrincipal = Nothing,
               agentId = "demo-agent",
               sessionId = Nothing,
               scope = scope,
@@ -61,7 +67,7 @@ runDemo DemoOptions = do
               recordedAt = now
             }
     result <- runAppIO env do
-      writeResult <- Memory.record payload
+      writeResult <- Memory.recordWithContext context payload
       recallResult <- Recall.getActiveByScope scope
       pure (writeResult, recallResult)
     case result of
