@@ -301,10 +301,15 @@ compiler errors.
 Run from the repository root:
 
 ```bash
-nix develop -c cabal test kioku-core --test-options='-p "codec|compat|invariant"'
+nix develop -c cabal test kioku-core \
+  --test-options='-p "$0 ~ /decode/ || $0 ~ /Memory space isolation/ || $0 ~ /invariant/"'
 nix develop -c cabal test kioku-api
 nix develop -c cabal build all
 ```
+
+The `-p` argument is a tasty *awk expression*, not an alternation: `-p "codec|compat|invariant"`
+is rejected with `is not a valid pattern`. `$0` is the full test path, so the three clauses above
+select the codec-compatibility groups, the isolation spec, and the aggregate invariants.
 
 After all call sites compile:
 
@@ -313,7 +318,15 @@ nix develop -c cabal test all
 ```
 
 Expected focused output includes passing old-event decode, new-event round-trip, cross-space
-idempotency, and legacy-wrapper cases.
+rejection, and legacy-wrapper cases:
+
+```text
+All 56 tests passed   (the focused kioku-core selection)
+All 72 tests passed   (kioku-api)
+All 173 tests passed  (kioku-core, full)
+All 36 tests passed   (kioku-cli)
+All 7 tests passed    (kioku-migrations)
+```
 
 
 ## Validation and Acceptance
