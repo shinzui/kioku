@@ -56,7 +56,7 @@ import Kioku.Migrations.History.Codd
   )
 import Kioku.Migrations.TestSupport (withBareDatabase, withKiokuMigratedDatabase)
 import Test.Tasty (TestTree, defaultMain, testGroup)
-import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 
 main :: IO ()
 main = defaultMain tests
@@ -74,7 +74,13 @@ tests =
       testCase "the full migration chain applies to a fresh database" testFreshDatabase,
       testCase "the migration manifest is complete and valid" testManifestIntegrity,
       testCase "the pinned Codd history maps 30 known plan targets" testHistoryMappings,
-      testCase "the pre-cutover Codd cohort imports 30 rows and applies only eight forward migrations" testCoddCohortImport
+      testCase "the pre-cutover Codd cohort imports 30 rows and applies only nine forward migrations" testCoddCohortImport,
+      testGroup
+        "the memory-space partition migration"
+        [ testCase "backfills every pre-partition row into the legacy space" testMemorySpaceBackfill,
+          testCase "refuses to finish when a derived row disagrees with its session" testMemorySpaceDriftAborts,
+          testCase "re-applying its body changes nothing" testMemorySpaceBackfillIdempotent
+        ]
     ]
 
 -- * The manifest guard
@@ -164,18 +170,20 @@ selectRegistryRow schema =
         )
     )
 
--- | The migration's bytes as they were compiled into this binary, so the test exercises
--- exactly what ships. @-- codd:@ directives are ordinary SQL comments, so the whole file
--- runs as one script.
 loadRegistryBumpMigration :: IO Text
-loadRegistryBumpMigration = do
+loadRegistryBumpMigration =
+  loadMigration "0006-kioku-session-readmodel-registry-bump.sql"
+
+-- | A migration's bytes as they were compiled into this binary, so a test exercises exactly
+-- what ships. @-- codd:@ directives are ordinary SQL comments, so a whole file runs as one
+-- script.
+loadMigration :: FilePath -> IO Text
+loadMigration name = do
   result <- checkMigrationManifest "migrations/manifest"
   entries <- either (fail . show) pure result
   case lookup name (toList entries) of
     Nothing -> fail ("no manifest migration named " <> name)
     Just bytes -> pure (Text.Encoding.decodeUtf8 bytes)
-  where
-    name = "0006-kioku-session-readmodel-registry-bump.sql"
 
 -- * The fresh-database test
 
@@ -193,6 +201,255 @@ registryTableExists =
     "SELECT to_regclass('keiro.keiro_read_models') IS NOT NULL"
     E.noParams
     (D.singleRow (D.column (D.nonNullable D.bool)))
+
+-- * The memory-space partition migration
+
+-- | Prove the backfill on data that genuinely predates the partition.
+--
+-- The migrated database already has the column, so the test first puts it back the way it
+-- was: 'undoMemorySpacePartition' drops every @memory_space_id@ (taking its indexes and
+-- constraints with it) and restores the single-column scene and persona primary keys. Rows
+-- inserted after that are indistinguishable from rows written by an older kioku, which is
+-- what makes running the shipped migration bytes over them a test of the real upgrade
+-- rather than of a mock of one.
+testMemorySpaceBackfill :: Assertion
+testMemorySpaceBackfill =
+  withPrePartitionDatabase \conn -> do
+    partition <- loadMigration memorySpacePartitionMigration
+    run conn (Session.script partition)
+
+    run conn (Session.statement () countMemorySpaces)
+      >>= (@?= [("kioku_legacy", 8)])
+
+    -- The turn whose session row is missing is the one case the derivation cannot answer
+    -- from a parent, and it must still land somewhere explicit.
+    run conn (Session.statement "t-orphan" selectTurnSpace)
+      >>= (@?= Just "kioku_legacy")
+
+    -- The partition-leading indexes and the composite scene/persona keys are what make the
+    -- boundary enforceable rather than merely recorded.
+    indexes <- run conn (Session.statement () selectKiokuIndexes)
+    mapM_
+      (\name -> assertBool (Text.unpack name <> " is missing") (name `elem` indexes))
+      [ "kioku_memories_space_scope_idx",
+        "kioku_memories_space_type_idx",
+        "kioku_memories_space_namespace_idx",
+        "kioku_sessions_space_scope_idx",
+        "kioku_sessions_space_namespace_started_idx",
+        "kioku_sessions_space_namespace_focus_idx",
+        "kioku_sessions_space_awaiting_corr_idx",
+        "kioku_consolidation_space_scope_idx"
+      ]
+    assertBool
+      "kioku_scenes_scope_idx still exists; it duplicates the prefix of kioku_scenes_scope_scene_key_unique"
+      ("kioku_scenes_scope_idx" `notElem` indexes)
+
+    run conn (Session.statement "kioku_scenes" selectPrimaryKeyColumns)
+      >>= (@?= ["memory_space_id", "scene_id"])
+    run conn (Session.statement "kioku_personas" selectPrimaryKeyColumns)
+      >>= (@?= ["memory_space_id", "persona_id"])
+
+    -- Two spaces may now hold the same namespace, scope, and scene key. Before the composite
+    -- key this pair collided on the scope-derived primary key and one silently overwrote the
+    -- other through the upsert's ON CONFLICT clause.
+    run conn (Session.script twoSpacesOneScopeKey)
+
+-- | The derivation rule is a guard, not a comment: a turn that disagrees with its session
+-- aborts the whole migration instead of quietly persisting a row in the wrong space.
+--
+-- Tampering after a first successful pass is how the state is reached, because the backfill
+-- itself cannot produce it. On the second pass the @IS NULL@ updates match nothing and the
+-- validation block is what runs.
+testMemorySpaceDriftAborts :: Assertion
+testMemorySpaceDriftAborts =
+  withPrePartitionDatabase \conn -> do
+    partition <- loadMigration memorySpacePartitionMigration
+    run conn (Session.script partition)
+    run conn (Session.script "UPDATE kiroku.kioku_turns SET memory_space_id = 'space_elsewhere' WHERE turn_id = 't-1'")
+
+    result <- Connection.use conn (Session.script partition)
+    case result of
+      Right () -> assertFailure "the migration accepted a turn in a different space from its session"
+      Left err ->
+        assertBool
+          ("expected a drift failure, got: " <> show err)
+          ("different space from their session" `Text.isInfixOf` Text.pack (show err))
+
+-- | Re-applying the body must be a no-op, which is what makes it safe to re-run after a
+-- partially failed deployment.
+testMemorySpaceBackfillIdempotent :: Assertion
+testMemorySpaceBackfillIdempotent =
+  withPrePartitionDatabase \conn -> do
+    partition <- loadMigration memorySpacePartitionMigration
+    run conn (Session.script partition)
+    before <- run conn (Session.statement () kiokuSchemaSnapshot)
+    spacesBefore <- run conn (Session.statement () countMemorySpaces)
+
+    run conn (Session.script partition)
+    run conn (Session.statement () kiokuSchemaSnapshot) >>= (@?= before)
+    run conn (Session.statement () countMemorySpaces) >>= (@?= spacesBefore)
+
+memorySpacePartitionMigration :: FilePath
+memorySpacePartitionMigration = "0011-kioku-memory-space-partition.sql"
+
+-- | A fully migrated database rolled back to the shape it had before memory spaces, then
+-- seeded with one row in every partitioned table.
+withPrePartitionDatabase :: (Connection.Connection -> IO a) -> IO a
+withPrePartitionDatabase use =
+  withKiokuMigratedDatabase \connStr ->
+    withConnection connStr \conn -> do
+      run conn (Session.script undoMemorySpacePartition)
+      run conn (Session.script prePartitionRows)
+      use conn
+
+-- | @DROP COLUMN … CASCADE@ takes the column's indexes and constraints with it, including the
+-- composite primary keys, which is why the single-column ones have to be put back by hand.
+-- The rest of the DDL below is the pre-partition index set verbatim.
+undoMemorySpacePartition :: Text
+undoMemorySpacePartition =
+  """
+  ALTER TABLE kiroku.kioku_memories DROP COLUMN memory_space_id CASCADE;
+  ALTER TABLE kiroku.kioku_sessions DROP COLUMN memory_space_id CASCADE;
+  ALTER TABLE kiroku.kioku_turns DROP COLUMN memory_space_id CASCADE;
+  ALTER TABLE kiroku.kioku_l1_watermarks DROP COLUMN memory_space_id CASCADE;
+  ALTER TABLE kiroku.kioku_consolidation_decisions DROP COLUMN memory_space_id CASCADE;
+  ALTER TABLE kiroku.kioku_scenes DROP COLUMN memory_space_id CASCADE;
+  ALTER TABLE kiroku.kioku_personas DROP COLUMN memory_space_id CASCADE;
+
+  ALTER TABLE kiroku.kioku_scenes ADD CONSTRAINT kioku_scenes_pkey PRIMARY KEY (scene_id);
+  ALTER TABLE kiroku.kioku_personas ADD CONSTRAINT kioku_personas_pkey PRIMARY KEY (persona_id);
+  ALTER TABLE kiroku.kioku_scenes ADD CONSTRAINT kioku_scenes_scope_scene_key_unique
+    UNIQUE NULLS NOT DISTINCT (namespace, scope_kind, scope_ref, scene_key);
+  ALTER TABLE kiroku.kioku_personas ADD CONSTRAINT kioku_personas_scope_unique
+    UNIQUE NULLS NOT DISTINCT (namespace, scope_kind, scope_ref);
+
+  CREATE INDEX kioku_memories_scope_idx
+    ON kiroku.kioku_memories (namespace, scope_kind, scope_ref) WHERE status = 'active';
+  CREATE INDEX kioku_memories_type_idx
+    ON kiroku.kioku_memories (memory_type) WHERE status = 'active';
+  CREATE INDEX kioku_sessions_scope_idx
+    ON kiroku.kioku_sessions (namespace, scope_kind, scope_ref);
+  CREATE INDEX kioku_sessions_namespace_started_idx
+    ON kiroku.kioku_sessions (namespace, started_at DESC);
+  CREATE INDEX kioku_sessions_namespace_focus_idx
+    ON kiroku.kioku_sessions (namespace, focus, started_at DESC);
+  CREATE INDEX kioku_sessions_awaiting_corr_idx
+    ON kiroku.kioku_sessions (namespace, awaiting_correlation_key) WHERE status = 'awaiting';
+  CREATE INDEX kioku_consolidation_scope_idx
+    ON kiroku.kioku_consolidation_decisions (namespace, scope_kind, scope_ref);
+  CREATE INDEX kioku_scenes_scope_idx
+    ON kiroku.kioku_scenes (namespace, scope_kind, scope_ref);
+  """
+
+-- | Eight rows: one per partitioned table, plus a turn whose session does not exist.
+prePartitionRows :: Text
+prePartitionRows =
+  """
+  INSERT INTO kiroku.kioku_sessions (session_id, agent_id, focus, namespace, started_at)
+  VALUES ('s-1', 'agent', 'focus', 'ns', now());
+
+  INSERT INTO kiroku.kioku_turns (turn_id, session_id, turn_index, role, content, recorded_at)
+  VALUES ('t-1', 's-1', 1, 'user', 'hello', now()),
+         ('t-orphan', 's-vanished', 1, 'user', 'hello', now());
+
+  INSERT INTO kiroku.kioku_l1_watermarks (session_id, last_turn_index) VALUES ('s-1', 1);
+
+  INSERT INTO kiroku.kioku_memories
+    (memory_id, agent_id, session_id, namespace, memory_type, content, created_at, updated_at)
+  VALUES ('m-1', 'agent', 's-1', 'ns', 'fact', 'content', now(), now());
+
+  INSERT INTO kiroku.kioku_consolidation_decisions
+    (decision_id, session_id, namespace, candidate_content, decision)
+  VALUES ('d-1', 's-1', 'ns', 'content', 'store');
+
+  INSERT INTO kiroku.kioku_scenes (scene_id, namespace, scene_key, title, body_md, source_hash)
+  VALUES ('kioku_scene:ns:default', 'ns', 'default', 'title', 'body', 'hash');
+
+  INSERT INTO kiroku.kioku_personas (persona_id, namespace, body_md, source_hash)
+  VALUES ('kioku_persona:ns', 'ns', 'body', 'hash');
+  """
+
+-- | The same scope-derived scene and persona ids, in a second space. Both inserts must
+-- succeed; if either the primary key or the scope-uniqueness constraint had kept its old
+-- shape, the second space would collide with the first.
+twoSpacesOneScopeKey :: Text
+twoSpacesOneScopeKey =
+  """
+  INSERT INTO kiroku.kioku_scenes
+    (memory_space_id, scene_id, namespace, scene_key, title, body_md, source_hash)
+  VALUES ('space_other', 'kioku_scene:ns:default', 'ns', 'default', 'title', 'body', 'hash');
+
+  INSERT INTO kiroku.kioku_personas (memory_space_id, persona_id, namespace, body_md, source_hash)
+  VALUES ('space_other', 'kioku_persona:ns', 'ns', 'body', 'hash');
+  """
+
+-- | Every partitioned row, grouped by the space it landed in.
+countMemorySpaces :: Statement () [(Text, Int64)]
+countMemorySpaces =
+  preparable
+    """
+    SELECT memory_space_id, count(*)
+    FROM (
+      SELECT memory_space_id FROM kiroku.kioku_memories
+      UNION ALL SELECT memory_space_id FROM kiroku.kioku_sessions
+      UNION ALL SELECT memory_space_id FROM kiroku.kioku_turns
+      UNION ALL SELECT memory_space_id FROM kiroku.kioku_l1_watermarks
+      UNION ALL SELECT memory_space_id FROM kiroku.kioku_consolidation_decisions
+      UNION ALL SELECT memory_space_id FROM kiroku.kioku_scenes
+      UNION ALL SELECT memory_space_id FROM kiroku.kioku_personas
+    ) AS partitioned
+    GROUP BY memory_space_id
+    ORDER BY memory_space_id
+    """
+    E.noParams
+    (D.rowList ((,) <$> D.column (D.nonNullable D.text) <*> D.column (D.nonNullable D.int8)))
+
+selectTurnSpace :: Statement Text (Maybe Text)
+selectTurnSpace =
+  preparable
+    "SELECT memory_space_id FROM kiroku.kioku_turns WHERE turn_id = $1"
+    (E.param (E.nonNullable E.text))
+    (D.rowMaybe (D.column (D.nonNullable D.text)))
+
+-- | @pg_indexes.indexname@ is a @name@, not a @text@; the cast is what lets hasql decode it.
+selectKiokuIndexes :: Statement () [Text]
+selectKiokuIndexes =
+  preparable
+    "SELECT indexname::text FROM pg_indexes WHERE schemaname = 'kiroku'"
+    E.noParams
+    (D.rowList (D.column (D.nonNullable D.text)))
+
+selectPrimaryKeyColumns :: Statement Text [Text]
+selectPrimaryKeyColumns =
+  preparable
+    """
+    SELECT a.attname::text
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality)
+    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+    WHERE c.contype = 'p' AND n.nspname = 'kiroku' AND t.relname = $1
+    ORDER BY k.ordinality
+    """
+    (E.param (E.nonNullable E.text))
+    (D.rowList (D.column (D.nonNullable D.text)))
+
+kiokuSchemaSnapshot :: Statement () Text
+kiokuSchemaSnapshot =
+  preparable
+    """
+    SELECT md5(
+      coalesce((SELECT string_agg(table_name || '.' || column_name || ':' || data_type || ':' || is_nullable,
+                                  E'\n' ORDER BY table_name, ordinal_position)
+                  FROM information_schema.columns
+                 WHERE table_schema = 'kiroku' AND table_name LIKE 'kioku\\_%'), '')
+      || coalesce((SELECT string_agg(indexname || ':' || indexdef, E'\n' ORDER BY indexname)
+                     FROM pg_indexes
+                    WHERE schemaname = 'kiroku' AND tablename LIKE 'kioku\\_%'), ''))
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
 
 -- * The downstream Codd cutover rehearsal
 
@@ -265,13 +522,13 @@ testCoddCohortImport =
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 38
+    length appliedMigrations @?= 39
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 38
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 39
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 fixtureMigrationNames :: Text -> [FilePath]
@@ -344,7 +601,8 @@ expectedForwardMigrationIds =
           migrationId "keiro" "0017-schema-management-comment",
           migrationId "keiro" "0018",
           migrationId "keiro" "0019-keiro-snapshots-state-shape-hash",
-          migrationId "keiro" "0020-keiro-workflow-children-failure-reason"
+          migrationId "keiro" "0020-keiro-workflow-children-failure-reason",
+          migrationId "kioku" "0011-kioku-memory-space-partition"
         ]
 
 expectRight :: (Show error) => Either error value -> value
