@@ -56,7 +56,7 @@ would fork Meibo and En.
 | EP-1 | Define portfolio identity and authorization contracts for Kioku | docs/plans/24-define-portfolio-identity-and-authorization-contracts-for-kioku.md | None | None | Complete |
 | EP-2 | Carry memory-space partitions through Kioku domain and APIs | docs/plans/25-carry-memory-space-partitions-through-kioku-domain-and-apis.md | EP-1 | None | Complete |
 | EP-3 | Migrate Kioku read models to partitioned memory spaces | docs/plans/26-migrate-kioku-read-models-to-partitioned-memory-spaces.md | EP-2 | None | Complete |
-| EP-4 | Isolate workers timers and workspace artifacts by memory space | docs/plans/27-isolate-workers-timers-and-workspace-artifacts-by-memory-space.md | EP-2, EP-3 | None | Not Started |
+| EP-4 | Isolate workers timers and workspace artifacts by memory space | docs/plans/27-isolate-workers-timers-and-workspace-artifacts-by-memory-space.md | EP-2, EP-3 | None | In Progress |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3).

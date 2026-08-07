@@ -6,6 +6,7 @@ module Kioku.Cli.ParserSpec (tests) where
 
 import Data.List (isInfixOf)
 import Data.Text qualified as Text
+import Kioku.Api.Access (mkMemorySpaceId)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Cli.Commands.Demo (DemoOptions (..), demoOptionsParser, demoScope)
 import Kioku.Cli.Commands.DemoSession (DemoSessionOptions (..), demoSessionOptionsParser)
@@ -15,6 +16,7 @@ import Kioku.Cli.Commands.Worker (WorkerOptions (..), workerOptionsParser)
 import Kioku.Cli.Options (redactConnectionString)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Id (genMemoryId, genSessionId, idText)
+import Kioku.Memory.Embedding.Worker (EmbeddingBackfillScope (..))
 import Options.Applicative
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
@@ -196,8 +198,16 @@ workerModeTests =
     "worker one-shot modes are mutually exclusive"
     [ testCase "no flags means the continuous worker" do
         parseWith workerOptionsParser [] @?= Right WorkerContinuous,
-      testCase "--backfill" do
-        parseWith workerOptionsParser ["--backfill"] @?= Right WorkerBackfill,
+      testCase "--backfill covers every space unless one is named" do
+        parseWith workerOptionsParser ["--backfill"] @?= Right (WorkerBackfill BackfillEverySpace),
+      testCase "--backfill --space bounds the pass to one space" do
+        parseWith workerOptionsParser ["--backfill", "--space", "space_prod"]
+          @?= Right (WorkerBackfill (BackfillOneSpace (spaceNamed "space_prod"))),
+      -- A space id that no caller could have constructed must not become one here either: the
+      -- backfill would then scan for a partition value the database cannot hold and report a
+      -- confident zero.
+      testCase "--space rejects a malformed memory space id" do
+        assertParseFailure (parseWith workerOptionsParser ["--backfill", "--space", "bad:space"]),
       testCase "--timers-once" do
         parseWith workerOptionsParser ["--timers-once"] @?= Right WorkerTimersOnce,
       testCase "both flags is a parse error" do
@@ -212,3 +222,10 @@ workerModeTests =
         assertBool
           ("failure should name the conflicting flag " <> rejected <> ": " <> err)
           (rejected `isInfixOf` err)
+
+    assertParseFailure = \case
+      Right mode -> assertBool ("expected a parse error, got: " <> show mode) False
+      Left _ -> pure ()
+
+    spaceNamed raw =
+      either (error . Text.unpack) id (mkMemorySpaceId (Text.pack raw))

@@ -7,6 +7,7 @@ where
 
 import Baikai.Embedding (EmbeddingModel)
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.HashMap.Strict qualified as HashMap
 import Data.Set qualified as Set
 import Data.Vector qualified as Vector
@@ -17,6 +18,15 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Stream qualified as Stream
+import Kioku.Api.Access
+  ( MemoryAccessContext,
+    MemoryAccessDenial (..),
+    MemoryContextProvider (..),
+    MemoryPermission (..),
+    MemorySpaceId,
+    memoryContextRecordedActor,
+    memoryContextSpace,
+  )
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
@@ -25,7 +35,9 @@ import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
 import Kioku.Memory.Embedding (EmbedError (..), EmbeddingConfig (..), toEmbeddingModel)
 import Kioku.Memory.Embedding.Worker
-  ( EmbeddingWorkerEnv (..),
+  ( EmbeddingBackfillScope (..),
+    EmbeddingWorkerEnv (..),
+    backfillMissingEmbeddings,
     embeddingHandler,
     shouldSkipEmbedding,
   )
@@ -33,7 +45,7 @@ import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
-import Kioku.SpaceFixtures (testActorPrincipal, testContext, testSpace)
+import Kioku.SpaceFixtures (otherContext, otherSpace, testContext, testContextProvider, testSpace)
 import Kioku.Worker.Failure (embeddingRetryDelay, isTransientStoreError)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
@@ -63,7 +75,10 @@ tests =
       testCase "provider failure acks retry" testProviderFailureRetries,
       testCase "undecodable payload acks dead-letter" testUndecodablePayloadDeadLetters,
       testCase "successful embedding acks ok and stores the vector" testSuccessStoresEmbedding,
-      testCase "dimension mismatch halts the processor" testDimensionMismatchHalts
+      testCase "dimension mismatch halts the processor" testDimensionMismatchHalts,
+      testCase "a refused memory space acks dead-letter" testRefusedSpaceDeadLetters,
+      testCase "an envelope naming another space acks dead-letter and writes nothing" testForgedSpaceDeadLetters,
+      testCase "a one-space backfill leaves every other space alone" testBackfillHonorsSpace
     ]
 
 -- | Every constructor kiroku documents as retryable is transient; every
@@ -111,9 +126,9 @@ testUndecodablePayloadDeadLetters =
   withEmbeddingEnv \appEnv -> do
     capability <- runOrFail appEnv (detectVectorCapability embeddingDims)
     decision <- runOrFail appEnv do
-      (_, recorded) <- recordFixtureMemory "corrupt payload memory"
+      (_, recorded) <- recordFixtureMemory testContext "corrupt payload memory"
       let env = mkTestEnv (failingEmbed EmbedEmpty)
-      embeddingHandler capability env (mkIngested (corruptPayload recorded) (Just 0))
+      embeddingHandler testContextProvider capability env (mkIngested (corruptPayload recorded) (Just 0))
     case decision of
       AckDeadLetter (InvalidPayload _) -> pure ()
       other -> assertFailure ("expected a dead-letter for an undecodable payload, got: " <> show other)
@@ -125,9 +140,9 @@ testSuccessStoresEmbedding =
   withVectorEnv "successful embedding" \env capability -> do
     (decision, stored) <-
       runOrFail env do
-        (memoryId, recorded) <- recordFixtureMemory "a memory worth embedding"
+        (memoryId, recorded) <- recordFixtureMemory testContext "a memory worth embedding"
         let workerEnv = mkTestEnv (\_ -> pure (Right (Vector.replicate embeddingDims 0.1)))
-        decision <- embeddingHandler capability workerEnv (mkIngested recorded (Just 0))
+        decision <- embeddingHandler testContextProvider capability workerEnv (mkIngested recorded (Just 0))
         stored <- loadEmbeddingState (idText memoryId)
         pure (decision, stored)
     decision @?= AckOk
@@ -145,21 +160,91 @@ testDimensionMismatchHalts =
       AckHalt (HaltFatal _) -> pure ()
       other -> assertFailure ("expected a fatal halt on a dimension mismatch, got: " <> show other)
 
+-- | A provider that refuses every space, as a host with a real authorization engine would when
+-- the worker is not allowed to touch this tenant.
+refusingContextProvider :: (Applicative m) => MemoryContextProvider m
+refusingContextProvider =
+  MemoryContextProvider \space -> pure (Left (MemoryPermissionDenied space MemoryDistill))
+
+-- | A worker that may not act in a space must not quietly retry forever. The refusal is a
+-- configuration fact: it goes to the dead-letter table where an operator can see it, and the
+-- memory row is never read, let alone written.
+testRefusedSpaceDeadLetters :: Assertion
+testRefusedSpaceDeadLetters =
+  withEmbeddingEnv \appEnv -> do
+    capability <- runOrFail appEnv (detectVectorCapability embeddingDims)
+    decision <- runOrFail appEnv do
+      (_, recorded) <- recordFixtureMemory testContext "a memory in a refused space"
+      embeddingHandler
+        refusingContextProvider
+        capability
+        (mkTestEnv (\_ -> pure (Right (Vector.replicate embeddingDims 0.1))))
+        (mkIngested recorded (Just 0))
+    case decision of
+      AckDeadLetter (InvalidPayload _) -> pure ()
+      other -> assertFailure ("expected a dead-letter for a refused memory space, got: " <> show other)
+
+-- | The case a partition predicate alone cannot catch.
+--
+-- The event names 'otherSpace'; the memory it names is in 'testSpace'. Had the state read been
+-- scoped by the envelope's space, this would have come back as "no such memory" and acked as a
+-- success — a forged envelope silently swallowed. Instead the row's own space is read and
+-- compared, so the disagreement is visible and nothing is written.
+testForgedSpaceDeadLetters :: Assertion
+testForgedSpaceDeadLetters =
+  withVectorEnv "forged memory space" \appEnv capability -> do
+    (decision, embedded) <- runOrFail appEnv do
+      (memoryId, recorded) <- recordFixtureMemory testContext "a memory in its real space"
+      verdict <-
+        embeddingHandler
+          testContextProvider
+          capability
+          (mkTestEnv (\_ -> pure (Right (Vector.replicate embeddingDims 0.1))))
+          (mkIngested (retargetSpace otherSpace recorded) (Just 0))
+      stored <- loadEmbeddingState (idText memoryId)
+      pure (verdict, stored)
+    case decision of
+      AckDeadLetter (InvalidPayload _) -> pure ()
+      other -> assertFailure ("expected a dead-letter for a forged memory space, got: " <> show other)
+    assertBool "the forged envelope must not have embedded the row" (not embedded)
+
+-- | A backfill bounded to one space embeds that space and nothing else.
+--
+-- Both memories are unembedded when the pass starts, so a scan that ignored the predicate would
+-- return two rows and the count alone would give it away; the per-row assertions are what prove
+-- the /other/ space's row was not merely counted but genuinely left alone.
+testBackfillHonorsSpace :: Assertion
+testBackfillHonorsSpace =
+  withVectorEnv "one-space backfill" \appEnv capability -> do
+    (count, mineEmbedded, theirsEmbedded) <- runOrFail appEnv do
+      (mine, _) <- recordFixtureMemory testContext "a memory in the backfilled space"
+      (theirs, _) <- recordFixtureMemory otherContext "a memory in the untouched space"
+      embedded <-
+        backfillMissingEmbeddings
+          capability
+          (mkTestEnv (\_ -> pure (Right (Vector.replicate embeddingDims 0.1))))
+          (BackfillOneSpace testSpace)
+      (embedded,,) <$> loadEmbeddingState (idText mine) <*> loadEmbeddingState (idText theirs)
+    assertBool ("the backfill embedded nothing (count " <> show count <> ")") (count >= 1)
+    assertBool "the backfilled space's memory has no embedding" mineEmbedded
+    assertBool "the untouched space's memory was embedded anyway" (not theirsEmbedded)
+
 -- | Record a memory, then hand back its id and the @MemoryRecorded@ event at
 -- the head of its stream — a real recorded event, not a hand-built one.
 recordFixtureMemory ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
   Text ->
   Eff es (MemoryId, RecordedEvent)
-recordFixtureMemory content = do
+recordFixtureMemory context content = do
   memoryId <- liftIO genMemoryId
   now <- liftIO getCurrentTime
   recorded <-
     Memory.recordWithContext
-      testContext
+      context
       RecordMemoryData
-        { memorySpaceId = testSpace,
-          actorPrincipal = testActorPrincipal,
+        { memorySpaceId = memoryContextSpace context,
+          actorPrincipal = memoryContextRecordedActor context,
           ownerPrincipal = Nothing,
           memoryId,
           agentId = "test-agent",
@@ -183,7 +268,26 @@ recordFixtureMemory content = do
 -- Spelled out field by field rather than as a record update because @payload@
 -- is also an 'Envelope' field, and GHC will not guess which one is meant.
 corruptPayload :: RecordedEvent -> RecordedEvent
-corruptPayload e =
+corruptPayload e = withPayload e (Aeson.String "garbage")
+
+-- | Rewrite a recorded event's @memorySpaceId@, leaving everything else — including the memory
+-- id — exactly as it was written. This is what a stale or forged envelope looks like.
+--
+-- The event encoding is a tagged object (@Kioku.Prelude.eventAesonOptions@), so the field lives
+-- under @data@ rather than at the top level. An unexpected shape is fatal rather than a no-op:
+-- silently returning the event unchanged would make this test pass by testing nothing.
+retargetSpace :: MemorySpaceId -> RecordedEvent -> RecordedEvent
+retargetSpace space e =
+  withPayload e $
+    case e.payload of
+      Aeson.Object o
+        | Just (Aeson.Object d) <- KeyMap.lookup "data" o ->
+            Aeson.Object
+              (KeyMap.insert "data" (Aeson.Object (KeyMap.insert "memorySpaceId" (Aeson.toJSON space) d)) o)
+      other -> error ("retargetSpace: unexpected event payload shape: " <> show other)
+
+withPayload :: RecordedEvent -> Aeson.Value -> RecordedEvent
+withPayload e payload =
   RecordedEvent
     { eventId = e.eventId,
       eventType = e.eventType,
@@ -191,7 +295,7 @@ corruptPayload e =
       globalPosition = e.globalPosition,
       originalStreamId = e.originalStreamId,
       originalVersion = e.originalVersion,
-      payload = Aeson.String "garbage",
+      payload,
       metadata = e.metadata,
       causationId = e.causationId,
       correlationId = e.correlationId,
@@ -206,8 +310,8 @@ runHandler ::
   IO AckDecision
 runHandler appEnv capability embed attemptN =
   runOrFail appEnv do
-    (_, recorded) <- recordFixtureMemory "a memory to embed"
-    embeddingHandler capability (mkTestEnv embed) (mkIngested recorded attemptN)
+    (_, recorded) <- recordFixtureMemory testContext "a memory to embed"
+    embeddingHandler testContextProvider capability (mkTestEnv embed) (mkIngested recorded attemptN)
 
 mkTestEnv :: (Text -> IO (Either EmbedError (Vector.Vector Double))) -> EmbeddingWorkerEnv
 mkTestEnv embed =

@@ -11,14 +11,19 @@ import Control.Exception (SomeException, displayException, try)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Effectful (Eff, IOE, (:>))
-import Kioku.Api.Access (MemoryContextProvider)
+import Kioku.Api.Access (MemorySpaceId, memorySpaceIdText, mkMemorySpaceId)
 import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Cli.Context (cliContextProvider)
 import Kioku.Distill.L1 (FindMergeCandidates, recallCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
-import Kioku.Memory.Embedding.Worker (backfillMissingEmbeddings, runEmbeddingWorkerHost)
+import Kioku.Memory.Embedding.Worker
+  ( EmbeddingBackfillScope (..),
+    backfillMissingEmbeddings,
+    mkEmbeddingWorkerEnv,
+    runEmbeddingWorkerHost,
+  )
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
 import Kiroku.Store.Connection (KirokuStore, defaultConnectionSettings, withStore)
 import Kiroku.Store.Effect (Store)
@@ -32,25 +37,51 @@ import System.IO (hPutStrLn, stderr)
 -- ordered: @--backfill --timers-once@ checked @timersOnce@ first and ignored @--backfill@
 -- without a word. As a sum parsed from mutually exclusive alternatives, passing both is a
 -- parse error.
+--
+-- @--space@ belongs to the backfill and to nothing else, so it is a field of that constructor
+-- rather than a top-level option. Its default is 'BackfillEverySpace': a worker serves every
+-- space in its database, and defaulting to one — @KIOKU_MEMORY_SPACE@, say — would let an
+-- operator run a backfill, see a count, and never learn that the other spaces are still
+-- unsearchable.
 data WorkerOptions
   = WorkerContinuous
-  | WorkerBackfill
+  | WorkerBackfill !EmbeddingBackfillScope
   | WorkerTimersOnce
   deriving stock (Eq, Show)
 
 workerOptionsParser :: Parser WorkerOptions
 workerOptionsParser =
-  flag'
-    WorkerBackfill
-    ( long "backfill"
-        <> help "Run one embedding backfill pass and exit (conflicts with --timers-once)"
-    )
+  ( flag'
+      WorkerBackfill
+      ( long "backfill"
+          <> help "Run one embedding backfill pass and exit (conflicts with --timers-once)"
+      )
+      <*> backfillScopeParser
+  )
     <|> flag'
       WorkerTimersOnce
       ( long "timers-once"
           <> help "Claim and fire at most one due kioku distillation timer, then exit (conflicts with --backfill)"
       )
     <|> pure WorkerContinuous
+
+backfillScopeParser :: Parser EmbeddingBackfillScope
+backfillScopeParser =
+  maybe BackfillEverySpace BackfillOneSpace
+    <$> optional
+      ( option
+          (eitherReader parseMemorySpace)
+          ( long "space"
+              <> metavar "MEMORY_SPACE_ID"
+              <> help "Backfill only this memory space (default: every space in the database)"
+          )
+      )
+
+parseMemorySpace :: String -> Either String MemorySpaceId
+parseMemorySpace raw =
+  case mkMemorySpaceId (Text.pack raw) of
+    Left err -> Left (Text.unpack err)
+    Right space -> Right space
 
 runWorker :: WorkerOptions -> IO ()
 runWorker opts = do
@@ -61,8 +92,8 @@ runWorker opts = do
     withNoopAppEnv settings \env ->
       case opts of
         WorkerTimersOnce -> runTimerOnce env config
-        WorkerBackfill -> withCapability env config \capability ->
-          runBackfill env capability config
+        WorkerBackfill scope -> withCapability env config \capability ->
+          runBackfill env capability config scope
         WorkerContinuous -> withCapability env config \capability ->
           runContinuousWorker env st capability config
 
@@ -89,8 +120,8 @@ mergeCandidateFinder config capability =
 mergeCandidateLimit :: Int
 mergeCandidateLimit = 8
 
-runBackfill :: AppEnv -> VectorCapability -> EmbeddingConfig -> IO ()
-runBackfill env capability config = do
+runBackfill :: AppEnv -> VectorCapability -> EmbeddingConfig -> EmbeddingBackfillScope -> IO ()
+runBackfill env capability config scope = do
   -- Refuse before any event is touched: a backfill under a mismatched dimension count would
   -- embed every memory in the store and fail the ::vector cast on every single one.
   case capability of
@@ -98,10 +129,16 @@ runBackfill env capability config = do
       dieWorker (dimensionMismatchMessage configured actual)
     _ -> pure ()
   let model = toEmbeddingModel config
-  result <- runAppIO env (backfillMissingEmbeddings capability model config.dimensions)
+  result <- runAppIO env (backfillMissingEmbeddings capability (mkEmbeddingWorkerEnv model config.dimensions) scope)
   case result of
     Left storeErr -> ioError (userError ("kioku worker backfill store error: " <> show storeErr))
-    Right count -> putStrLn ("Backfilled " <> show count <> " memory embeddings.")
+    Right count ->
+      putStrLn ("Backfilled " <> show count <> " memory embeddings " <> backfillScopeLabel scope <> ".")
+
+backfillScopeLabel :: EmbeddingBackfillScope -> String
+backfillScopeLabel = \case
+  BackfillEverySpace -> "across every memory space"
+  BackfillOneSpace space -> "in memory space " <> Text.unpack (memorySpaceIdText space)
 
 -- | Run both pipelines under supervision.
 --
@@ -118,6 +155,7 @@ runBackfill env capability config = do
 runContinuousWorker :: AppEnv -> KirokuStore -> VectorCapability -> EmbeddingConfig -> IO ()
 runContinuousWorker env store capability config = do
   let model = toEmbeddingModel config
+  contexts <- cliContextProvider @(Eff AppEffects)
   case capability of
     VectorAvailable -> do
       startupBackfill env capability config
@@ -125,7 +163,7 @@ runContinuousWorker env store capability config = do
         try @SomeException $
           race
             (runTimerLoop env capability config)
-            (runAppIO env (runEmbeddingWorkerHost store capability model config.dimensions))
+            (runAppIO env (runEmbeddingWorkerHost store contexts capability model config.dimensions))
       case outcome of
         -- A halted processor can tear its own machinery down hard enough to
         -- surface as an exception rather than a clean return (shibuya's halt path
@@ -167,9 +205,20 @@ dimensionMismatchMessage configured actual =
 -- Idempotent, so it is safe on every start. A failure here is only a warning:
 -- if the database is down, the loops' own retry and exit behavior is the honest
 -- place for that to surface, not a special case at startup.
+--
+-- It covers every space, not @KIOKU_MEMORY_SPACE@: this process is about to subscribe to every
+-- space's memory events, so recovering only one space's would leave the others' recall degraded
+-- with nothing to say so.
 startupBackfill :: AppEnv -> VectorCapability -> EmbeddingConfig -> IO ()
 startupBackfill env capability config = do
-  result <- runAppIO env (backfillMissingEmbeddings capability (toEmbeddingModel config) config.dimensions)
+  result <-
+    runAppIO
+      env
+      ( backfillMissingEmbeddings
+          capability
+          (mkEmbeddingWorkerEnv (toEmbeddingModel config) config.dimensions)
+          BackfillEverySpace
+      )
   case result of
     Left storeErr ->
       hPutStrLn stderr ("kioku worker: startup backfill failed: " <> show storeErr)
