@@ -30,12 +30,28 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Add `RecallTarget` and a context-aware recall request to the public API.
-- [ ] Define stable tagged JSON for exact-scope and namespace-wide targets.
-- [ ] Add a deprecated legacy conversion that preserves current behavior exactly.
-- [ ] Separate validation of target, limits, strategy, and authorized memory space.
-- [ ] Add unit, JSON round-trip, compatibility, and compile-surface tests.
-- [ ] Document semantics and the deprecation/removal window.
+Milestone 1 (public target and request types) is complete. Milestones 2 and 3 have not started.
+
+- [x] Add `RecallTarget` and the request type to the public API. (2026-08-07:
+      `kioku-api/src/Kioku/Api/Recall.hs` defines `RecallTarget`, `RecallStrategy` moved from
+      `Kioku.Recall`, the validated `RecallLimit`, and `RecallQuery`. The request deliberately
+      carries no memory space.)
+- [ ] Make core recall execution take a `MemoryAccessContext` and a `RecallQuery`.
+- [x] Define stable tagged JSON for exact-scope and namespace-wide targets. (2026-08-07: three
+      required tags — `exact_global`, `exact_entity`, `namespace_wide` — hand-written, with
+      strict decoding that refuses an unknown tag and a variant carrying a field it has no
+      meaning for.)
+- [x] Add the pure legacy conversion that preserves current behavior exactly. (2026-08-07:
+      `legacyRecallTarget`, with tests that it never narrows a global scope to the global
+      bucket.)
+- [ ] Add the deprecated `legacyRecall` entry point that keeps `RecallRequest` callers working.
+- [x] Separate validation of target, limits, and strategy. (2026-08-07: target by construction,
+      limit by `mkRecallLimit`, strategy by its own total enum.)
+- [ ] Validate the authorized memory space at execution, from the context and nowhere else.
+- [x] Add unit and JSON round-trip tests for the vocabulary. (2026-08-07:
+      `kioku-api/test/Kioku/Api/RecallSpec.hs`, 119 assertions passing.)
+- [ ] Add compatibility and behavior tests in `kioku-core`.
+- [ ] Document semantics and the deprecation/removal window (user docs, changelogs, ADR).
 
 
 ## Surprises & Discoveries
@@ -68,6 +84,33 @@ Record every decision made while working on the plan.
   Rationale: The target is a retrieval boundary inside an already authorized partition; mixing
   them invites namespace-wide authorization mistakes.
   Date: 2026-08-06
+
+- Decision: The wire format carries three tags — `exact_global`, `exact_entity`,
+  `namespace_wide` — rather than the two Haskell constructors.
+  Rationale: The plan requires a required discriminator and forbids inferring meaning from null
+  scope fields. A two-tag encoding would separate the exact global bucket from an exact entity
+  only by whether `scope_kind` was present, which is the null-means-something representation this
+  whole initiative removes from SQL — reintroduced on the wire. Three tags also give the future
+  HTTP/SDK union one variant per data-visible outcome. The mapping to the two constructors is
+  total in both directions.
+  Date: 2026-08-07
+
+- Decision: `RecallStrategy` moves from `kioku-core`'s `Kioku.Recall` to `kioku-api`'s
+  `Kioku.Api.Recall`, and `Kioku.Recall` re-exports it.
+  Rationale: A request is a target, a query, a strategy and a bound. All four must be nameable by
+  a host, an HTTP service, or an SDK without depending on the runtime package. Re-exporting keeps
+  every existing `import Kioku.Recall (RecallStrategy (..))` compiling.
+  Date: 2026-08-07
+
+- Decision: `RecallLimit` is a validated newtype bounded to 1–100; the pure `legacyRecallTarget`
+  conversion is *not* deprecated.
+  Rationale: Zero silently returns nothing and an unbounded upper end asks the planner for rows
+  that can never exist — each channel contributes at most 50 candidates, so 100 is the ceiling a
+  fused result set can reach. The command line has enforced 1–100 since it was written. The pure
+  conversion is the migration tool: warning on the one function a migrating caller must call
+  would punish the migration. The compile-time deprecation lives on `legacyRecall`, which every
+  unmigrated caller must go through.
+  Date: 2026-08-07
 
 
 ## Outcomes & Retrospective

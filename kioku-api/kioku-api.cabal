@@ -47,6 +47,7 @@ library
   exposed-modules:
     Kioku.Api.Access
     Kioku.Api.Access.Internal
+    Kioku.Api.Recall
     Kioku.Api.Scope
     Kioku.Api.Types
     Kioku.Id
@@ -66,7 +67,10 @@ test-suite kioku-api-test
   type:           exitcode-stdio-1.0
   main-is:        Main.hs
   hs-source-dirs: test
-  other-modules:  Kioku.Api.AccessSpec
+  other-modules:
+    Kioku.Api.AccessSpec
+    Kioku.Api.RecallSpec
+
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , aeson        >=2.2  && <2.3
