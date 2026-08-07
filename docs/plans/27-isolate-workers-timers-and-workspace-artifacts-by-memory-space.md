@@ -50,6 +50,17 @@ implementation. Provide concise evidence.
   repeatedly mutate or acknowledge the wrong space unless the partition is in the durable work
   identity.
 
+- **Timer identity is already partitioned; plan 26 did it.** Plan 26 created the situation where
+  two spaces can hold the same namespace and scope, and the scene and persona timers are keyed by
+  a scope — so leaving their ids alone would have shipped a schedule where keiro's
+  `scheduleTimerTx` upsert treats one space's regeneration as a re-arming of the other's and
+  silently drops one payload. `l2SceneTimerId`, `l3PersonaTimerId`, and both correlation ids now
+  carry the space, both timer payloads carry it, and `fireL2SceneTimer` / `fireL3PersonaTimer`
+  take a `MemoryContextProvider` and dead-letter on refusal, matching `fireL1Timer`. Timers
+  scheduled before that keep their old ids and fire in the legacy space. What remains for this
+  plan is worker claims, dead-letter handling, backfill scans, reconciliation, metrics attributes,
+  and the filesystem layout.
+
 
 ## Decision Log
 

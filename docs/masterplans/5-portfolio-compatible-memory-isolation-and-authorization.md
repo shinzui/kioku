@@ -55,7 +55,7 @@ would fork Meibo and En.
 |---|-------|------|-----------|-----------|--------|
 | EP-1 | Define portfolio identity and authorization contracts for Kioku | docs/plans/24-define-portfolio-identity-and-authorization-contracts-for-kioku.md | None | None | Complete |
 | EP-2 | Carry memory-space partitions through Kioku domain and APIs | docs/plans/25-carry-memory-space-partitions-through-kioku-domain-and-apis.md | EP-1 | None | Complete |
-| EP-3 | Migrate Kioku read models to partitioned memory spaces | docs/plans/26-migrate-kioku-read-models-to-partitioned-memory-spaces.md | EP-2 | None | Not Started |
+| EP-3 | Migrate Kioku read models to partitioned memory spaces | docs/plans/26-migrate-kioku-read-models-to-partitioned-memory-spaces.md | EP-2 | None | Complete |
 | EP-4 | Isolate workers timers and workspace artifacts by memory space | docs/plans/27-isolate-workers-timers-and-workspace-artifacts-by-memory-space.md | EP-2, EP-3 | None | Not Started |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
@@ -108,12 +108,17 @@ rationale that will matter later, and deliberate exclusions.
 - **Schema:** EP-3 owns the additive migration and backfill across memories, sessions, turns,
   watermarks, decisions, scenes, personas, and any provenance/evidence tables present when it
   lands. EP-4 owns query audits outside ordinary read-model functions. EP-2 left EP-3 two named
-  obligations: the memory-space column that makes the write-path idempotency comparison
-  space-aware (until then a caller can learn that an id in another space exists and whether it is
-  active), and composite `(memory_space_id, …)` identities for scene and persona rows, which are
-  still derived from the scope alone. EP-2 also carried the L1 timer payload's space itself rather
-  than leaving it to EP-4, because distillation writes memories and would otherwise have written
-  every background pass into the legacy space.
+  obligations and both are discharged: the write-path idempotency lookup is now scoped to the
+  command's own space, so an id in another space answers exactly as one that does not exist, and
+  scene and persona rows have composite `(memory_space_id, …)` primary keys. As shipped, EP-3 also
+  owns the read-side API shape — every read takes a `MemorySpaceId` — and
+  [ADR-6](../adr/the-partition-is-a-column-not-a-schema.md), which records why the boundary is a
+  column and a predicate rather than a schema, database, or RLS policy per space. EP-2 carried the
+  L1 timer payload's space itself rather than leaving it to EP-4, because distillation writes
+  memories and would otherwise have written every background pass into the legacy space; EP-3 did
+  the same for the scene and persona timers, whose ids are keyed by a scope that two spaces may
+  share. EP-4 still owns worker claims, dead-letter handling, metrics attributes, and the
+  `.kioku/scenes` and `.kioku/persona` filesystem layout, which remains keyed by scope alone.
 - **Recall:** `docs/masterplans/6-explicit-and-safe-recall-boundaries.md` consumes the completed
   partition contract; recall must never be namespace-wide across memory spaces.
 
