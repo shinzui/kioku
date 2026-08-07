@@ -32,7 +32,7 @@ import Keiro.Stream qualified as Stream
 import Keiro.Timer (countDueTimers)
 import Kioku.Api.Access (MemoryAccessContext, memoryContextRecordedActor, memoryContextSpace)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeKindText, scopeNamespaceText, scopeRefText)
-import Kioku.Api.Types (Confidence (..), MemoryType (..))
+import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..))
 import Kioku.App (AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.Consolidate (ConsolidateInput (..), ConsolidationAction (..), ConsolidationDecision (..), ExistingMemory (..), consolidateProgram)
 import Kioku.Distill.Extract (ExtractOutput (..), ExtractedAtom (..), extractProgram)
@@ -57,6 +57,7 @@ import Kioku.Memory.Embedding (EmbeddingConfig (..), toEmbeddingModel)
 import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
+import Kioku.Recall qualified as Recall
 import Kioku.Recall.Capability (VectorCapability (..))
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), StartSessionData (..))
@@ -101,6 +102,7 @@ tests =
       testCase "watermark skips re-extraction until a new turn arrives" testWatermarkSkip,
       testCase "a session accumulates one idle timer however many turns" testIdleTimerCollapse,
       testCase "recall candidates find a duplicate outside the scan window" testRecallCandidateWindow,
+      testCase "recall candidates stay inside the session's own scope" testRecallCandidateBreadth,
       forgetPropagationTests,
       confidencePropagationTests,
       validationTests
@@ -1200,6 +1202,80 @@ testRecallCandidateWindow = withDistillEnv \env -> do
         any
           (\row -> row.memoryId == idText scanDuplicateId && row.status == "active")
           scanMemories
+
+-- | The recall finder searches the session's own scope, not its whole namespace.
+--
+-- A globally-scoped session used to draw merge candidates from every entity scope beside it,
+-- because 'recallCandidates' mapped the scope through @legacyRecallTarget@ and a global scope
+-- means /namespace-wide/ to recall. The consolidator could then merge an atom into a memory
+-- belonging to a sibling entity — rewriting content that feeds a scene the session has nothing to
+-- do with, and one that 'scopedScanCandidates' would never have offered.
+--
+-- The control matters as much as the assertion: the sibling is proven /findable/ by a
+-- namespace-wide recall over the same text, so what excludes it from the pass is the target and
+-- not a missing full-text match.
+testRecallCandidateBreadth :: Assertion
+testRecallCandidateBreadth = withDistillEnv \env -> do
+  base <- replayRuntime
+  sid <- genSessionId
+  siblingId <- genMemoryId
+  now <- getCurrentTime
+  let namespace = Namespace "rei_breadth"
+      sessionScope = ScopeGlobal namespace
+      siblingScope = ScopeEntity namespace (ScopeKind "intention") "intention_sibling"
+      -- Identical to the atom the extractor produces, so nothing but the scope predicate can
+      -- keep it out of the candidate set.
+      siblingContent = "The user prefers concise answers."
+      runtime =
+        base
+          { runExtract = replayProgram singleAtomExtractResponse extractProgram,
+            runConsolidate = \input ->
+              if any (\existing -> unField existing.memoryId == idText siblingId) input.existing
+                then replayProgram (mergeTargetsResponse [idText siblingId]) consolidateProgram input
+                else replayProgram storeAtomResponse consolidateProgram input
+          }
+      -- Keyword only, so dummyEmbeddingModel is never called.
+      recallWith target =
+        case Recall.mkRecallQuery target siblingContent Recall.Keyword 8 of
+          Left err -> liftIO (assertFailure ("mkRecallQuery: " <> Text.unpack err))
+          Right request -> do
+            hits <- Recall.recall dummyEmbeddingModel VectorExtensionUnavailable testContext request
+            case hits of
+              Left recallErr -> liftIO (assertFailure ("recall: " <> show recallErr))
+              Right found -> pure (fmap (\hit -> hit.memory.content) found)
+  result <-
+    runAppIO env do
+      writeRunningFixtureSession sid sessionScope now
+      seedMemoryWith siblingId sid siblingScope siblingContent 50 now
+      wide <- recallWith (Recall.NamespaceWide namespace)
+      exact <- recallWith (Recall.ExactScope sessionScope)
+      outcome <-
+        distillSessionL1
+          testContext
+          RespectWatermark
+          runtime
+          (recallCandidates dummyEmbeddingModel VectorExtensionUnavailable 8)
+          sid
+      summary <- liftIO (expectDistilled "global-scoped pass" outcome)
+      siblingMemories <- loadMemoryStatuses siblingScope
+      bucketMemories <- loadMemoryStatuses sessionScope
+      pure (wide, exact, summary, siblingMemories, bucketMemories)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (wide, exact, summary, siblingMemories, bucketMemories) -> do
+      -- The control: the sibling is reachable from this namespace, and only namespace-wide.
+      wide @?= [siblingContent]
+      exact @?= []
+
+      summary.stored @?= 1
+      summary.merged @?= 0
+      assertBool
+        ("the sibling entity scope must be untouched, got: " <> show siblingMemories)
+        (all (\row -> row.status == "active") siblingMemories)
+      length siblingMemories @?= 1
+      assertBool
+        ("the global bucket should hold the newly stored atom, got: " <> show bucketMemories)
+        (any (\row -> row.status == "active") bucketMemories)
 
 -- | Six low-priority fillers ahead of the duplicate in a @priority ASC@ scan,
 -- with content that shares no stem with the extracted atom so full-text search

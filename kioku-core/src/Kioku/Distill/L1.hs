@@ -277,12 +277,18 @@ scopedScanCandidates limit =
 
 -- | Merge candidates from ranked hybrid recall over the atom's own text.
 --
--- The target is 'Recall.legacyRecallTarget' of the session's scope, which preserves exactly the
--- candidate set this finder produced before recall targets were explicit: a session under a
--- global scope draws candidates from the whole namespace. Whether that breadth is what merge
--- consolidation actually wants is a deliberate question, and it belongs to
--- @docs\/plans\/30-migrate-recall-consumers-to-explicit-targets.md@ rather than to a mechanical
--- signature change.
+-- The target is @'Recall.ExactScope' scope@, the same population 'scopedScanCandidates' draws
+-- from. The two finders differ in how they /rank/ and bound that population — one by hybrid
+-- relevance to the atom, the other by a priority-ordered scan — and a finder that also changed
+-- which memories exist would not be a substitutable alternative to the other.
+--
+-- It was not always so. Until recall targets were explicit this line read
+-- @'Recall.legacyRecallTarget' scope@, which maps a global scope to /namespace-wide/, so a
+-- session scoped @mori@ drew candidates from @mori:repo:web@ as well — and could merge an atom
+-- into that memory, rewriting content that feeds a scene the session has nothing to do with.
+-- Nobody chose that; it is what @ScopeGlobal@ meaning two things looked like from inside one
+-- module. See @docs\/plans\/30-migrate-recall-consumers-to-explicit-targets.md@ for the decision
+-- and what it costs: a globally-scoped session now stores where it used to merge across scopes.
 recallCandidates ::
   (IOE :> es, Store :> es) =>
   EmbeddingModel ->
@@ -303,7 +309,7 @@ recallCandidates model capability limit =
             capability
             context
             Recall.RecallQuery
-              { target = Recall.legacyRecallTarget scope,
+              { target = Recall.ExactScope scope,
                 query,
                 strategy = Recall.Hybrid,
                 maxResults
