@@ -56,7 +56,7 @@ would fork Meibo and En.
 | EP-1 | Define portfolio identity and authorization contracts for Kioku | docs/plans/24-define-portfolio-identity-and-authorization-contracts-for-kioku.md | None | None | Complete |
 | EP-2 | Carry memory-space partitions through Kioku domain and APIs | docs/plans/25-carry-memory-space-partitions-through-kioku-domain-and-apis.md | EP-1 | None | Complete |
 | EP-3 | Migrate Kioku read models to partitioned memory spaces | docs/plans/26-migrate-kioku-read-models-to-partitioned-memory-spaces.md | EP-2 | None | Complete |
-| EP-4 | Isolate workers timers and workspace artifacts by memory space | docs/plans/27-isolate-workers-timers-and-workspace-artifacts-by-memory-space.md | EP-2, EP-3 | None | In Progress |
+| EP-4 | Isolate workers timers and workspace artifacts by memory space | docs/plans/27-isolate-workers-timers-and-workspace-artifacts-by-memory-space.md | EP-2, EP-3 | None | Complete |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3).
@@ -117,8 +117,14 @@ rationale that will matter later, and deliberate exclusions.
   L1 timer payload's space itself rather than leaving it to EP-4, because distillation writes
   memories and would otherwise have written every background pass into the legacy space; EP-3 did
   the same for the scene and persona timers, whose ids are keyed by a scope that two spaces may
-  share. EP-4 still owns worker claims, dead-letter handling, metrics attributes, and the
-  `.kioku/scenes` and `.kioku/persona` filesystem layout, which remains keyed by scope alone.
+  share. As shipped, EP-4 owns the embedding subscription's claim (`MemoryContextProvider`,
+  `EmbedSpaceMismatch`, `EmbeddingBackfillScope`), the timer dead-letter and span diagnostics, and
+  `Kioku.Workspace` — the `.kioku/spaces/<space-dir>/{scenes,persona}` layout and the
+  `kioku migrate-artifacts` command. It confirmed that `reconcileReadModelRegistry` is correctly
+  space-independent: keiro's `keiro_read_models` is a schema-identity registry, not memory data.
+  Any later plan adding a worker, an artifact kind, or an instrument must go through
+  [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md): artifact paths come from
+  `Kioku.Workspace.spaceArtifactRoot`, and no metric may be labelled by a space or a principal.
 - **Recall:** `docs/masterplans/6-explicit-and-safe-recall-boundaries.md` consumes the completed
   partition contract; recall must never be namespace-wide across memory spaces.
 
@@ -139,9 +145,18 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-2: prove old event streams replay into the explicit legacy space. (2026-08-06 — the
   pre-upgrade codec fixtures decode into `kioku_legacy`, and a whole pre-partition session stream
   rehydrates there and then refuses a command from another space.)
-- [ ] EP-3: migrate and backfill every Kioku read model with composite partition indexes.
-- [ ] EP-3: prove cross-space uniqueness and read isolation in real PostgreSQL.
-- [ ] EP-4: partition timers, subscribers, reconciliation, and workspace mirrors end to end.
+- [x] EP-3: migrate and backfill every Kioku read model with composite partition indexes.
+  (2026-08-06 — `0011-kioku-memory-space-partition.sql`; every statement names the column, and
+  scene and persona keys are composite.)
+- [x] EP-3: prove cross-space uniqueness and read isolation in real PostgreSQL. (2026-08-06 —
+  `Kioku.SpaceIsolationSpec`: two spaces sharing everything but the partition, with every public
+  read asserted in both directions and every partitioned lookup shown to use a partition-leading
+  index.)
+- [x] EP-4: partition timers, subscribers, reconciliation, and workspace mirrors end to end.
+  (2026-08-06 — the embedding subscription gained a provider gate and a partitioned claim, mirrors
+  moved under `.kioku/spaces/<space-dir>/`, and reconciliation was confirmed to be correctly
+  space-independent. One worker over two spaces sharing a scope keeps their rows, files, and bytes
+  disjoint.)
 
 
 ## Surprises & Discoveries
@@ -165,6 +180,30 @@ interactions between child plans. Provide concise evidence.
 - The upstream memory system's newer schema uses fixed team/task/user/agent dimensions. The
   useful requirement is an explicit outer isolation boundary; its fixed identity vocabulary
   does not fit the portfolio trust triad and is intentionally not copied.
+
+- **The decomposition under-counted EP-2 and EP-3 and over-counted EP-4.** EP-4 was scoped to
+  "timers, subscribers, reconciliation, and artifacts", but by the time it started all three timer
+  paths were partitioned: EP-2 took the L1 payload because distillation writes memories, and EP-3
+  took the scene and persona timer ids because they are keyed by a scope two spaces may share.
+  Each was the right call at the time — leaving either would have shipped a known defect — and
+  each was recorded as an obligation moved rather than an obligation skipped. EP-4's remaining
+  half was still real: the embedding subscription, the backfill scan, the filesystem, and
+  diagnostics. The lesson for a future decomposition is that "the worker plan owns every worker
+  path" does not survive contact with a plan that must make its own change correct.
+
+- **An opaque identifier validated for one sink is not validated for another.** `MemorySpaceId`
+  rejects exactly what a database column and a relationship tuple need it to
+  (`:`, `#`, `%`, `/`, whitespace, control characters). That list is complete for those sinks and
+  leaves `..` and `.` legal, which is a path traversal the moment a space id is used as a
+  directory name. EP-4 encodes rather than validates, and
+  [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md) records the rule so the next
+  sink asks the same question instead of inheriting the answer.
+
+- **A partition predicate can create the silence it was added to prevent.** The embedding
+  handler's state read looks like every other partitioned read and must not be one: scoping it by
+  the envelope's space turns "this event names the wrong space" into "no such memory", which acks
+  as a success. It reads the row's own space and compares. Any future worker that validates an
+  envelope against stored state has the same trap.
 
 
 ## Decision Log
@@ -199,6 +238,22 @@ plan.
   [ADR-1](../adr/kioku-owns-memory-not-identity.md).
   Date: 2026-08-06 (user directive during EP-1 implementation)
 
+- Decision: Where a plan cannot ship a correct change without work assigned to a later plan, it
+  takes that work and the MasterPlan records the obligation as moved, naming the reason.
+  Rationale: EP-2 needed the L1 timer payload's space (distillation writes memories) and EP-3
+  needed the scene and persona timer ids (they are keyed by a scope two spaces may share). Leaving
+  either would have shipped a known defect to keep a boundary tidy. Recording the move in
+  Integration Points is what let EP-4 start from what was actually left.
+  Date: 2026-08-06
+
+- Decision: The memory space appears on traces and in dead-letter diagnostics, and on no metric
+  label, ever.
+  Rationale: A space id is caller-supplied text with no bound on its cardinality, so an instrument
+  keyed on it is an unbounded time series per tenant and an identity leak into a metrics backend.
+  Traces are sampled and per-incident. Recorded durably as
+  [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md).
+  Date: 2026-08-06
+
 
 ## Outcomes & Retrospective
 
@@ -210,8 +265,60 @@ docs/adr/. Keep task-local execution and coordination details here.
 Planning completed on 2026-08-06. Four child plans define the contract, propagate it through
 the event domain, migrate storage, and close worker/artifact paths.
 
-EP-1 and EP-2 are complete as of 2026-08-06. Writes are partitioned end to end and every stored
-event names its space and its actor; the boundary is enforced by the aggregates themselves, so it
-holds without any schema change. Reads are not partitioned yet and deliberately do not pretend to
-be — that is EP-3's column and predicate. The remaining exposure is therefore read-side and
-worker-side, which is exactly the shape the decomposition predicted.
+**Complete, 2026-08-06.** All four child plans landed the same day. Every Kioku command, query,
+timer, subscription, and plaintext artifact now names exactly one memory space, and every write
+names the principal responsible for it.
+
+Measured against the Vision & Scope: the library contracts, event and API propagation, schema
+migration, and partition-safe background work are all done. The exclusions held — Kioku owns no
+credentials, no directory, no membership, and no policy, and it took no build dependency on any
+identity service. The HTTP service remains out of scope and unbuilt.
+
+**Where the boundary is enforced, in one list, because it is in four places on purpose.**
+
+- The *aggregate* refuses a command naming another space, so the write side holds without any
+  schema ([ADR-4](../adr/the-aggregate-enforces-the-partition.md)).
+- Every *statement* names `memory_space_id`, unconditionally, even where the key is globally
+  unique ([ADR-6](../adr/the-partition-is-a-column-not-a-schema.md)).
+- Every *durable work identity* — timer id, correlation id, payload, subscription envelope —
+  carries the space, so a retry cannot cross it.
+- Every *artifact path* is rooted at a digest of the space, because an id validated for a column
+  is not validated for a path ([ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md)).
+
+**What the decomposition got right.** Pinning the contracts before the schema (EP-1 before EP-3)
+is what kept a private identity vocabulary out of the columns; the object type and permission
+names are still host-supplied, which is exactly the state Kikan-En IR-1 leaves them in. Splitting
+event compatibility (EP-2) from database backfill (EP-3) let the codec fixtures and the migration
+be reviewed against different questions.
+
+**What it got wrong, and it is worth writing down.** Work migrated *earlier* than planned twice,
+both times because a plan could not ship a correct change without it: EP-2 took the L1 timer
+payload, EP-3 took the scene and persona timer ids. EP-4 was left holding the embedding
+subscription, the artifact layout, and diagnostics — still a real plan, but not the one that was
+scoped. "The worker plan owns every worker path" is not a boundary that survives contact with a
+plan that must make its own change correct. The mitigation that worked was cheap: each migration
+was recorded in the MasterPlan's Integration Points as an obligation *moved*, with the reason, so
+EP-4 started from what was actually left rather than from what had been written down.
+
+**Verification.** `cabal test all` — 322 cases across `kioku-api`, `kioku-cli`, `kioku-core`, and
+`kioku-migrations`, including two-space fixtures at every layer: the aggregate
+(`Kioku.MemorySpaceSpec`), the read models and their query plans (`Kioku.SpaceIsolationSpec`), the
+schema constraints (`Kioku.SchemaSpec`), the workers (`Kioku.TimerWorkerSpec`,
+`Kioku.EmbeddingWorkerSpec`), the filesystem (`Kioku.WorkspaceSpec`), and one end-to-end worker
+run over two spaces sharing a namespace and a scope (`Kioku.DistillSpec`).
+
+**Distilled into `docs/adr/`.** ADR-1 (Kioku owns memory, not identity), ADR-2 (a namespace is not
+a security boundary), ADR-3 (legacy data lands in one explicit space), ADR-4 (the aggregate
+enforces the partition), ADR-5 (historical attribution is marked, never invented), ADR-6 (the
+partition is a column and a predicate), ADR-7 (the partition reaches the filesystem as a digest,
+and never a metric label). What stayed in the plans is task-local: which call sites changed, which
+fixtures were added, and the order the milestones ran in.
+
+**What is deliberately not done.** Recall targets are still a `MemoryScope`, so "the exact global
+bucket" and "every scope in this namespace" remain one value with two meanings — unchanged by the
+partition and owned by
+`docs/masterplans/6-explicit-and-safe-recall-boundaries.md`. Kikan-En IR-1 is still `proposed`, so
+the En object type and permission names stay host-supplied rather than defaulted. A killed worker
+process mid-fire is covered by redelivery rather than by an actual restart, and two concurrent
+worker processes are left to keiro's own claim semantics, which this initiative preserved and did
+not re-test.

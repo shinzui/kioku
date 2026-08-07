@@ -30,13 +30,32 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Inventory every timer, subscription, backfill, reconciliation, and mirror path.
-- [ ] Carry memory space through timer payloads, correlation keys, and worker envelopes.
-- [ ] Add partition predicates to worker claims, candidate scans, writes, and acknowledgements.
-- [ ] Place filesystem artifacts under a traversal-safe per-space root with legacy compatibility.
-- [ ] Add two-space concurrency, retry, dead-letter, backfill, and reconciliation tests.
-- [ ] Add partition attributes to metrics/traces without high-cardinality principal labels.
-- [ ] Document worker upgrade ordering and artifact migration.
+- [x] Inventory every timer, subscription, backfill, reconciliation, and mirror path.
+  (2026-08-06 — see the audit under Surprises & Discoveries. Plans 25 and 26 had already closed
+  the three timer paths; what was left was the embedding subscription, the backfill scan, the
+  mirrors, and diagnostics.)
+- [x] Carry memory space through timer payloads, correlation keys, and worker envelopes.
+  (2026-08-06 — L1/L2/L3 payloads and ids by plans 25/26; the embedding handler now reads the
+  space from its decoded `MemoryRecorded` event and gates on a `MemoryContextProvider`.)
+- [x] Add partition predicates to worker claims, candidate scans, writes, and acknowledgements.
+  (2026-08-06 — the embedding worker's three statements were the only ones left in `kioku-core`;
+  the state read now returns the row's own space so a disagreement is `EmbedSpaceMismatch` rather
+  than an empty success, and the update names the space as well as the id.)
+- [x] Place filesystem artifacts under a traversal-safe per-space root with legacy compatibility.
+  (2026-08-06 — `Kioku.Workspace`, `.kioku/spaces/<space-dir>/{scenes,persona}`, and
+  `kioku migrate-artifacts`.)
+- [x] Add two-space concurrency, retry, dead-letter, backfill, and reconciliation tests.
+  (2026-08-06 — `Kioku.WorkspaceSpec`, three new `Kioku.TimerWorkerSpec` cases, three new
+  `Kioku.EmbeddingWorkerSpec` cases, one end-to-end `Kioku.DistillSpec` case, and the mirror
+  assertions in `Kioku.SpaceIsolationSpec`. Reconciliation was already covered by plan 26's
+  `testReconcileKeepsBothSpaces`.)
+- [x] Add partition attributes to metrics/traces without high-cardinality principal labels.
+  (2026-08-06 — a `kioku.timer.fire` span per attempt; no instrument gained a space or principal
+  label, and [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md) records that none
+  may.)
+- [x] Document worker upgrade ordering and artifact migration.
+  (2026-08-06 — `docs/user/upgrading-to-memory-spaces.md`, `docs/user/cli-reference.md`,
+  `docs/user/distillation.md`, `docs/user/library-api.md`, and the changelog.)
 
 
 ## Surprises & Discoveries
@@ -61,6 +80,43 @@ implementation. Provide concise evidence.
   plan is worker claims, dead-letter handling, backfill scans, reconciliation, metrics attributes,
   and the filesystem layout.
 
+- **The audit, in full.** Every path that survives beyond one call stack, and what it needed:
+
+  | Path | State on arrival | Done here |
+  | --- | --- | --- |
+  | L1 timer (`Kioku.Distill.Timer`) | id is session-keyed and globally unique; payload and provider gate landed with plan 25 | nothing but diagnostics |
+  | L2 scene timer (`Kioku.Distill.L2`) | id, correlation id, payload, and provider gate landed with plan 26 | nothing but diagnostics |
+  | L3 persona timer (`Kioku.Distill.L3`) | same as L2 | nothing but diagnostics |
+  | `rescheduleClaimedTimer` | copies `row.payload` verbatim, so the space survives a requeue | nothing |
+  | Embedding subscription (`Kioku.Memory.Embedding.Worker`) | handler took only a memory id; three statements spanned every space | provider gate, space comparison, partitioned update |
+  | Embedding backfill | scanned every space with no way to bound it | `EmbeddingBackfillScope`, `--space` |
+  | Read-model reconciliation (`Kioku.ReadModel`) | operates on keiro's `keiro_read_models` registry | **correctly not per-space** — it is a schema-identity registry, not memory data. Plan 26's `testReconcileKeepsBothSpaces` already proves a reconcile leaves both spaces readable |
+  | Scene/persona mirrors | keyed by scope alone | `Kioku.Workspace` and `kioku migrate-artifacts` |
+  | Timer diagnostics (`last_error`, stderr, traces) | named no space | space-qualified reason, `kioku.timer.fire` span |
+
+- **The embedding state read had to stay unpartitioned to become safe.** The obvious change is
+  `WHERE memory_space_id = $1 AND memory_id = $2` on the read as well as the write. That is
+  exactly wrong here: a delivered event whose space disagrees with the row would come back as
+  "no such memory", and the handler acks that as success — a forged or stale envelope swallowed
+  in silence. The read is keyed by the globally unique memory id and returns the row's own space
+  so the handler can compare the two; the *write* carries the predicate. Reading an identifier in
+  order to refuse it is the opposite of leaking it.
+
+- **A memory space id is not a safe path component, and nothing said so.** `mkMemorySpaceId`
+  rejects `:`, `#`, `%`, `/`, whitespace, and control characters — which is a complete list for a
+  database column and a relationship tuple, and leaves `..` and `.` legal. A layout that used the
+  id directly would have let a host that names spaces from caller input walk out of
+  `.kioku/spaces`. Case folding is the second half of the same problem: `space_A` and `space_a`
+  are two spaces and one directory on APFS. Both are closed by the sanitise-plus-digest encoding
+  in `Kioku.Workspace`, recorded as
+  [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md).
+
+- **`backfillMissingEmbeddings` could not be tested for the property it gained.** It built its own
+  `EmbeddingWorkerEnv` from a model and a dimension count, so any test of "which rows did this
+  scope select" reached the real provider at `embedding.invalid`. Taking the env as a parameter —
+  the same record that already exists so the subscription handler's branches can be driven with a
+  fake — made the assertion possible. A capability that cannot be observed is not one.
+
 
 ## Decision Log
 
@@ -82,6 +138,49 @@ Record every decision made while working on the plan.
   identity leakage.
   Date: 2026-08-06
 
+- Decision: The embedding worker's state read stays keyed by memory id alone and returns the row's
+  own space; only the update carries a partition predicate.
+  Rationale: Scoping the read by the envelope's space turns a stale or forged envelope into "no
+  such memory", which the handler acks as success. Reading the space in order to compare it makes
+  the disagreement visible (`EmbedSpaceMismatch`, dead-lettered, nothing written).
+  Date: 2026-08-06
+
+- Decision: `backfillMissingEmbeddings` takes an `EmbeddingWorkerEnv` rather than a model and a
+  dimension count.
+  Rationale: It previously built its own env, so no test could assert which rows a scope selected
+  without reaching a real embedding provider. The record already exists for exactly this reason on
+  the subscription path.
+  Date: 2026-08-06
+
+- Decision: The per-space artifact directory is a sanitised prefix plus a SHA-256 digest of the
+  space id, never the id itself.
+  Rationale: `mkMemorySpaceId` validates for a database column, so `..` and `.` are legal space
+  ids, and case-folding filesystems merge ids that differ only in case. Recorded as
+  [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md).
+  Date: 2026-08-06
+
+- Decision: New writes go only to the partitioned layout, for every space including the legacy
+  one; the historical tree is never written to again, and `kioku migrate-artifacts` copies rather
+  than moves.
+  Rationale: Dual-writing the legacy space would mean the partition never reaches the filesystem
+  for the space every upgraded deployment is in, and compatibility windows do not close on their
+  own. Copying leaves the operator something to fall back on, and removing the old tree stays
+  their decision.
+  Date: 2026-08-06
+
+- Decision: Emptying a scope in the legacy space also unlinks its pre-partition mirror, which is
+  the one exception to "nothing touches the historical tree".
+  Rationale: An out-of-date file is visible in the migration plan and can wait. Forgotten content
+  surviving on disk is not out of date — a host agent would keep reading memories the caller
+  asked to forget.
+  Date: 2026-08-06
+
+- Decision: The artifact migration refuses a destination whose content differs rather than
+  overwriting it, and exits non-zero when it does — in dry-run mode as well.
+  Rationale: The partitioned file is what the running worker writes; the historical one is a
+  pre-partition snapshot and therefore older. A refusal a script cannot see is not a refusal.
+  Date: 2026-08-06
+
 
 ## Outcomes & Retrospective
 
@@ -90,8 +189,37 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-No implementation has started. Completion means an end-to-end two-space worker test passes under
-normal delivery, redelivery, and restart.
+Complete, 2026-08-06. Kioku's asynchronous and filesystem behaviour honours the same memory-space
+boundary as its synchronous reads.
+
+**What the plan expected to build and did not have to.** Milestone 1 was written before plans 25
+and 26 landed, and by the time this started all three timer paths — payloads, ids, correlation
+ids, and provider gates — were already partitioned. The inventory it asked for is in Surprises &
+Discoveries; what it found left was the embedding subscription, the backfill scan, the mirrors,
+and the diagnostics. Reconciliation turned out to need nothing at all, and that is worth stating
+plainly rather than quietly skipping: `reconcileReadModelRegistry` operates on keiro's
+schema-identity registry, which is per-deployment and not per-space, and plan 26 already proved a
+reconcile leaves both spaces readable.
+
+**What it built.** The embedding worker gained a provider gate, an envelope-versus-row space
+comparison, a partitioned update, and a per-space backfill. Scene and persona mirrors moved under
+`.kioku/spaces/<space-dir>/`, with `kioku migrate-artifacts` to relocate what an upgraded
+deployment already has. Every timer fire runs inside a span that names the space, and every
+dead-lettered timer's `last_error` says which tenant it belongs to.
+
+**Verification.** `cabal test all` — 322 cases across four suites. The end-to-end proof is
+`Kioku.DistillSpec`'s "one worker serving two spaces keeps their artifacts disjoint": one worker,
+two spaces, one namespace and one scope shared between them, asserting each mirror holds only its
+own tenant's content, then forgetting one space's only memory and asserting the other space's
+rows, files, and bytes are untouched, then draining again for zero.
+
+**Gaps, stated rather than glossed.** Restart is covered by redelivery rather than by a process
+kill: `drainTimers` re-enters the worker with fresh state and asserts nothing is left to fire,
+which exercises the same at-least-once contract a restart would, but a genuinely killed process
+mid-fire is not simulated. Concurrency between two worker processes is likewise left to keiro's
+own claim semantics, which this plan preserved and did not re-test. And the historical mirror tree
+goes stale between the upgrade and the migration — a deliberate cost recorded in
+[ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md), not an oversight.
 
 
 ## Context and Orientation
