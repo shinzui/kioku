@@ -9,6 +9,11 @@
   value is a startup error rather than a silent fallback. The worker is not pinned to one space:
   it acts in whichever space a claimed timer names.
 
+### Changed
+
+- `KIOKU_MEMORY_SPACE` now also decides what commands *read*. `kioku recall`, `kioku scenes`, and
+  `kioku persona` return nothing outside it.
+
 ## 0.3.0.0 — 2026-08-05
 
 ### Changed

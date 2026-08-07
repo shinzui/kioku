@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `0011-kioku-memory-space-partition.sql` adds a non-null `memory_space_id` to `kioku_memories`,
+  `kioku_sessions`, `kioku_turns`, `kioku_l1_watermarks`, `kioku_consolidation_decisions`,
+  `kioku_scenes`, and `kioku_personas`. Existing rows are backfilled into the explicit
+  `kioku_legacy` space; turns and watermarks derive theirs from their parent session, and the
+  migration aborts if any derived row disagrees with a session that exists.
+
+### Breaking Changes
+
+- `kioku_scenes` and `kioku_personas` now have composite primary keys,
+  `(memory_space_id, scene_id)` and `(memory_space_id, persona_id)`, and their scope-uniqueness
+  constraints gained the space. Their ids are derived from the namespace and scope alone, which
+  two spaces are allowed to share, so a single-column key let one space's upsert overwrite the
+  other's row. Stored id strings are unchanged.
+- Indexes led by a namespace or a scope were rebuilt partition-first and renamed:
+  `kioku_memories_scope_idx` → `kioku_memories_space_scope_idx`, `kioku_memories_type_idx` →
+  `kioku_memories_space_type_idx` (now covering namespace as well), `kioku_sessions_scope_idx`,
+  `kioku_sessions_namespace_started_idx`, `kioku_sessions_namespace_focus_idx`,
+  `kioku_sessions_awaiting_corr_idx`, and `kioku_consolidation_scope_idx` likewise.
+  `kioku_memories_space_namespace_idx` is new. `kioku_scenes_scope_idx` is dropped as a strict
+  prefix of the per-space unique index.
+- The migration is forward-only and has no down step. Re-running it is a no-op. Rolling the
+  application back is safe only while nothing has been written outside `kioku_legacy`.
+
 ## 0.3.0.0 — 2026-08-05
 
 ### Breaking Changes

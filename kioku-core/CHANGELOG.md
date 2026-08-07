@@ -25,6 +25,32 @@
   `L1NotPermitted`.
 - An L1 timer payload that cannot be parsed now dead-letters instead of being ignored. Payloads
   written before this release parse fine and fire in the legacy space.
+- Every read function takes a `MemorySpaceId` first and returns nothing outside it:
+  `Kioku.Memory.getMemoryRowById`, `getActiveRowsInNamespace`, `getActiveRowsByScope`,
+  `getRowsBySession`, `getActiveRowsByType`, `getSupersessionChain`; `Kioku.Session.getById`,
+  `getRecentInNamespace`, `getByScope`, `getByFocus`, `getByStartedRange`, `getChain`,
+  `getDelegationChildren`, `getAwaitingByCorrelationKey`, `getTurns`; `Kioku.Recall.getById`,
+  `getActiveByScope`, `getActiveInNamespace`, `getGlobal`, `getBySession`, `getByType`;
+  `Kioku.Distill.L2.getScenesByScope` and `regenerateScene`; `Kioku.Distill.L3.getPersonaByScope`
+  and `regeneratePersona`. Pass `memoryContextSpace` of the context that authorized the read.
+- `RecallRequest` gained a required `memorySpaceId` field.
+- Every read-model query record is now a record with named fields rather than a positional
+  constructor, with `memorySpaceId` first: `MemoryByIdQuery`, `MemoriesByNamespaceQuery`,
+  `MemoriesByScopeQuery`, `MemoriesBySessionQuery`, `MemoriesByTypeQuery`,
+  `MemorySupersessionChainQuery`, and the nine session equivalents.
+- `MemoryRow`, `SessionRow`, `TurnRow`, `SceneRow`, and `PersonaRow` gained a leading
+  `memorySpaceId` field.
+- `fireL2SceneTimer` and `fireL3PersonaTimer` take a `MemoryContextProvider`, like `fireL1Timer`.
+- Scene and persona timer ids and correlation ids now include the memory space, so two spaces
+  sharing a namespace and scope no longer share one timer. Timers already scheduled keep their
+  old ids and fire in the legacy space.
+- A cross-space id on a write path now returns `MemoryNotFound` / `SessionNotFound` rather than
+  reaching the aggregate and returning `MemoryCommandRejected`. That closes the existence oracle
+  the previous release documented: an id in another space is now indistinguishable from one that
+  was never written.
+- Read-model registry identities advanced: memory models to v2 / `kioku-memory-v2`, session models
+  to v4 / `kioku-session-v4`, turns to v2 / `kioku-turn-v2`. `kioku-migrate` reconciles them; a
+  host applying migrations as a library must call `reconcileReadModelRegistry` itself.
 
 ### Added
 
@@ -40,9 +66,12 @@
 - Events already on disk keep decoding. They land in `legacyMemorySpaceId`; an old free-text
   `agentId` is recorded as a legacy-marked label and never rewritten into a directory principal;
   an event that recorded no agent is `UnattributedPrincipal`. Encoders emit only the new form.
-- **Reads are not partitioned.** The query functions are unchanged and take no context, because
-  the read-model tables have no memory-space column yet. See
+- Reads are partitioned by the schema. Every read-model table carries a non-null
+  `memory_space_id`, backfilled to `kioku_legacy`, and every statement names it. An upgraded
+  single-space deployment sees exactly what it saw before. See
   `docs/user/upgrading-to-memory-spaces.md`.
+- Workspace mirrors under `.kioku/scenes` and `.kioku/persona` are still keyed by scope alone, so
+  two spaces sharing a scope still collide on one filename even though their rows do not.
 
 ## 0.3.0.0 — 2026-08-05
 

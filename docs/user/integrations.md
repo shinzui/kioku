@@ -139,9 +139,8 @@ Whichever route a host takes, the resulting `MemoryAccessContext` is now a requi
 every Kioku write, and each write is checked against it: the payload must name the same space and
 the same principal, and the context must have been minted for the action being performed. A
 memory or session belongs permanently to the space it was created in, and the aggregate refuses
-any later command naming a different one. Reads are not partitioned yet — see
-[Upgrading to memory spaces](upgrading-to-memory-spaces.md) for what that does and does not
-guarantee today.
+any later command naming a different one. Every read takes the authorized space and returns
+nothing outside it — see [Upgrading to memory spaces](upgrading-to-memory-spaces.md).
 
 **Kioku's build closure contains none of the services named below**, and it never will: its
 dependencies are Baikai, the Keiro/Keiki/Kiroku/Shibuya cohort, Shikumi, and ordinary Hackage
@@ -192,7 +191,7 @@ column — what Kioku must never infer from it.
 | Shomei subject → principal resolution | Meibo | Turns an authenticated subject into an actor before any En call | That an unresolved subject is merely "new". A paused agent or an unlinked credential also arrives as unresolved, and both must fail closed. |
 | `Allowed` / `Denied` / `Conditional` + `checkedAt` token | En | Mints a `MemoryAccessContext` recording the space, actor, granted permissions, and token | That a `Conditional` answer is an allow, or that a denial on one space says anything about another. |
 | Memory-space object type and permission names | Kikan-En (schema owner) | Supplied to Kioku as a `MemoryAuthorizationBinding`; Kioku renders `type:spaceId` object refs from it | The names themselves. Kioku ships no default binding, because the owning schema has not shipped. |
-| `MemorySpaceId` | Kioku | The isolation partition on every command, query, worker, and (from a later plan) every row | That a *missing* space means "visible everywhere". Absence is never permission. |
+| `MemorySpaceId` | Kioku | The isolation partition on every command, query, worker, and every read-model row | That a *missing* space means "visible everywhere". Absence is never permission. |
 
 ### The request order, and why it is that order
 

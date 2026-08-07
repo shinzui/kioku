@@ -41,8 +41,8 @@ Start here, in order:
 10. **[Upgrading from Codd](upgrading-to-pg-migrate.md)** — the backup-first, zero-replay
     cutover for existing data-bearing databases.
 11. **[Upgrading to memory spaces](upgrading-to-memory-spaces.md)** — the explicit isolation
-    boundary: what breaks at compile time, what happens to data already stored, and what is
-    deliberately not partitioned yet.
+    boundary: what breaks at compile time, what happens to data already stored, and how to deploy
+    and verify the migration that backfills it.
 
 ## At a glance
 

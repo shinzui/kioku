@@ -4,7 +4,7 @@ title: The aggregate enforces the memory-space partition
 description: >-
   The memory space lives in aggregate state and is checked by a transducer guard, so a
   cross-space command is refused by the state machine rather than by a read-model precheck.
-timestamp: 2026-08-06T22:40:00Z
+timestamp: 2026-08-06T19:10:00Z
 docId: ADR-4
 status: accepted
 date: 2026-08-06
@@ -14,7 +14,9 @@ date: 2026-08-06
 
 ## Status
 
-Accepted, 2026-08-06.
+Accepted, 2026-08-06. Amended the same day, once the read models gained the memory-space column:
+the read-side gap this record described is closed, and the section below that stated it now says
+what replaced it.
 
 ## Context
 
@@ -62,10 +64,11 @@ refused rather than silently corrected, so the stored event and the decision tha
 remain the same fact. In particular the actor is checked, which is what stops a caller authorized
 as one principal from writing an event claiming another one acted.
 
-**Reads are not partitioned by this decision and must not pretend to be.** Until the read models
-carry the column, the query functions keep their existing signatures and do not accept a context.
-A query that accepted one would claim an isolation it cannot perform, which is worse than one that
-visibly does not have it.
+**Reads are not partitioned by this decision.** They are partitioned by the schema instead — see
+[ADR-6](the-partition-is-a-column-not-a-schema.md), which added the column and made every
+statement name it. Until that landed the query functions deliberately kept their old signatures
+and refused a context, because a query that accepted one would have claimed an isolation it could
+not perform. They now take a `MemorySpaceId` and return nothing outside it.
 
 ## Consequences
 
@@ -73,11 +76,14 @@ The boundary is enforced from the first release that has it, with no schema chan
 ordering to get right. A deployment that upgrades and does nothing else is already unable to write
 across spaces.
 
-Cross-space *writes* are impossible; cross-space *reads* are still possible, and so is a small
-residual oracle on the write path: a caller presenting the id of a memory in another space can
-learn from an idempotent answer that the id exists and whether it is still active. It cannot read
-content and it cannot change anything. Closing it needs the read-model column, and the
-comparison in `Kioku.Memory.mismatchOf` says so at the point where it would go.
+Cross-space writes are impossible from this record's first release, before any schema change. It
+left one residual, now closed: a caller presenting the id of a memory in another space could learn
+from an idempotent answer that the id existed and whether it was still active. The read-model
+column ([ADR-6](the-partition-is-a-column-not-a-schema.md)) scoped that lookup to the command's
+own space, so the answer is now identical to the one an id that does not exist gets — and the
+refusal arrives as `MemoryNotFound` before the aggregate is consulted, rather than as a
+`CommandRejected` from it. The guard below is still what makes the refusal survive a concurrency
+retry; it is simply no longer the first thing a cross-space command meets.
 
 Every command payload carries a space, which is redundant with the register on every edge except
 the creation one. That redundancy is what makes the event self-describing for projections and
@@ -106,7 +112,8 @@ the column lands.
 
 - `kioku-core/src/Kioku/Memory/Domain.hs`, `kioku-core/src/Kioku/Session/Domain.hs` — the register
   and the guards
-- `kioku-core/src/Kioku/Memory.hs` — `underContext`, and the residual-oracle note on `mismatchOf`
+- `kioku-core/src/Kioku/Memory.hs` — `underContext`, and the space-scoped lookup on `mismatchOf`
 - `kioku-core/test/Kioku/MemorySpaceSpec.hs` — the cross-space cases, asserted on the event stream
 - [ADR-1](kioku-owns-memory-not-identity.md), [ADR-2](namespace-is-not-a-security-boundary.md),
-  [ADR-5](historical-attribution-is-marked-never-invented.md)
+  [ADR-5](historical-attribution-is-marked-never-invented.md),
+  [ADR-6](the-partition-is-a-column-not-a-schema.md)

@@ -9,17 +9,19 @@ all belongs to one explicit space named `kioku_legacy`, and so does everything r
 existing event streams. What changes is *why* it works. Nothing in Kioku treats a missing
 partition as "visible everywhere"; there is no such state.
 
-This page covers what breaks at compile time, what to do about it, and what deliberately did not
-change yet.
+This page covers what breaks at compile time, what to do about it, how to deploy and verify the
+backfill migration, and what deliberately did not change yet.
 
 ## What happens to data already in the database
 
-Nothing, immediately. No migration runs and no rows move.
+Every existing row is backfilled into one explicit space named `kioku_legacy`, by the migration
+`0011-kioku-memory-space-partition.sql`. Nothing moves between spaces and nothing is deleted; a
+column is added, filled, and made mandatory.
 
-Every event written before this release decodes into `legacyMemorySpaceId` — the identifier
-`kioku_legacy` — the moment it is read. That applies to Kioku's own older payloads and to the even
-older Rei-format ones. Aggregates rebuilt from history land in the same space a later backfill
-will put their rows in, so the two paths cannot disagree.
+Every event written before this release decodes into `legacyMemorySpaceId` — the same identifier
+— the moment it is read. That applies to Kioku's own older payloads and to the even older
+Rei-format ones. Aggregates rebuilt from history land in the same space the backfill put their
+rows in, so the two paths cannot disagree.
 
 Attribution follows two rules, and neither invents anything:
 
@@ -118,8 +120,8 @@ The old names survive for one release as **deprecated** wrappers:
 
 They take no context and refuse any payload naming a space other than `legacyMemorySpaceId`, so
 they cannot reach anybody else's data — including through a memory id belonging to another space,
-which the aggregate itself refuses. You still have to add the payload fields; what you can defer
-is threading a context through your call sites.
+which they cannot even see. You still have to add the payload fields; what you can defer is
+threading a context through your call sites.
 
 ## New failure modes
 
@@ -128,13 +130,17 @@ is threading a context through your call sites.
 | `MemoryNotPermitted` / `SessionNotPermitted` | the context authorized other actions, but not this one |
 | `MemorySpaceMismatch` / `SessionSpaceMismatch` | the payload named a space the context was not minted for |
 | `MemoryActorMismatch` / `SessionActorMismatch` | the payload attributed the write to somebody else |
-| `MemoryCommandRejected` | the aggregate refused it — including a command naming a space the memory or session does not belong to |
+| `MemoryCommandRejected` | the aggregate refused it |
+| `MemoryNotFound` / `SessionNotFound` | no such row **in this space** — which now includes an id that exists in another one |
 | `L1NotPermitted` | the context does not authorize distillation in this space |
 
-The last two are worth separating in your logs. A `MemorySpaceMismatch` is a caller bug caught
-before anything was read. A `MemoryCommandRejected` on a cross-space command means somebody
-presented an id belonging to a different space — the aggregate refused it, and no event was
-appended.
+`MemorySpaceMismatch` is a caller bug caught before anything was read: the payload and the context
+disagree.
+
+`MemoryNotFound` is where a cross-space id now lands, and that is deliberate. Every write looks
+its row up inside the command's own space, so an id belonging to somewhere else is simply absent
+and cannot be distinguished from one that was never written. Earlier releases reached the
+aggregate and returned `MemoryCommandRejected`, which told the caller the id existed.
 
 ## Which permission each write asks for
 
@@ -172,25 +178,93 @@ retry every thirty seconds for an hour.
 A malformed value is a startup error rather than a silent fallback: a typo in a space name must
 not quietly send writes somewhere else.
 
+## Reads take a memory space
+
+Every read function takes a `MemorySpaceId` as its first argument and returns nothing outside it:
+
+```haskell
+rows <- Memory.getActiveRowsByScope (memoryContextSpace hostContext) scope
+hits <-
+  Recall.recall model capability
+    Recall.RecallRequest
+      { memorySpaceId = memoryContextSpace hostContext
+      , scope = ScopeGlobal namespace
+      , …
+      }
+```
+
+`memoryContextSpace` of the context that authorized the read is the value to pass. A read takes
+the space rather than the whole context because reads return `Either ReadModelError` and the
+permission decision has already been made: `authorizeMemoryAccess` mints a context only for
+permissions it actually checked, so ask it for `MemoryRead` when you mint one.
+
+Two behaviours are worth knowing about:
+
+- **Recall's namespace-wide target does not widen tenancy.** A `ScopeGlobal` recall still means
+  "every scope in this namespace", and it still stops at the space boundary.
+- **A memory id from another space now behaves exactly like an id that does not exist.** Before
+  this release the write path's idempotency precheck could tell a caller that such an id existed
+  and whether it was active. It cannot any more: the precheck looks the row up inside the
+  command's own space and gets nothing, so the write is refused with `MemoryNotFound` /
+  `SessionNotFound` rather than `MemoryCommandRejected`. If you match on that error, this is the
+  change to look for.
+
+## Deploying the migration
+
+**Preflight.** Take a backup or a snapshot you can restore from; this migration is forward-only.
+On a large installation, measure the lock: adding a `NOT NULL` column and rebuilding the scene and
+persona primary keys takes `ACCESS EXCLUSIVE` on those tables for the duration, and the backfill
+rewrites every row of the seven partitioned tables.
+
+**Apply.** `kioku-migrate` applies the migration and then reconciles keiro's read-model registry
+in the same run, which the read-model version bumps need — memory models advance to v2, sessions
+to v4, and turns to v2:
+
+```bash
+kioku-migrate up
+kioku-migrate verify
+```
+
+A host that applies migrations as a library (through `Kioku.Migrations.kiokuMigrationPlan`) must
+call `Kioku.ReadModel.reconcileReadModelRegistry` itself afterwards. Skipping it leaves every
+session and memory query failing closed with `ReadModelStaleSchema`.
+
+**Verify.** Every partitioned row should name a space, and on a single-tenant installation they
+should all name the same one:
+
+```sql
+SELECT 'memories' AS table_name, memory_space_id, count(*) FROM kiroku.kioku_memories GROUP BY 1, 2
+UNION ALL SELECT 'sessions', memory_space_id, count(*) FROM kiroku.kioku_sessions GROUP BY 1, 2
+UNION ALL SELECT 'turns', memory_space_id, count(*) FROM kiroku.kioku_turns GROUP BY 1, 2
+UNION ALL SELECT 'watermarks', memory_space_id, count(*) FROM kiroku.kioku_l1_watermarks GROUP BY 1, 2
+UNION ALL SELECT 'decisions', memory_space_id, count(*) FROM kiroku.kioku_consolidation_decisions GROUP BY 1, 2
+UNION ALL SELECT 'scenes', memory_space_id, count(*) FROM kiroku.kioku_scenes GROUP BY 1, 2
+UNION ALL SELECT 'personas', memory_space_id, count(*) FROM kiroku.kioku_personas GROUP BY 1, 2
+ORDER BY 1, 2;
+```
+
+The migration refuses to finish if a turn or watermark ends up in a different space from the
+session it belongs to, so a successful run has already proved that much.
+
+**Rolling back.** Rolling the *application* back is safe only while two things hold: the old code
+ignores the additive column, and nothing has yet been written into a space other than
+`kioku_legacy`. Once a second space has rows, the old code cannot see the partition and would read
+and write across it. After that point, roll forward and fix, or restore the snapshot; do not
+downgrade the binary.
+
+The migration itself has no down step. Re-running it is a no-op — every statement is idempotent —
+so a deployment that failed part-way can simply be re-run.
+
 ## What has not changed yet
 
-**Reads are not partitioned.** `Kioku.Recall`, the `Kioku.Memory` row queries, and the
-`Kioku.Session` queries still return rows from every space, and they deliberately do not take a
-context. The read-model tables have no memory-space column yet; a query that accepted a context
-would be claiming an isolation it cannot perform, which is worse than one that visibly does not
-have it. Until the projection migration lands, isolation applies to writes and to the event
-history they produce.
+**Workspace mirrors are still keyed by scope alone.** The `.kioku/scenes` and `.kioku/persona`
+files two spaces write for the same scope still collide on one filename, even though their
+database rows no longer do. Timer identity and worker claims are partitioned, but the filesystem
+layout is not.
 
-Two consequences follow while that is true:
-
-- Do not treat a second memory space as a privacy boundary for *reads* yet.
-- A caller presenting the id of a memory in another space can still learn from an idempotent
-  answer whether that id exists and whether it is active. It cannot read any content and it cannot
-  change anything.
-
-**Scenes, personas, and workspace mirrors are still keyed by scope alone**, so two spaces sharing
-a namespace and scope would share a scene row. That, the read-model column, and partitioned
-recall are the next changes in this sequence.
+**Recall targets are still a `MemoryScope`,** so "the exact global bucket" and "every scope in
+this namespace" remain the same value with two meanings depending on which function reads it.
+That asymmetry is unchanged by the partition and is documented in [Recall](recall.md).
 
 ## Related
 
@@ -198,3 +272,5 @@ recall are the next changes in this sequence.
 - [Scopes & Integrations](integrations.md) — namespaces, scopes, and wiring an identity stack.
 - [ADR-2](../adr/namespace-is-not-a-security-boundary.md) — why a namespace is not tenancy.
 - [ADR-3](../adr/legacy-data-lands-in-one-explicit-space.md) — why legacy data gets a named space.
+- [ADR-6](../adr/the-partition-is-a-column-not-a-schema.md) — how the boundary is enforced in
+  PostgreSQL.

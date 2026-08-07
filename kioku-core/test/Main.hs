@@ -15,6 +15,7 @@ import Kioku.SchemaSpec qualified as SchemaSpec
 import Kioku.ScopeIdentitySpec qualified as ScopeIdentitySpec
 import Kioku.SessionInvariantsSpec qualified as SessionInvariantsSpec
 import Kioku.SessionLineageSpec qualified as SessionLineageSpec
+import Kioku.SpaceIsolationSpec qualified as SpaceIsolationSpec
 import Kioku.TimerWorkerSpec qualified as TimerWorkerSpec
 import Test.Tasty (defaultMain, testGroup)
 
@@ -36,6 +37,7 @@ main =
         ScopeIdentitySpec.tests,
         SessionInvariantsSpec.tests,
         SessionLineageSpec.tests,
+        SpaceIsolationSpec.tests,
         EmbeddingWorkerSpec.tests,
         TimerWorkerSpec.tests,
         DistillSpec.tests

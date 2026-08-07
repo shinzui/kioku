@@ -4,7 +4,7 @@ title: Legacy data is backfilled into one explicit memory space
 description: >-
   Data written before memory spaces existed is assigned the named kioku_legacy space rather than
   left unpartitioned, so absence of a partition never means unrestricted access.
-timestamp: 2026-08-06T17:20:00Z
+timestamp: 2026-08-06T19:10:00Z
 docId: ADR-3
 status: accepted
 date: 2026-08-06
@@ -14,8 +14,10 @@ date: 2026-08-06
 
 ## Status
 
-Accepted, 2026-08-06. The migration that applies it is a later plan; this record fixes the rule
-that migration must implement.
+Accepted, 2026-08-06. The migration that applies it landed the same day:
+`kioku-migrations/migrations/0011-kioku-memory-space-partition.sql` backfills every partitioned
+table into `kioku_legacy` and then makes the column `NOT NULL`, exactly as the last paragraph of
+the Consequences below requires.
 
 ## Context
 
@@ -75,4 +77,6 @@ outage for every existing deployment, to no benefit — the operator's answer wo
 
 - `kioku-api/src/Kioku/Api/Access/Internal.hs` — `legacyMemorySpaceId`
 - `kioku-api/test/Kioku/Api/AccessSpec.hs` — the legacy space is a real, explicit identifier
-- [ADR-1](kioku-owns-memory-not-identity.md), [ADR-2](namespace-is-not-a-security-boundary.md)
+- `kioku-migrations/test/Main.hs` — the backfill, proved against a genuinely pre-partition database
+- [ADR-1](kioku-owns-memory-not-identity.md), [ADR-2](namespace-is-not-a-security-boundary.md),
+  [ADR-6](the-partition-is-a-column-not-a-schema.md)

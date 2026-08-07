@@ -116,10 +116,11 @@ Namespaces and scopes are unaffected: they organize memory *inside* a space and 
 about who may read it. Two different spaces can use the same namespace and scope for entirely
 unrelated data.
 
-> **Reads are not partitioned yet.** The read-model tables gain their memory-space column in a
-> later change, so the query functions below still return rows from every space and deliberately
-> do not take a context — one that accepted a context would be claiming an isolation it cannot
-> perform. Until then, isolation applies to writes and to the event history they produce.
+> **Reads take the space, not the context.** Every query function below takes a `MemorySpaceId`
+> as its first argument and returns nothing outside it; pass `memoryContextSpace` of the context
+> that authorized the read. They take the space rather than the whole context because they return
+> `Either ReadModelError` and the permission decision has already been made — `authorizeMemoryAccess`
+> mints a context only for the permissions it checked, so request `MemoryRead` when you mint one.
 
 ## Writing memories (`Kioku.Memory`)
 

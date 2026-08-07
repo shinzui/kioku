@@ -1,6 +1,8 @@
 # Bundle Update Log
 
 ## 2026-08-06
+* **Addition**: ADR-6 records that the memory-space partition is a column and an unconditional predicate on every read-model statement, not a schema, database, or row-level-security policy per space.
+* **Update**: ADR-3's backfill and ADR-4's read-side gap are both closed by the read-model partition migration; their status and consequences now say so.
 * **Addition**: ADR-5 records that a pre-memory-space agent label is kept legacy-marked and an event that named no actor stays unattributed, so Kioku never manufactures a principal.
 * **Addition**: ADR-4 records that the memory-space partition is enforced by the aggregate's own guard rather than a read-model precheck, and that reads stay unpartitioned until the projections carry the column.
 * **Addition**: ADR-1 records that Kioku owns memory data but never identity or authorization,

@@ -270,6 +270,21 @@ testWrapperAcceptsLegacy =
       [MemoryRecorded d] -> assertEqual "in the legacy space" legacyMemorySpaceId d.memorySpaceId
       other -> assertFailure ("expected one MemoryRecorded, got " <> show other)
 
+    -- The projection has to agree with the event, which is what makes an upgraded
+    -- single-space deployment keep working: everything it writes through the old names lands
+    -- in the one space its backfilled rows are already in, and is visible from there.
+    inLegacy <- Memory.getMemoryRowById legacyMemorySpaceId mid
+    elsewhere <- Memory.getMemoryRowById testSpace mid
+    liftIO do
+      assertEqual
+        "the projected row is readable from the legacy space"
+        (Just (idText mid))
+        (either (const Nothing) (fmap (\row -> row.memoryId)) inLegacy)
+      assertEqual
+        "and from nowhere else"
+        Nothing
+        (either (const Nothing) (fmap (\row -> row.memoryId)) elsewhere)
+
 -- | The wrapper is confined by its payload, and its payload is confined to the legacy space, so
 -- there is no argument it can be given that reaches a memory living anywhere else.
 testWrapperCannotTouchOtherSpace :: Assertion

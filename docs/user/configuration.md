@@ -44,13 +44,14 @@ migrations and then reconciles the compiled read-model registry.
 
 ## Memory space and actor
 
-Every write the CLI performs names a memory space — the isolation boundary — and the principal it
-is attributed to. Both come from the environment, and a malformed value is a startup error rather
-than a silent fallback: a typo in a space name must not quietly send writes somewhere else.
+Every read and write the CLI performs names a memory space — the isolation boundary — and every
+write names the principal it is attributed to. Both come from the environment, and a malformed
+value is a startup error rather than a silent fallback: a typo in a space name must not quietly
+send writes somewhere else, or hide the rows a read was meant to return.
 
 | Variable             | Required | Default        | Description                                                                 |
 |----------------------|----------|----------------|-----------------------------------------------------------------------------|
-| `KIOKU_MEMORY_SPACE` | no       | `kioku_legacy` | The memory space CLI commands write into. The default is where every row written before memory spaces existed lives, so an unchanged CLI operates on exactly the data it did before. |
+| `KIOKU_MEMORY_SPACE` | no       | `kioku_legacy` | The memory space CLI commands read and write. The default is where every row written before memory spaces existed lives, so an unchanged CLI operates on exactly the data it did before. `kioku recall`, `kioku scenes`, and `kioku persona` return nothing outside it. |
 | `KIOKU_ACTOR`        | no       | `kioku_cli`    | The principal CLI writes are attributed to. The CLI is genuinely the thing acting; naming it plainly beats borrowing an identity from a directory the CLI does not talk to. |
 
 The worker is not pinned to one space: it claims timers for whatever space they were scheduled in
