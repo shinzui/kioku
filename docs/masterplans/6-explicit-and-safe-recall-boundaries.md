@@ -37,6 +37,14 @@ EP-3 migrates library/CLI consumers and removes the compatibility wrapper after 
 release window. Separating these streams lets API review finish before SQL work and prevents a
 CLI flag from becoming the de facto contract.
 
+That last constraint held, and it is worth naming what it bought. By the time EP-3 designed the
+command line, three targets already existed, all three executed, and each had a proven row set —
+so the grammar could be chosen for operators rather than reverse-engineered from whichever shape
+the SQL happened to allow. EP-3's own scope shrank as a result: EP-1 had to migrate the CLI and L1
+call sites anyway when `recall`'s signature changed, so what remained for EP-3 was the two
+genuinely deliberate choices this initiative had been deferring — how an operator spells each
+target, and whether L1's merge candidates want namespace-wide breadth.
+
 The current asymmetry was deliberately documented by the completed remediation work in
 `docs/masterplans/2-kioku-review-remediation-correctness-resilience-and-hygiene.md`; this
 initiative supersedes the decision only through a new explicit API while retaining the old
@@ -52,7 +60,7 @@ records the removal conditions and the alternatives rejected. The chief one was 
 |---|-------|------|-----------|-----------|--------|
 | EP-1 | Make recall targets explicit in the Kioku API | docs/plans/28-make-recall-targets-explicit-in-the-kioku-api.md | MasterPlan 5 EP-2 | None | Complete |
 | EP-2 | Enforce exact and namespace-wide recall in PostgreSQL | docs/plans/29-enforce-exact-and-namespace-wide-recall-in-postgresql.md | EP-1, MasterPlan 5 EP-3 | None | Complete |
-| EP-3 | Migrate recall consumers to explicit targets | docs/plans/30-migrate-recall-consumers-to-explicit-targets.md | EP-1, EP-2 | None | Not Started |
+| EP-3 | Migrate recall consumers to explicit targets | docs/plans/30-migrate-recall-consumers-to-explicit-targets.md | EP-1, EP-2 | None | In Progress |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3).
@@ -60,13 +68,18 @@ Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3
 
 ## Dependency Graph
 
-EP-1 waits for the memory-space types from MasterPlan 5 so `RecallTarget` is not revised twice.
-EP-2 requires both that API and the partitioned schema. It must place `memory_space_id` first in
-every query predicate before applying exact-scope or namespace-wide conditions. EP-3 requires
+EP-1 waited for the memory-space types from MasterPlan 5 so `RecallTarget` was not revised twice.
+EP-2 required both that API and the partitioned schema, and it placed `memory_space_id` first in
+every query predicate before applying exact-scope or namespace-wide conditions. EP-3 required
 both behaviors to be implemented and covered by the real-PostgreSQL harness before changing
 defaults or CLI grammar.
 
-Within EP-2, keyword and vector statements can be changed in parallel as long as they share one
+Both of EP-3's hard dependencies are satisfied as of 2026-08-07, and the ordering earned its keep:
+`Kioku.RecallTargetSpec` already proves what each of the three targets returns against a real
+database, so EP-3's CLI tests assert that a flag reaches the intended target rather than
+re-deriving what that target means.
+
+Within EP-2, keyword and vector statements could be changed in parallel as long as they shared one
 target-to-SQL predicate table. The filtered-ANN fallback from the completed
 `docs/masterplans/3-kioku-follow-up-scene-freshness-and-filtered-ann-recall-quality.md` remains
 an invariant and must not be weakened.
@@ -82,14 +95,32 @@ boundaries, durable integration constraints, shared interface ownership, decompo
 rationale that will matter later, and deliberate exclusions.
 
 - **Recall request:** EP-1 owns `RecallTarget` and the deprecated conversion from legacy
-  `MemoryScope`. Exact global bucket and namespace-wide are separate constructors.
+  `MemoryScope`. Exact global bucket and namespace-wide are separate constructors. As shipped,
+  `kioku-api/src/Kioku/Api/Recall.hs` holds `RecallTarget`, `RecallQuery`, `RecallStrategy` (moved
+  out of `kioku-core`) and the validated `RecallLimit`; the wire format carries three tags rather
+  than two, because a two-tag encoding would have separated the global bucket from an entity scope
+  only by whether `scope_kind` was present — the null-means-something representation this
+  initiative removes from SQL, reintroduced on the wire.
 - **SQL predicate:** EP-2 owns one tested mapping from each target constructor to FTS and vector
-  predicates. `memory_space_id` is mandatory in both mappings.
+  predicates. `memory_space_id` is mandatory in both mappings. As shipped it is `ScopeBound` and
+  `resolveRecall` in `kioku-core/src/Kioku/Recall.hs`, compiled into nine statements — three
+  channels times three bounds — and recorded as
+  [ADR-9](../adr/each-recall-target-gets-its-own-statement.md).
 - **Quality harness:** EP-2 extends `Kioku.RecallHarness` and `Kioku.RecallSqlSpec` from
-  MasterPlan 3, preserving vector-candidate expansion and exact FTS fallback.
+  MasterPlan 3, preserving vector-candidate expansion and exact FTS fallback. It also *removed*
+  the harness's private copy of the vector SQL: `Kioku.Recall` now exports the `EXPLAIN` seams
+  built from the same text and parameters as the statements they describe. Any later plan wanting
+  a query plan must go through those seams rather than restating a query.
 - **Consumers:** EP-3 owns CLI syntax, Haddocks, upgrade notes, and downstream compilation
   fixtures. The HTTP and SDK improvement requests must expose the new target vocabulary rather
-  than the legacy overload.
+  than the legacy overload. EP-1 already moved the in-repository call sites onto `recall` through
+  `legacyRecallTarget` — because `recall`'s signature changed and they had to compile — so EP-3
+  inherits behavior-preserving call sites and owns only the deliberate changes to what they ask
+  for: the CLI's three-flag grammar, and `Kioku.Distill.L1.recallCandidates`' breadth.
+- **Merge candidates:** EP-3 owns the breadth of `Kioku.Distill.L1`'s two `FindMergeCandidates`
+  finders, which must agree. `scopedScanCandidates` has always been exact
+  (`Recall.getActiveByScope`); `recallCandidates` inherited namespace-wide breadth from the legacy
+  overload. EP-3 resolves the disagreement rather than documenting it.
 - **Bounded queries:** the proposed
   `docs/improvement-requests/add-indexed-session-and-bounded-memory-read-models.md` must use the
   same partition-first, explicit-target contract.
@@ -119,7 +150,9 @@ and the milestone. This section provides an at-a-glance view of the entire initi
       case asserts the three bounds are three partition-led plans.
       `Kioku.RecallHarness.exactEntityStarvationCorpus` keeps plan 19's fallback proven on the
       exact-scope family too.)
-- [ ] EP-3: migrate CLI and library call sites with upgrade documentation.
+- [ ] EP-3: give the command line one spelling per target, and refuse the ambiguous one.
+- [ ] EP-3: settle L1's merge-candidate breadth deliberately rather than by inheritance.
+- [ ] EP-3: migrate documentation, changelogs, and the HTTP/SDK contracts to the target vocabulary.
 - [ ] EP-3: retire the legacy overload only after the declared compatibility window.
 
 
@@ -158,6 +191,22 @@ interactions between child plans. Provide concise evidence.
   CLI grammar for exact versus namespace-wide, and the deliberate decision about whether merge
   candidates want namespace-wide breadth.
 
+- **The overloaded scope outlived the API that named it, in two places, and they are the whole of
+  EP-3's behavior work.** Deleting `ScopeGlobal`'s double meaning from the types and the SQL did
+  not delete it from the surfaces that predate them. `kioku recall --scope mori` still means
+  namespace-wide while `kioku scenes --scope mori` means the global bucket — the original
+  asymmetry, one layer up, now the only place in the repository where it survives. And
+  `Kioku.Distill.L1` carries two `FindMergeCandidates` finders that disagree about which memories
+  exist: `scopedScanCandidates` is exact and `recallCandidates` is namespace-wide, a disagreement
+  nobody chose. Both were invisible while `RecallTarget` did not exist, because there was no
+  vocabulary in which to state them (2026-08-07).
+
+- **The initiative's own lesson constrained EP-3's grammar.** ADR-8 records that a compatibility
+  mapping has a safe direction and an unsafe one, and that the narrower mapping "would have
+  compiled, run, and quietly returned fewer rows". Letting `--scope mori` start meaning the global
+  bucket is exactly that unsafe direction on the command line, so EP-3 refuses the ambiguous
+  invocation instead of silently re-reading it. See the Decision Log.
+
 
 ## Decision Log
 
@@ -180,6 +229,26 @@ plan.
   Rationale: Namespace-wide is a retrieval choice, not an authorization bypass or tenant
   selector.
   Date: 2026-08-06
+
+- Decision: The command line gives each target its own flag — `--scope NAMESPACE:KIND:REF`,
+  `--global-bucket NAMESPACE`, `--namespace-wide NAMESPACE` — and refuses a bare-namespace
+  `--scope` with an error naming the two replacements.
+  Rationale: This is the same shape as the API and the SQL: one name per data-visible meaning, no
+  meaning inferred from an absent field. The alternative that reads better in isolation — letting
+  `--scope mori` mean the global bucket, matching `kioku scenes` — is the narrowing direction ADR-8
+  identifies as the unsafe one, and on a command line it would land in scripts that keep exiting
+  zero while returning a subset. Refusing the one ambiguous invocation costs an operator one
+  edit, once, and tells them precisely what to write.
+  Date: 2026-08-07
+
+- Decision: `Kioku.Distill.L1.recallCandidates` draws merge candidates from the exact session
+  scope, matching `scopedScanCandidates`.
+  Rationale: This MasterPlan's Integration Points require the two finders to agree; they disagreed
+  only because `recallCandidates` inherited the overloaded `ScopeGlobal`. Namespace-wide breadth
+  let a globally-scoped session merge an atom into — and so rewrite — a memory belonging to a
+  sibling entity scope, which no scene or persona would ever have fed. Narrowing is a data-visible
+  change to distillation and belongs to this initiative rather than to whoever next touches L1.
+  Date: 2026-08-07
 
 
 ## Outcomes & Retrospective
@@ -208,6 +277,30 @@ vector predicates, `memory_space_id` mandatory in both") is
 Exact global recall executes for the first time, and the filtered-ANN invariant this MasterPlan
 declared untouchable is now proven per statement family rather than once.
 
-EP-3 has not started. Two of its inputs changed: the library work it was to build on is finished
-and measured, so what remains is genuinely CLI grammar and the merge-candidate breadth decision;
-and the CLI is now the only surface where the exact global bucket cannot be asked for.
+EP-3 started 2026-08-07, with two of its inputs changed. The library work it was to build on is
+finished and measured, so what remains is genuinely CLI grammar and the merge-candidate breadth
+decision; and the CLI is now the only surface where the exact global bucket cannot be asked for.
+Both of the choices EP-1 and EP-2 deferred to it were settled before implementation began and are
+in the Decision Log above: each target gets its own flag with the ambiguous one refused, and L1's
+two merge-candidate finders are brought into agreement at the exact scope.
+
+
+## Revision Notes
+
+**2026-08-07 — EP-3 opening.** The forward-looking prose was written before any child plan ran and
+described work that has since happened. Decomposition Strategy and Dependency Graph now say what
+the ordering bought rather than what it was expected to buy; Integration Points names the artifacts
+that actually own each shared concern (`Kioku.Api.Recall`, `ScopeBound`/`resolveRecall`, the
+`EXPLAIN` seams) and gains a **Merge candidates** entry, because the disagreement between
+`Kioku.Distill.L1`'s two finders is a shared-artifact concern this MasterPlan had not named.
+
+EP-3's two Progress entries became four. The original pair — "migrate CLI and library call sites"
+and "retire the legacy overload" — no longer describe the work: EP-1 migrated the call sites when
+`recall`'s signature changed, and what is left is the grammar, the breadth decision, and the
+documentation and contract migration those two force.
+
+Surprises & Discoveries records where the overloaded scope survived the API that named it, and the
+Decision Log records both deferred choices with their rationale. Neither decision changes the
+decomposition, so no child plan was split, merged, or reordered;
+`docs/plans/30-migrate-recall-consumers-to-explicit-targets.md` is revised in the same change to
+carry them.

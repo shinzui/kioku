@@ -30,11 +30,18 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Add explicit CLI grammar for memory space, exact scope, and namespace-wide recall.
-- [ ] Migrate all Kioku library/CLI/test call sites to `RecallTarget`.
+- [x] Migrate all Kioku library/CLI/test call sites to `RecallTarget`. (2026-08-07: done by plan
+      28, not by this plan — `recall`'s signature changed, so `Kioku.Cli.Commands.Recall` and
+      `Kioku.Distill.L1.recallCandidates` had to compile against it. Both went through
+      `legacyRecallTarget` and behave exactly as before, which is why the two entries below exist:
+      they are the deliberate changes that mechanical migration deliberately did not make.)
+- [ ] Give the command line one flag per target, and refuse the ambiguous bare-namespace `--scope`.
+- [ ] Settle L1's merge-candidate breadth: `recallCandidates` becomes exact, matching
+      `scopedScanCandidates`.
+- [ ] Add CLI parsing, error, and end-to-end PostgreSQL tests.
 - [ ] Inventory Mori dependents and publish a downstream migration recipe.
-- [ ] Add CLI parsing, error, JSON-output, and end-to-end PostgreSQL tests.
-- [ ] Update recall, library API, getting-started, and upgrade documentation.
+- [ ] Update recall, CLI reference, concepts, integrations, troubleshooting, getting-started, and
+      upgrade documentation, plus the changelogs.
 - [ ] Pin HTTP/SDK improvement requests to the explicit target schema.
 - [ ] Verify the deprecation window before scheduling legacy removal.
 
@@ -48,6 +55,28 @@ implementation. Provide concise evidence.
   dependent besides the umbrella portfolio. It is the required downstream compile check.
 - CLI syntax is a security boundary too: a default that silently means namespace-wide would
   recreate the API ambiguity for operators.
+
+- **The mechanical half of this plan was already done, by plan 28.** `recall`'s signature changed
+  there, so every in-repository caller had to be touched to compile. Both went through
+  `legacyRecallTarget`, which preserves behavior exactly. What this plan inherits is therefore not
+  a migration but two questions that a behavior-preserving change deliberately declined to answer,
+  and both are data-visible (2026-08-07).
+
+- **The overloaded scope survives in exactly two places, and they are this plan's whole behavior
+  surface.** `kioku recall --scope mori` means namespace-wide while `kioku scenes --scope mori`
+  and `kioku persona --scope mori` mean the global bucket: the original asymmetry, one layer above
+  the API that no longer has it. And `Kioku.Distill.L1` holds two `FindMergeCandidates` finders
+  that disagree about which memories exist — `scopedScanCandidates` calls
+  `Recall.getActiveByScope`, which is exact, while `recallCandidates` inherited namespace-wide
+  breadth from the legacy overload. Nobody chose that disagreement; it is what `ScopeGlobal`
+  meaning two things looked like from inside one module (2026-08-07).
+
+- **There is no JSON output to keep stable.** This plan's Milestone 1 was written assuming
+  `kioku recall` had a scriptable JSON mode to extend additively. It does not — `runRecall` prints
+  numbered plain-text lines and nothing else. The milestone's intent still applies and is met a
+  different way: stdout keeps its exact current shape, and the space and target the command
+  searched are announced on **stderr**, so a script that pipes stdout is unaffected while an
+  operator watching a terminal can see what was searched (2026-08-07).
 
 
 ## Decision Log
@@ -63,6 +92,42 @@ Record every decision made while working on the plan.
   Rationale: Target widening must never select a tenant or authorization context.
   Date: 2026-08-06
 
+- Decision: Each target gets its own flag — `--scope NAMESPACE:KIND:REF`,
+  `--global-bucket NAMESPACE`, `--namespace-wide NAMESPACE` — exactly one of which is required,
+  and a bare-namespace `--scope` is a parse error naming the two replacements.
+  Rationale: This is the decision of 2026-08-06 carried through to the one invocation it did not
+  cover. `--scope` does always mean exact; the question was what a bare namespace spells. Letting
+  it spell the global bucket would match `kioku scenes`, but it would also silently narrow every
+  existing `kioku recall --scope mori` — the direction
+  [ADR-8](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md) records as the unsafe
+  one, and worse on a command line than in a library, because there is no compiler to warn and the
+  exit status stays zero. Giving the global bucket its own flag instead means no invocation changes
+  meaning, every meaning has exactly one spelling, and the ambiguous one fails with the two
+  commands the operator might have meant. The cost is one flag more than the minimum and a `--scope
+  mori` that errors where `kioku scenes --scope mori` works; the error text names that difference.
+  Date: 2026-08-07
+
+- Decision: No per-command `--memory-space` flag. `KIOKU_MEMORY_SPACE` already resolves exactly one
+  space, and `kioku recall` announces on stderr which space and target it searched.
+  Rationale: The 2026-08-06 decision requires the CLI to resolve one space before parsing a target,
+  and `Kioku.Cli.Context.cliMemoryContext` already does: it validates the variable, fails at
+  startup on a malformed value, and defaults to `kioku_legacy` — never to "every space". Adding the
+  flag to `recall` alone would make it the only command that can retarget its space, implying the
+  others cannot be retargeted at all, which is false. Making it visible is the part that was
+  missing, and stderr is where it goes so scripted stdout is untouched.
+  Date: 2026-08-07
+
+- Decision: `recallCandidates` draws merge candidates from `ExactScope` of the session's scope.
+  Rationale: Its sibling `scopedScanCandidates` has always been exact, so the two finders answered
+  "which memories could this atom merge into" differently for a globally-scoped session — one
+  saw the global bucket, the other the whole namespace. A finder's job is to rank the candidates,
+  not to change which memories exist. Namespace-wide breadth also let a session scoped `mori` merge
+  an atom into a memory scoped `mori:repo:web`, rewriting a memory that feeds a scene the session
+  has nothing to do with; `docs/user/concepts.md` already states that a `mori:repo:...` memory does
+  not feed `mori`'s scene. Narrowing loses merge opportunities for global-scoped sessions, which
+  become stores instead — a visible, recoverable outcome, unlike a cross-scope rewrite.
+  Date: 2026-08-07
+
 - Decision: Legacy removal is a later PVP-breaking release conditioned on dependent migration.
   Rationale: Completing this plan does not authorize silently breaking Shikigami or other
   consumers.
@@ -76,42 +141,70 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-No implementation has started. Completion means all in-repo callers and known dependents have a
+Implementation began 2026-08-07. Completion means all in-repo callers and known dependents have a
 tested migration path; deletion of the compatibility API remains a later release action.
 
 
 ## Context and Orientation
 
-`kioku-cli/src/Kioku/Cli/Commands/Recall.hs` builds the current request and prints hits. Parser
-definitions live in the CLI command surface. Library examples and semantics are documented in
-`docs/user/recall.md`, `docs/user/library-api.md`, `docs/user/getting-started.md`, and
-`docs/user/concepts.md`. Tests and distillation candidate lookup also construct recall requests.
+`kioku-cli/src/Kioku/Cli/Commands/Recall.hs` builds the recall query and prints hits;
+`kioku-cli/src/Kioku/Cli/Scope.hs` holds the `NAMESPACE[:KIND:REF]` grammar shared with
+`kioku scenes` and `kioku persona`, and `kioku-cli/test/Kioku/Cli/ParserSpec.hs` exercises it with
+`execParserPure`, so a test sees exactly the failure text an operator sees.
+`kioku-cli/src/Kioku/Cli/Context.hs` resolves the memory space and actor from the environment.
+`Kioku.Distill.L1.recallCandidates` is the other in-repository caller. Library examples and
+semantics are documented in `docs/user/recall.md`, `docs/user/library-api.md`,
+`docs/user/cli-reference.md`, `docs/user/getting-started.md`, `docs/user/concepts.md`,
+`docs/user/integrations.md`, and `docs/user/troubleshooting.md`.
 
-Plans 28 and 29 provide the target API and SQL. Mori dependency inspection is mandatory before
-removal: run `mori registry dependents shinzui/kioku --packages` and migrate
-`mori://shinzui/shikigami` through its own repository process. No new local ADR is expected; the
-compatibility ADR from plan 28 governs this work.
+Plans 28 and 29 provide the target API and SQL, and both are complete: all three targets execute,
+and `Kioku.RecallTargetSpec` already proves what each returns against a real database. This plan's
+tests therefore assert that a flag reaches the intended target, not what that target means.
+
+Mori dependency inspection is mandatory before removal: run
+`mori registry dependents shinzui/kioku --packages` and migrate `mori://shinzui/shikigami` through
+its own repository process.
+
+Three local ADRs govern this work.
+[ADR-8](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md) owns the compatibility
+window and removal conditions, and its Consequences section explicitly leaves the command line to
+this plan; its lesson about the unsafe direction of a compatibility mapping is what decided the
+grammar. [ADR-9](../adr/each-recall-target-gets-its-own-statement.md) is the shape this plan
+mirrors one layer up: one name per data-visible meaning, no meaning inferred from an absent field.
+[ADR-2](../adr/namespace-is-not-a-security-boundary.md) is why widening a target never widens the
+space, and it quotes `kioku recall --scope mori` in its current meaning, so it must be updated in
+the same change.
 
 
 ## Plan of Work
 
 ### Milestone 1: CLI grammar and errors
 
-Add mutually exclusive exact and namespace-wide target parsers. Exact scope accepts the existing
-global/entity scope syntax but is documented as exact. Namespace-wide requires an explicit
-namespace flag. Require a memory-space selector or an authenticated/default context supplied by
-the host; do not default to every space. Invalid combinations fail before database access with an
-error that names the two supported forms.
+Add three mutually exclusive target flags, exactly one of which is required:
+`--scope NAMESPACE:KIND:REF` for an entity scope, `--global-bucket NAMESPACE` for the rows recorded
+with no entity scope, and `--namespace-wide NAMESPACE` for every scope in the namespace. A
+bare-namespace `--scope` is a parse error that names the other two and says which one reproduces
+the previous behavior. Supplying two target flags, or none, fails in the parser — before the
+environment is read and before any database access.
 
-Keep scriptable JSON output stable except for an additive target/space description where useful.
-Add parser tests for valid forms, conflicts, missing space, and legacy aliases.
+The memory space is resolved once by `Kioku.Cli.Context.cliMemoryContext`, which already validates
+`KIOKU_MEMORY_SPACE` and never defaults to every space; no new selector flag is added (Decision
+Log). `kioku recall` announces the resolved space and target on stderr so widening is visible
+without disturbing stdout, which keeps its exact current shape — there is no JSON output to keep
+stable (Surprises & Discoveries).
 
-### Milestone 2: migrate in-repository callers
+Add parser tests for each valid form, for the ambiguity error's text, for conflicting and missing
+flags, and for the entity-scope grammar that `--scope` retains unchanged.
 
-Use `rg` to find every `RecallRequest` construction in core, CLI, and tests. Convert L1 merge
-candidate lookup deliberately: it should use `ExactScope` unless its documented behavior truly
-requires namespace-wide candidates. Convert docs/examples at the same time so no copied snippet
-reintroduces the legacy API.
+### Milestone 2: settle merge-candidate breadth
+
+`Kioku.Distill.L1.recallCandidates` moves from `legacyRecallTarget scope` to `ExactScope scope`,
+so it agrees with `scopedScanCandidates` about which memories a session's atoms may merge into
+(Decision Log). Prove the change where it is visible: a globally-scoped session must stop drawing
+candidates from a sibling entity scope in the same namespace.
+
+Convert docs and examples at the same time so no copied snippet reintroduces the legacy API or the
+old CLI grammar.
 
 Add an end-to-end CLI fixture with two spaces and exact-global/entity/namespace-wide cases. Match
 plan 29's expected IDs.
@@ -148,12 +241,16 @@ by Mori. Record its command and result in this plan when implementation begins.
 
 Acceptance requires:
 
-- `--scope` returns only the exact global/entity bucket in the chosen space.
+- `--scope NAMESPACE:KIND:REF` returns only that entity scope in the chosen space.
+- `--global-bucket` returns only the rows recorded with no entity scope, in the chosen space.
 - `--namespace-wide` returns all scopes in that namespace and still only the chosen space.
-- Supplying both, neither (when no documented default exists), or a missing space produces a
-  clear nonzero error before SQL.
+- `--scope NAMESPACE` is refused with an error naming both replacements and saying which one
+  reproduces the previous behavior.
+- Supplying two target flags or none produces a clear nonzero error before SQL.
 - Every in-repo construction uses the new target type; only the compatibility module mentions
-  the legacy request.
+  the legacy request. No in-repo caller routes a target through `legacyRecallTarget` any more.
+- The two `FindMergeCandidates` finders agree on breadth, proven by a globally-scoped session
+  that no longer draws candidates from a sibling entity scope.
 - Shikigami has a documented compiling migration path.
 - HTTP/SDK IR acceptance refers to the tagged target union.
 - Legacy deletion is not performed until the ADR's release/dependent conditions are met.
@@ -169,14 +266,51 @@ cannot migrate, keep the wrapper and record the blocker rather than weakening th
 
 ## Interfaces and Dependencies
 
-The CLI consumes `RecallTarget` from plan 28 and SQL behavior from plan 29. Its conceptual forms
-are:
+The CLI consumes `RecallTarget` from plan 28 and SQL behavior from plan 29. The plan originally
+sketched a per-command space selector and two target forms:
 
 ```text
 kioku recall --memory-space SPACE --scope NAMESPACE[:KIND:REF] QUERY
 kioku recall --memory-space SPACE --namespace-wide NAMESPACE QUERY
 ```
 
-Final flag spelling must follow the existing parser conventions. The future HTTP service and
-SDKs consume the same tagged union. No direct Shomei/Meibo/En dependency is added to the CLI;
-standalone use supplies an explicit trusted context, while service use authenticates externally.
+Both parts changed; see the Decision Log. The space stays where every other command gets it, and
+each target gets its own flag rather than one flag with a namespace-shaped second meaning:
+
+```text
+KIOKU_MEMORY_SPACE=space_prod \
+  kioku recall QUERY --scope NAMESPACE:KIND:REF     # ExactScope (ScopeEntity …)
+  kioku recall QUERY --global-bucket NAMESPACE      # ExactScope (ScopeGlobal …)
+  kioku recall QUERY --namespace-wide NAMESPACE     # NamespaceWide …
+```
+
+`--scope NAMESPACE` — the one spelling whose meaning would otherwise have changed — is a parse
+error naming the two flags above. The future HTTP service and SDKs consume the same tagged union.
+No direct Shomei/Meibo/En dependency is added to the CLI; standalone use supplies an explicit
+trusted context, while service use authenticates externally.
+
+
+## Revision Notes
+
+**2026-08-07 — opening revision, before implementation.** Two of this plan's inputs changed while
+plans 28 and 29 ran, so the plan was revised to describe the work that is actually left.
+
+*The mechanical migration is already done.* Plan 28 changed `recall`'s signature, which forced
+`Kioku.Cli.Commands.Recall` and `Kioku.Distill.L1.recallCandidates` onto `RecallTarget` through the
+behavior-preserving `legacyRecallTarget`. The Progress checklist records that item as complete and
+credits plan 28. What remains is the two deliberate choices a behavior-preserving change declined
+to make, and both are now in the Decision Log with their rationale: the CLI's grammar, and the
+merge-candidate breadth.
+
+*The grammar is three flags, not two.* The plan's Interfaces sketch had `--scope` and
+`--namespace-wide`, which leaves a bare-namespace `--scope` silently meaning the global bucket —
+the narrowing direction ADR-8 identifies as the unsafe one, with no compiler and no nonzero exit to
+signal it. `--global-bucket` joins them and the bare form is refused. The Interfaces section shows
+both the sketch and what replaced it.
+
+*There is no `--memory-space` flag and no JSON output.* The sketch had the first; the space already
+comes from `KIOKU_MEMORY_SPACE` for every command, and adding the flag to `recall` alone would
+imply the other commands cannot be retargeted. Milestone 1 assumed the second; `runRecall` prints
+plain text only, so "keep scriptable output stable" is met by leaving stdout untouched and
+announcing the space and target on stderr. Both are recorded in Surprises & Discoveries and the
+Decision Log.
