@@ -27,7 +27,7 @@ natural unit you want memories to accumulate around (a user goal, a repo, an age
 > `kioku recall --scope mori`, but it
 > does *not* feed `mori`'s persona. The "User-wide"/"Org-wide"/"System-wide" rows in the tables
 > below are the *global bucket* in that second sense. See
-> [Recall](recall.md#global-scope-namespace-wide-recall-vs-exact-scope-reads).
+> [Recall](recall.md#recall-targets-vs-scoped-reads).
 
 Scope identity is collision-free: each component is percent-escaped before being joined, so
 `ScopeGlobal "a/b/c"` and `ScopeEntity "a" "b" "c"` cannot share a scene or persona row. That is why

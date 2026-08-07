@@ -4,7 +4,7 @@ title: Namespace organizes memory; memory space isolates it
 description: >-
   Namespaces and scopes remain an organizing vocabulary with no security meaning; isolation
   between callers is carried only by an explicit MemorySpaceId.
-timestamp: 2026-08-06T17:20:00Z
+timestamp: 2026-08-07T00:00:00Z
 docId: ADR-2
 status: accepted
 date: 2026-08-06
@@ -69,7 +69,10 @@ called recall with a global scope.
 
 Recall must never span memory spaces, including under a global scope. That is a stronger
 constraint than the current recall semantics, and it is why the explicit-recall-boundaries work
-depends on this decision.
+depends on this decision. [ADR-8](an-explicit-recall-target-replaces-the-overloaded-scope.md)
+delivers it in the type: a recall call names its breadth with a `RecallTarget` and takes its
+memory space from the authorizing context, so a target that widens to a whole namespace has no
+way to name a second space.
 
 The cost is a second axis to carry: every path now needs both a scope and a space. The
 alternative was one axis that quietly meant two different things.

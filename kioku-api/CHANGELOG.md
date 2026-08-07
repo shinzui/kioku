@@ -4,6 +4,23 @@
 
 ### Added
 
+- `Kioku.Api.Recall`: `RecallTarget`, which says whether a recall call searches one exact scope
+  (`ExactScope`) or every scope in one namespace (`NamespaceWide`). `ExactScope (ScopeGlobal ns)`
+  is the exact global bucket, a request that had no representation before. The wire format carries
+  a required discriminator with one tag per meaning — `exact_global`, `exact_entity`,
+  `namespace_wide` — and decoding refuses an unknown tag or a variant carrying a field it has no
+  meaning for.
+- `RecallQuery`, the request a caller composes: a target, query text, a strategy, and a
+  `RecallLimit` validated to 1–100. It deliberately carries no memory space; that comes from the
+  `MemoryAccessContext` at execution.
+- `legacyRecallTarget`, the migration helper: it maps a pre-target `MemoryScope` to the target
+  that returns the same rows (`ScopeGlobal ns` to `NamespaceWide ns`). It is not deprecated,
+  because it is what a migrating caller must call.
+- `RecallStrategy` moved here from `kioku-core`'s `Kioku.Recall`, which re-exports it, so an
+  existing `import Kioku.Recall (RecallStrategy (..))` keeps working. It gained
+  `recallStrategyText`, `parseRecallStrategy`, `allRecallStrategies`, and a bare-string JSON
+  encoding.
+
 - `RecordedPrincipal` and `LegacyPrincipalRef` in `Kioku.Api.Access`: who a stored fact says
   acted. Three cases — a principal a directory issued, a pre-memory-space free-text agent label
   kept verbatim and marked, and an event that recorded no actor at all. The wire markers

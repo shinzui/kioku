@@ -153,11 +153,11 @@ no boost.
 
 When nothing matches, `kioku recall` prints `(no matches)`.
 
-> **A bare `NAMESPACE` scope is the *broadest* search, not the narrowest.** For recall, a global
-> scope drops the scope filter entirely: `--scope mori` matches every active memory in the `mori`
-> namespace, entity-scoped rows included. An entity scope matches exactly. (Library reads are
-> exact-scope even for a global scope — the asymmetry is deliberate. See
-> [Recall](recall.md#global-scope-namespace-wide-recall-vs-exact-scope-reads).)
+> **A bare `NAMESPACE` scope is the *broadest* search, not the narrowest.** `--scope mori` matches
+> every active memory in the `mori` namespace, entity-scoped rows included; an entity scope matches
+> exactly. The library API now names these apart — `NamespaceWide` and `ExactScope` — while the
+> command line keeps its existing spelling. There is no flag for the exact global bucket yet. See
+> [Recall](recall.md#recall-targets-vs-scoped-reads).
 
 If pgvector is unavailable, `embedding` and `hybrid` fall back to keyword search automatically.
 See **[Recall](recall.md)** for the full scoring model.

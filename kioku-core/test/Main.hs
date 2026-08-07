@@ -8,6 +8,7 @@ import Kioku.IdempotencySpec qualified as IdempotencySpec
 import Kioku.MemorySpaceSpec qualified as MemorySpaceSpec
 import Kioku.PortfolioAccessSpec qualified as PortfolioAccessSpec
 import Kioku.ReadModelReconcileSpec qualified as ReadModelReconcileSpec
+import Kioku.RecallCompatSpec qualified as RecallCompatSpec
 import Kioku.RecallSpec qualified as RecallSpec
 import Kioku.RecallSqlSpec qualified as RecallSqlSpec
 import Kioku.ReiCompatSpec qualified as ReiCompatSpec
@@ -33,6 +34,7 @@ main =
         PortfolioAccessSpec.tests,
         ReadModelReconcileSpec.tests,
         RecallSpec.tests,
+        RecallCompatSpec.tests,
         RecallSqlSpec.tests,
         SchemaSpec.tests,
         ScopeIdentitySpec.tests,

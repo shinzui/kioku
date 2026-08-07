@@ -1,5 +1,9 @@
 # Bundle Update Log
 
+## 2026-08-07
+* **Update**: ADR-2's requirement that recall never span memory spaces is now carried by the type: ADR-8's RecallTarget names breadth while the memory space comes from the authorizing context.
+* **Addition**: ADR-8 records that an explicit RecallTarget replaces the overloaded scope, that the memory space comes from the authorizing context rather than the target, and that the pre-target request survives one release as a deprecated wrapper.
+
 ## 2026-08-06
 * **Addition**: ADR-7 records that the memory-space partition reaches the filesystem as a sanitised digest rather than the space id, that the pre-partition mirror tree becomes read-only history, and that a space belongs on a trace and never on a metric label.
 * **Addition**: ADR-6 records that the memory-space partition is a column and an unconditional predicate on every read-model statement, not a schema, database, or row-level-security policy per space.

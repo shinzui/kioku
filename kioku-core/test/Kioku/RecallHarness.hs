@@ -86,11 +86,16 @@ import Kioku.Api.Access (memorySpaceIdText)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Recall
-  ( RecallRequest (..),
+  ( RecallLimit,
+    RecallQuery (..),
     RecallStrategy (..),
+    ResolvedRecall,
     VectorChannelOutcome (..),
     candidatePoolSize,
+    legacyRecallTarget,
     memoryRecordColumns,
+    mkRecallLimit,
+    resolveRecall,
     selectVectorCandidatesDiagnosed,
     selectVectorCandidatesStmt,
     vectorCandidateQuery,
@@ -420,16 +425,27 @@ scoreRecallQuality corpus k rows plan annPassRows fallbackFired =
     found = length (filter (`Set.member` returnedSet) truth)
 
 -- | The request the vector channel is driven with. The query /text/ is irrelevant — the vector
--- statement never reads it — but 'RecallRequest' requires one.
-vectorRequest :: SeededCorpus -> RecallRequest
+-- statement never reads it — but a 'RecallQuery' requires one.
+--
+-- The corpus targets a whole namespace ('SeededCorpus' seeds one namespace holding only the
+-- in-scope rows), so this is a 'NamespaceWide' target. It goes through 'resolveRecall' rather
+-- than being assembled by hand, so the harness measures the same target-to-columns mapping recall
+-- itself uses.
+vectorRequest :: SeededCorpus -> ResolvedRecall
 vectorRequest corpus =
-  RecallRequest
-    { memorySpaceId = testSpace,
-      scope = corpus.targetScope,
-      query = "seeded corpus row",
-      strategy = Embedding,
-      maxResults = 10
-    }
+  either (error . ("harness request: " <>) . show) id $
+    resolveRecall testSpace query
+  where
+    query =
+      RecallQuery
+        { target = legacyRecallTarget corpus.targetScope,
+          query = "seeded corpus row",
+          strategy = Embedding,
+          maxResults = expectValidLimit 10
+        }
+
+expectValidLimit :: Int -> RecallLimit
+expectValidLimit = either (error . Text.unpack) id . mkRecallLimit
 
 -- | @EXPLAIN (ANALYZE, BUFFERS)@ for the vector candidate query, run with the same five
 -- parameters recall passes, so Postgres plans it the way it plans the real one.

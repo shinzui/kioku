@@ -62,7 +62,7 @@ declares, so the repair ships with the schema change. Do not hand-edit the regis
   `rei:intention:xyz`. A **global** scope (`--scope rei`) is *namespace-wide* for recall — it
   returns entity-scoped rows too, so it is the broader search, not the narrower one. (Library
   reads like `getActiveByScope` are exact-scope even for a global scope. See
-  [Recall](recall.md#global-scope-namespace-wide-recall-vs-exact-scope-reads).)
+  [Recall](recall.md#recall-targets-vs-scoped-reads).)
 - The memory isn't `active` (it was superseded/merged/archived). Only active memories are
   recalled.
 - Keyword strategy with no lexical overlap. Try `--strategy hybrid` (the default) so semantic

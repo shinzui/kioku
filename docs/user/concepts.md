@@ -93,25 +93,28 @@ NAMESPACE:KIND:REF         →  entity scope        e.g.  rei:intention:intentio
   on the first two colons only, so `ops:host:db.internal:5432` is the entity scope `ops` / `host` /
   `db.internal:5432`. Host-specific integrations may impose a narrower format on their refs.
 
-### Global scope means different things to recall and to reads
+### Recall says how wide it is searching; reads are always exact
 
 An **entity** scope is exact everywhere: it matches only that exact `namespace`/`kind`/`ref`, and
 never sees the namespace's global memories.
 
-A **global** scope is where people get caught out, because it is not symmetric:
+A recall call names its breadth with a **target**, and the reads have no equivalent choice:
 
-| You call                                | `ScopeGlobal ns` means | You get                                                        |
-|-----------------------------------------|------------------------|----------------------------------------------------------------|
-| `recall` / `kioku recall --scope ns`     | *no scope filter*      | every active memory in the namespace, **entity-scoped rows included** |
-| `getActiveByScope`, `getGlobal`, and distillation | *the global bucket*    | only rows recorded with **no** entity scope                     |
+| You call                                          | You get                                                               |
+|---------------------------------------------------|-----------------------------------------------------------------------|
+| `recall` with `NamespaceWide ns`                  | every active memory in the namespace, **entity-scoped rows included** |
+| `recall` with `ExactScope scope`                  | only rows carrying exactly that scope                                 |
+| `getActiveByScope`, `getGlobal`, and distillation | only rows carrying exactly that scope                                 |
+| `getActiveInNamespace`                            | every active row in the namespace, unranked                           |
 
-In one line: **recall searches namespace-wide for a global scope; scoped reads and distillation are
-exact-scope.** So a memory under `mori:repo:proj_01h4...` *is* returned by
-`kioku recall --scope mori`, but
-it does *not* feed `mori`'s scene or persona. For the read-side equivalent of recall's breadth, use
-`getActiveInNamespace`.
+So a memory under `mori:repo:proj_01h4...` *is* returned by `kioku recall --scope mori`, which is a
+namespace-wide search, but it does *not* feed `mori`'s scene or persona.
 
-Full detail: [Recall](recall.md#global-scope-namespace-wide-recall-vs-exact-scope-reads). See
+Before recall targets were explicit, a single `ScopeGlobal ns` value meant "no scope filter" to
+recall and "the global bucket" to every read — the same value, two answers. `legacyRecall`
+preserves the old reading for callers that have not migrated.
+
+Full detail: [Recall](recall.md#recall-targets-vs-scoped-reads). See
 [Scopes & Integrations](integrations.md) for per-host conventions.
 
 ## Session

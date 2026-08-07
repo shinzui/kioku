@@ -13,6 +13,9 @@
 
 - `KIOKU_MEMORY_SPACE` now also decides what commands *read*. `kioku recall`, `kioku scenes`, and
   `kioku persona` return nothing outside it.
+- `kioku recall` runs on the explicit recall target API underneath. Its grammar and its results
+  are unchanged: `--scope mori` still searches the whole `mori` namespace and `--scope
+  mori:repo:web` still matches exactly. There is still no flag for the exact global bucket.
 
 ## 0.3.0.0 — 2026-08-05
 

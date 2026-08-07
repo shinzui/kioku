@@ -383,14 +383,22 @@ Ranked hybrid recall:
 ```haskell
 recall ::
   (IOE :> es, Store :> es) =>
-  EmbeddingModel -> VectorCapability -> RecallRequest -> Eff es [RecallHit]
+  EmbeddingModel ->
+  VectorCapability ->
+  MemoryAccessContext ->
+  RecallQuery ->
+  Eff es (Either RecallError [RecallHit])
 
-data RecallRequest = RecallRequest
-  { scope      :: MemoryScope
+data RecallQuery = RecallQuery
+  { target     :: RecallTarget
   , query      :: Text
   , strategy   :: RecallStrategy   -- Keyword | Embedding | Hybrid
-  , maxResults :: Int
+  , maxResults :: RecallLimit      -- 1..100, via mkRecallLimit
   }
+
+data RecallTarget
+  = ExactScope MemoryScope   -- exactly this scope; ScopeGlobal ns is the global bucket
+  | NamespaceWide Namespace  -- every scope in the namespace
 
 data RecallHit = RecallHit
   { memory  :: MemoryRecord
@@ -398,7 +406,26 @@ data RecallHit = RecallHit
   , ftsRank :: Maybe Int
   , vecRank :: Maybe Int
   }
+
+data RecallError
+  = RecallSpaceMismatch MemorySpaceId MemorySpaceId  -- requested, authorized (legacyRecall only)
+  | RecallExactGlobalUnsupported Namespace
+
+mkRecallQuery :: RecallTarget -> Text -> RecallStrategy -> Int -> Either Text RecallQuery
+mkRecallLimit :: Int -> Either Text RecallLimit
 ```
+
+The **target** says what to search and comes from you; the **memory space** says whose memories
+those are and comes from `memoryContextSpace` of the context. Nothing in the request can change
+the space, so widening a target never widens the tenancy.
+
+`recall` does not re-check a permission: a `MemoryAccessContext` exists only for permissions
+`authorizeMemoryAccess` already checked against that space, which is the same reason the reads
+below take a bare `MemorySpaceId`.
+
+`ExactScope (ScopeGlobal ns)` is currently refused with `RecallExactGlobalUnsupported`; the SQL
+that distinguishes it from a namespace-wide search does not exist yet. Use `getGlobal` for an
+unranked exact global read. See [Recall](recall.md#what-a-recall-call-targets).
 
 Build the `EmbeddingModel` from config with `Kioku.Memory.Embedding` (`resolveEmbeddingConfig`,
 `toEmbeddingModel`), and detect the vector capability with `Kioku.Recall.Capability`. Note that
@@ -415,10 +442,29 @@ data VectorCapability
 detectVectorCapability :: (Store :> es) => Int -> Eff es VectorCapability
 ```
 
-> **`recall` has a scope asymmetry you must know about.** A `ScopeGlobal` `RecallRequest` is
-> *namespace-wide*: the scope filter vanishes and entity-scoped rows are returned too. That is the
-> opposite of `getActiveByScope` below, which treats the same value as "the global bucket only". See
-> [Recall](recall.md#global-scope-namespace-wide-recall-vs-exact-scope-reads).
+### The pre-target API, deprecated
+
+`RecallRequest` and `legacyRecall` keep an unmigrated caller working for one release:
+
+```haskell
+legacyRecall ::
+  (IOE :> es, Store :> es) =>
+  EmbeddingModel ->
+  VectorCapability ->
+  MemoryAccessContext ->
+  RecallRequest ->                 -- carries its own memorySpaceId, which must match the context
+  Eff es (Either RecallError [RecallHit])
+
+legacyRecallTarget :: MemoryScope -> RecallTarget
+```
+
+> **The scope asymmetry this replaces.** A `ScopeGlobal` `RecallRequest` is *namespace-wide*: the
+> scope filter vanishes and entity-scoped rows are returned too. That is the opposite of
+> `getActiveByScope` below, which treats the same value as "the global bucket only".
+> `legacyRecallTarget` maps `ScopeGlobal ns` to `NamespaceWide ns`, so a mechanical migration keeps
+> today's rows; the exact global bucket is `ExactScope (ScopeGlobal ns)` and you have to ask for it.
+> See [Migrating from `RecallRequest`](recall.md#migrating-from-recallrequest) for the table and the
+> removal window.
 
 Other exported recall API:
 
@@ -445,7 +491,10 @@ data VectorChannelOutcome = VectorChannelOutcome
 vectorChannelStarved :: VectorChannelOutcome -> Bool
 
 selectVectorCandidatesDiagnosed ::
-  (Store :> es) => RecallRequest -> Vector Double -> Eff es (VectorChannelOutcome, [MemoryRecord])
+  (Store :> es) => ResolvedRecall -> Vector Double -> Eff es (VectorChannelOutcome, [MemoryRecord])
+
+-- a ResolvedRecall is a query bound to one authorized space, built only by:
+resolveRecall :: MemorySpaceId -> RecallQuery -> Either RecallError ResolvedRecall
 ```
 
 kioku emits no metric itself (`Kioku.Recall` has no access to the host's tracer), so a host that
@@ -512,6 +561,7 @@ newDistillRuntime :: IO DistillRuntime         -- registers the Claude provider;
 data L1RunMode = RespectWatermark | IgnoreWatermark
 data L1Outcome = L1Distilled L1Summary | L1SkippedUpToDate
 newtype FindMergeCandidates es                 -- produced by scopedScanCandidates / recallCandidates
+                                               -- receives the pass's MemoryAccessContext
 
 distillSessionL1 ::
   MemoryAccessContext -> L1RunMode -> DistillRuntime -> FindMergeCandidates es -> SessionId ->

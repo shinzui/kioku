@@ -275,28 +275,36 @@ testRecallReads =
       >>= expectRows "by type" [idText mine.memoryId] (fmap (\r -> r.memoryId))
 
     -- The keyword channel, which is the one that runs without an embedding endpoint. Its
-    -- namespace-wide form is the widest read in the codebase.
+    -- namespace-wide form is the widest read in the codebase, and the space it searches comes
+    -- from the context rather than from the request -- so there is no argument a caller could
+    -- pass here that would reach the other space.
     hits <-
       Recall.recall
         undefinedModel
         VectorExtensionUnavailable
-        Recall.RecallRequest
-          { memorySpaceId = mine.space,
-            scope = ScopeGlobal sharedNamespace,
+        testContext
+        Recall.RecallQuery
+          { target = Recall.NamespaceWide sharedNamespace,
             query = "identical",
             strategy = Recall.Keyword,
-            maxResults = 10
+            maxResults = expectValidLimit 10
           }
     liftIO $
-      assertEqual
-        "namespace-wide keyword recall stays in its space"
-        [idText mine.memoryId]
-        (sort ((\hit -> hit.memory.memoryId) <$> hits))
+      case hits of
+        Left err -> assertFailure ("recall refused: " <> show err)
+        Right rows ->
+          assertEqual
+            "namespace-wide keyword recall stays in its space"
+            [idText mine.memoryId]
+            (sort ((\hit -> hit.memory.memoryId) <$> rows))
   where
     -- The keyword channel never embeds, and 'VectorExtensionUnavailable' makes that a
     -- guarantee rather than a hope: 'planRecallExecution' returns a keyword-only plan, so the
     -- model is never forced.
     undefinedModel = error "the keyword channel must not embed"
+
+    expectValidLimit =
+      either (error . Text.unpack) id . Recall.mkRecallLimit
 
 -- | Scene and persona ids are derived from the scope alone, so both spaces derive the same
 -- ones. They are inserted directly rather than distilled, because what is under test is the

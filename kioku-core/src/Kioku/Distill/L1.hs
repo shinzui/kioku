@@ -72,11 +72,19 @@ import Shikumi.Schema.Types (field, unField)
 
 -- | How a pass finds memories that a newly extracted atom might merge into.
 --
--- The memory space is an argument rather than something the finder closes over, so a finder
--- value can be built once at startup and still be used by passes running in different spaces.
+-- The authorizing context is an argument rather than something the finder closes over, so a
+-- finder value can be built once at startup and still be used by passes running in different
+-- memory spaces. It is the whole context rather than a bare 'MemorySpaceId' because
+-- 'Kioku.Recall.recall' takes one: a finder that searches must be handed the decision that
+-- authorized the pass, so that widening what it searches can never widen whose memories it
+-- reaches.
+-- The error channel is 'L1Error' rather than 'ReadModelError' because a finder that runs recall
+-- can fail in a way a read model cannot — see 'L1RecallRefused'. Flattening such a refusal into
+-- an empty candidate list would tell the consolidator there is nothing to merge into, which is
+-- the "a denial became an empty result" mistake 'Kioku.Api.Access' exists to prevent.
 newtype FindMergeCandidates es = FindMergeCandidates
   { runFindMergeCandidates ::
-      MemorySpaceId -> MemoryScope -> Text -> Eff es (Either ReadModelError [MemoryRecord])
+      MemoryAccessContext -> MemoryScope -> Text -> Eff es (Either L1Error [MemoryRecord])
   }
 
 data L1Error
@@ -89,6 +97,8 @@ data L1Error
   | L1MemoryWriteFailed !Memory.MemoryWriteError
   | -- | the context does not authorize distillation in this space
     L1NotPermitted !MemoryPermission
+  | -- | the merge-candidate finder asked recall for something it would not run
+    L1RecallRefused !Recall.RecallError
   deriving stock (Generic, Show)
 
 data L1Summary = L1Summary
@@ -261,9 +271,18 @@ scopedScanCandidates ::
   Int ->
   FindMergeCandidates es
 scopedScanCandidates limit =
-  FindMergeCandidates \space scope _query ->
-    fmap (take (max 0 limit)) <$> Recall.getActiveByScope space scope
+  FindMergeCandidates \context scope _query ->
+    bimap L1MemoryReadFailed (take (max 0 limit))
+      <$> Recall.getActiveByScope (memoryContextSpace context) scope
 
+-- | Merge candidates from ranked hybrid recall over the atom's own text.
+--
+-- The target is 'Recall.legacyRecallTarget' of the session's scope, which preserves exactly the
+-- candidate set this finder produced before recall targets were explicit: a session under a
+-- global scope draws candidates from the whole namespace. Whether that breadth is what merge
+-- consolidation actually wants is a deliberate question, and it belongs to
+-- @docs\/plans\/30-migrate-recall-consumers-to-explicit-targets.md@ rather than to a mechanical
+-- signature change.
 recallCandidates ::
   (IOE :> es, Store :> es) =>
   EmbeddingModel ->
@@ -271,19 +290,25 @@ recallCandidates ::
   Int ->
   FindMergeCandidates es
 recallCandidates model capability limit =
-  FindMergeCandidates \space scope query -> do
-    hits <-
-      Recall.recall
-        model
-        capability
-        Recall.RecallRequest
-          { memorySpaceId = space,
-            scope,
-            query,
-            strategy = Recall.Hybrid,
-            maxResults = max 0 limit
-          }
-    pure (Right (fmap (.memory) hits))
+  FindMergeCandidates \context scope query ->
+    -- A limit of zero or less asks for no candidates, which is what the pre-'RecallLimit'
+    -- @take (max 0 limit)@ produced. Anything above the bound is clamped rather than refused:
+    -- a fused result set holds at most 100 memories, so it was never reachable anyway.
+    case Recall.mkRecallLimit (min Recall.maxRecallLimit limit) of
+      Left _ -> pure (Right [])
+      Right maxResults -> do
+        hits <-
+          Recall.recall
+            model
+            capability
+            context
+            Recall.RecallQuery
+              { target = Recall.legacyRecallTarget scope,
+                query,
+                strategy = Recall.Hybrid,
+                maxResults
+              }
+        pure (bimap L1RecallRefused (fmap (.memory)) hits)
 
 buildExtractInput ::
   (IOE :> es, Store :> es) =>
@@ -339,11 +364,11 @@ applyAtom ::
 applyAtom context rt finder sid session maxTurnIndex summary atom = do
   candidatesResult <-
     finder.runFindMergeCandidates
-      (memoryContextSpace context)
+      context
       (sessionScope session)
       (unField atom.content)
   case candidatesResult of
-    Left err -> pure (Left (L1MemoryReadFailed err))
+    Left err -> pure (Left err)
     Right candidates -> do
       decisionResult <-
         liftIO $

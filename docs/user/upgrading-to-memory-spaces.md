@@ -272,19 +272,25 @@ Every read function takes a `MemorySpaceId` as its first argument and returns no
 
 ```haskell
 rows <- Memory.getActiveRowsByScope (memoryContextSpace hostContext) scope
-hits <-
-  Recall.recall model capability
-    Recall.RecallRequest
-      { memorySpaceId = memoryContextSpace hostContext
-      , scope = ScopeGlobal namespace
-      , …
-      }
 ```
 
 `memoryContextSpace` of the context that authorized the read is the value to pass. A read takes
 the space rather than the whole context because reads return `Either ReadModelError` and the
 permission decision has already been made: `authorizeMemoryAccess` mints a context only for
 permissions it actually checked, so ask it for `MemoryRead` when you mint one.
+
+`Recall.recall` is the one exception: it takes the whole context, because it is the only read that
+can be asked to *widen* — from one scope to a whole namespace — and the space it searches must
+come from the decision rather than from the request.
+
+```haskell
+hits <-
+  Recall.recall model capability hostContext
+    Recall.RecallQuery
+      { target = Recall.NamespaceWide namespace
+      , …
+      }
+```
 
 Two behaviours are worth knowing about:
 

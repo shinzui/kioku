@@ -1,12 +1,97 @@
 # Recall & Hybrid Retrieval
 
-Recall finds the active memories most relevant to a query **within a scope**. This page explains
-the strategies, the fusion and scoring model, and the degradation behavior when `pgvector` is
-unavailable.
+Recall finds the active memories most relevant to a query **within a target**. This page explains
+what a target is, the strategies, the fusion and scoring model, and the degradation behavior when
+`pgvector` is unavailable.
+
+## What a recall call targets
+
+A recall call names two separate things, and keeping them separate is the point:
+
+- The **target** says *what to search*. It is either one exact scope or every scope in one
+  namespace, and it comes from you.
+- The **memory space** says *whose memories those are*. It comes from the
+  `MemoryAccessContext` that authorized the call, and nothing in the request can change it.
+
+Widening a target — from one scope to a whole namespace — therefore never widens the tenancy. See
+[Namespace organizes memory; memory space isolates it](../adr/namespace-is-not-a-security-boundary.md).
+
+There are three targets:
+
+| Target                            | What it searches                                             |
+|-----------------------------------|--------------------------------------------------------------|
+| `ExactScope (ScopeGlobal ns)`     | the **global bucket** of `ns`: rows recorded with no entity scope |
+| `ExactScope (ScopeEntity ns k r)` | that entity scope and no other                                |
+| `NamespaceWide ns`                | every scope in `ns`, the global bucket and entity scopes alike |
+
+```haskell
+data RecallTarget
+  = ExactScope MemoryScope
+  | NamespaceWide Namespace
+```
+
+On the wire each is a tagged object with a required discriminator, so no meaning is ever carried
+by a missing field:
+
+```json
+{"kind": "exact_global",   "namespace": "mori"}
+{"kind": "exact_entity",   "namespace": "mori", "scope_kind": "repo", "scope_ref": "shinzui/kikan"}
+{"kind": "namespace_wide", "namespace": "mori"}
+```
+
+Decoding refuses an unknown `kind`, and refuses a variant carrying a field it has no meaning for
+(an `exact_global` with a `scope_kind`, say).
+
+### Migrating from `RecallRequest`
+
+Before targets were explicit, a recall request carried a bare `MemoryScope`, and `ScopeGlobal ns`
+meant *namespace-wide* to recall while the same value meant *the global bucket* to
+`getActiveByScope`. That asymmetry is gone from the new API and preserved exactly in the
+deprecated one.
+
+| You have today                       | You want the same rows | You want the exact global bucket |
+|--------------------------------------|------------------------|----------------------------------|
+| `RecallRequest { scope = ScopeGlobal ns }`     | `NamespaceWide ns`     | `ExactScope (ScopeGlobal ns)`    |
+| `RecallRequest { scope = ScopeEntity ns k r }` | `ExactScope (ScopeEntity ns k r)` | — (already exact)     |
+
+`legacyRecallTarget :: MemoryScope -> RecallTarget` performs the left-hand mapping, so a
+mechanical migration is one call per site:
+
+```haskell
+-- before
+recall model capability
+  RecallRequest {memorySpaceId = space, scope, query, strategy, maxResults = 8}
+
+-- after: same rows, and the space now comes from the context rather than the request
+case mkRecallQuery (legacyRecallTarget scope) query strategy 8 of
+  Left invalidLimit -> ...
+  Right request     -> recall model capability context request
+```
+
+`mkRecallQuery` validates the result count, which is now a `RecallLimit` bounded to **1–100**
+rather than a bare `Int`. Zero silently returned nothing before; 100 is the most a fused result
+set can hold, because each channel contributes at most 50 candidates.
+
+`legacyRecall` runs an unmigrated `RecallRequest` unchanged. It is **deprecated**, so an
+unmigrated call site is a compiler warning rather than a surprise in production.
+
+> **Removal window.** The deprecated `RecallRequest`/`legacyRecall` pair survives for at least one
+> released version, and is deleted only in a later PVP-breaking release, and only once every known
+> dependent compiles against `RecallTarget`. See
+> [An explicit recall target replaces the overloaded scope](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md)
+> for the exact conditions.
+
+> **Exact global recall is not executable yet.** `ExactScope (ScopeGlobal ns)` type-checks,
+> round-trips on the wire, and is refused at execution with `RecallExactGlobalUnsupported`. Both
+> candidate statements read NULL scope columns as *no scope filter*, so the only rows an exact
+> global request could reach through them are the namespace-wide ones — and answering the wrong
+> question quietly is the defect this vocabulary exists to remove. The statements are split in
+> `docs/plans/29-enforce-exact-and-namespace-wide-recall-in-postgresql.md`. Until then, use
+> `getGlobal` for an unranked exact global read.
 
 ## Strategies
 
-A recall request carries a `scope`, a `query`, a `strategy`, and a `maxResults`. There are three
+A recall request carries a `target`, a `query`, a `strategy`, and a `maxResults`. There are three
 strategies:
 
 | Strategy    | Full-text (FTS) | Vector (pgvector) | Needs query embedding |
@@ -36,8 +121,8 @@ embedding endpoint. `embedding` is pure semantic similarity.
      and where it cannot (PostgreSQL before 13, or an incremental sort it declines) it
      abandons the index for a sequential scan. The vector channel runs in two passes; see
      [The vector channel's two passes](#the-vector-channels-two-passes).
-   Both queries filter `status = 'active'`, the request `namespace`, and — for entity scopes —
-   the exact `scope_kind`/`scope_ref`.
+   Both queries filter `status = 'active'`, the authorized `memory_space_id`, the target's
+   `namespace`, and — for an exact entity target — the exact `scope_kind`/`scope_ref`.
 4. **Fuse.** The two candidate lists are merged by memory id; each memory keeps its FTS rank
    and/or its vector rank.
 5. **Score & sort.** Each fused candidate gets a blended score (below); results are sorted
@@ -90,11 +175,11 @@ That is the price of a correct answer, and it is bounded by the set you asked to
   this is a genuine gap rather than a proof.
 - **Ordering within the returned candidates is the approximate pass's ordering** when the fallback
   does not fire. That is the normal, intended behaviour of approximate search.
-- **For a global scope, "the scope you asked about" is the whole namespace.** Recall's scope filter
-  vanishes for a global scope (see [Global scope](#global-scope-namespace-wide-recall-vs-exact-scope-reads)),
-  so if the approximate pass starves — which it still can, since the `namespace` and `status`
-  predicates are *also* applied after the index picks — the exact pass scans every embedded row in
-  the namespace.
+- **For a namespace-wide target, "the scope you asked about" is the whole namespace.** Recall's
+  scope filter vanishes for `NamespaceWide` (see [What a recall call targets](#what-a-recall-call-targets)),
+  so if the approximate pass starves — which it still can, since the `memory_space_id`,
+  `namespace` and `status` predicates are *also* applied after the index picks — the exact pass
+  scans every embedded row in the namespace.
 
 **Seeing it.** `Kioku.Recall.selectVectorCandidatesDiagnosed` returns a `VectorChannelOutcome`
 alongside the rows, recording how many candidates the approximate pass produced, whether the exact
@@ -115,39 +200,43 @@ starvation, and kioku does not use it. It was measured across five freshly built
 in 5 (`strict_order`). HNSW graph construction is randomized, so it is a lottery: it would pass any
 single test run and starve at random in production. Do not reach for it again without a sample size.
 
-## Global scope: namespace-wide recall vs exact-scope reads
+## Recall targets vs scoped reads
 
-The same `ScopeGlobal ns` value means **two different things** depending on which API you
-hand it to. This is intentional, and it is the single most surprising thing about scopes, so
-it is worth stating plainly:
+Recall and the unranked scope scans are separate vocabularies, and each says plainly which set of
+rows it means:
 
-| You call | `ScopeGlobal ns` means | You get |
-|---|---|---|
-| **Recall** — `recall`, and the CLI's `kioku recall --scope ns` | *no scope filter* | every active memory in the namespace, **entity-scoped rows included** |
-| **Scoped reads** — `getActiveByScope`, `getGlobal`, scene and persona lookups | *the global bucket* | only rows recorded with **no** entity scope |
+| You call | You get |
+|---|---|
+| `recall` with `NamespaceWide ns` | every active memory in the namespace, **entity-scoped rows included** |
+| `recall` with `ExactScope scope` | only rows carrying exactly that scope |
+| `getActiveByScope`, `getGlobal`, scene and persona lookups | only rows carrying exactly that scope |
+| `getActiveInNamespace` | every active row in the namespace, the unranked equivalent of `NamespaceWide` |
 
-In one line: **recall searches namespace-wide for a global scope; scoped reads are
-exact-scope.**
+So a memory recorded under `mori:repo:proj_01h4...` **is** returned by `recall` with
+`NamespaceWide (Namespace "mori")`, and is **not** returned by `getGlobal (Namespace "mori")`.
+They are now different words for different things.
 
-So a memory recorded under `mori:repo:proj_01h4...` **is** returned by `recall` with scope `mori`,
-but is **not** returned by `getGlobal (Namespace "mori")`. Neither is a bug.
+They want opposite defaults, which is why both exist. Search wants the largest plausible candidate
+surface — narrowing a namespace-level query to the global bucket would make it miss almost
+everything the namespace knows. Reads want exact buckets — a caller asking for "the global
+memories of `mori`" is asking for a specific set of rows.
 
-The reason they differ is that they want opposite things. Search wants the largest plausible
-candidate surface — narrowing it to the global bucket would make a namespace-level query miss
-almost everything the namespace knows. Reads want exact buckets — a caller asking for "the
-global memories of `mori`" is asking for a specific set of rows, not for everything.
-
-If you want the read-side equivalent of recall's breadth, use **`getActiveInNamespace`**,
-which returns every active row in the namespace regardless of scope.
+**Before `RecallTarget`, one value carried both meanings.** A `ScopeGlobal ns` handed to `recall`
+meant "no scope filter" and the same value handed to `getActiveByScope` meant "the global bucket".
+Both behaviours were wanted; the defect was that the type could not tell you which one you were
+getting. `legacyRecall` preserves the old reading exactly — see
+[Migrating from `RecallRequest`](#migrating-from-recallrequest).
 
 Concretely, recall's scope predicate is
 
 ```sql
-(($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4))
+(($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))
 ```
 
-— for a global scope both parameters are NULL, so the first disjunct is always true and the
-scope filter vanishes. The scoped reads instead *require* the columns to be NULL.
+— for a `NamespaceWide` target both parameters are NULL, so the first disjunct is always true and
+the scope filter vanishes; an `ExactScope` entity target compares both columns. The scoped reads
+instead *require* the columns to be NULL, which is why the exact global bucket has no parameter
+assignment here and is refused rather than answered wrongly.
 
 ## Scoring model
 
@@ -282,9 +371,17 @@ kioku recall "release script" --scope mori:repo:proj_01h4... --strategy keyword
 
 See the [CLI Reference](cli-reference.md#kioku-recall) for all flags.
 
+`--scope` keeps the meaning it has always had: a bare namespace searches the **whole namespace**,
+and a `namespace:kind:ref` scope matches exactly. The CLI has no way to ask for the exact global
+bucket yet; giving it explicit `--scope` / `--namespace-wide` grammar is
+`docs/plans/30-migrate-recall-consumers-to-explicit-targets.md`.
+
+The memory space comes from `KIOKU_MEMORY_SPACE` (default `kioku_legacy`), never from the target
+— see [Configuration](configuration.md).
+
 ## Library usage
 
-`Kioku.Recall.recall` runs a request; the scope-scan helpers (`getActiveByScope`,
-`getActiveInNamespace`, `getGlobal`, `getById`, `getBySession`, `getByType`) fetch active
-memories without ranking when you just want everything in a scope. See
-[Library API](library-api.md#recall-kiokurecall).
+`Kioku.Recall.recall` takes a `MemoryAccessContext` and a `RecallQuery`; the scope-scan helpers
+(`getActiveByScope`, `getActiveInNamespace`, `getGlobal`, `getById`, `getBySession`, `getByType`)
+take a `MemorySpaceId` and fetch active memories without ranking when you just want everything in
+a scope. See [Library API](library-api.md#recall-kiokurecall).

@@ -10,11 +10,11 @@ import Data.Text qualified as Text
 import Kioku.Api.Scope (MemoryScope)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.App (runAppIO, withNoopAppEnv)
-import Kioku.Cli.Context (cliMemorySpace)
+import Kioku.Cli.Context (cliMemoryContext)
 import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
-import Kioku.Recall (RecallHit (..), RecallRequest (..), RecallStrategy (..), recall)
+import Kioku.Recall (RecallHit (..), RecallStrategy (..), legacyRecallTarget, mkRecallQuery, recall)
 import Kioku.Recall.Capability (detectVectorCapability)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Options.Applicative
@@ -63,24 +63,25 @@ runRecall :: RecallOptions -> IO ()
 runRecall opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
   config <- resolveEmbeddingConfig
-  space <- cliMemorySpace
+  context <- cliMemoryContext
+  -- 'legacyRecallTarget' keeps @--scope@ meaning exactly what it has always meant: a namespace
+  -- alone searches the whole namespace, an entity scope matches exactly. Giving operators a way
+  -- to say "the global bucket only" is a grammar change and belongs to
+  -- docs/plans/30-migrate-recall-consumers-to-explicit-targets.md.
+  request <-
+    case mkRecallQuery (legacyRecallTarget opts.scope) opts.query opts.strategy opts.limit of
+      Left err -> ioError (userError ("kioku recall: " <> Text.unpack err))
+      Right request -> pure request
   withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
     let model = toEmbeddingModel config
-        request =
-          RecallRequest
-            { memorySpaceId = space,
-              scope = opts.scope,
-              query = opts.query,
-              strategy = opts.strategy,
-              maxResults = opts.limit
-            }
     result <- runAppIO env do
       capability <- detectVectorCapability config.dimensions
-      recall model capability request
+      recall model capability context request
     case result of
       Left storeErr -> ioError (userError ("kioku recall store error: " <> show storeErr))
-      Right [] -> putStrLn "(no matches)"
-      Right hits -> mapM_ (printHit opts.showScores) (zip [(1 :: Int) ..] hits)
+      Right (Left recallErr) -> ioError (userError ("kioku recall error: " <> show recallErr))
+      Right (Right []) -> putStrLn "(no matches)"
+      Right (Right hits) -> mapM_ (printHit opts.showScores) (zip [(1 :: Int) ..] hits)
 
 parseStrategy :: String -> Either String RecallStrategy
 parseStrategy = \case

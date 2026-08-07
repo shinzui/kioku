@@ -4,6 +4,33 @@
 
 ### Breaking Changes
 
+- `recall` takes a `MemoryAccessContext` and a `RecallQuery` instead of a `RecallRequest`, and
+  returns `Either RecallError [RecallHit]`. The target says what to search; the memory space comes
+  from the context and nothing in the request can change it, so widening a target can never widen
+  the tenancy. It is the one read that takes a whole context rather than a `MemorySpaceId`,
+  because it is the only one that can be asked to widen.
+- `RecallRequest` and the new `legacyRecall` are **deprecated** wrappers for one release.
+  `legacyRecall` maps the request's scope through `legacyRecallTarget` — so `ScopeGlobal` stays
+  namespace-wide — refuses a request naming a space other than the one its context authorizes,
+  and preserves the old `maxResults` edges (zero returns nothing; anything above 100 is clamped,
+  which is unobservable because a fused result set holds at most 100 memories). See
+  `docs/adr/an-explicit-recall-target-replaces-the-overloaded-scope.md` for the removal
+  conditions.
+- `ExactScope (ScopeGlobal ns)` — ranked recall of the exact global bucket — is representable but
+  not yet executable: it is refused with `RecallExactGlobalUnsupported`, because the shared scope
+  predicate reads NULL scope columns as "no scope filter" and would silently answer the
+  namespace-wide question instead. Use `getGlobal` for an unranked exact global read until the
+  statements are split.
+- `RecallStrategy` moved to `kioku-api`'s `Kioku.Api.Recall`. `Kioku.Recall` re-exports it, so an
+  existing import keeps working.
+- The recall test seams (`selectFtsCandidates`, `selectVectorCandidates`,
+  `selectVectorCandidatesDiagnosed`, `vectorCandidateQuery`) take a `ResolvedRecall` — a query
+  bound to one authorized space with its target already compiled to scope columns. `resolveRecall`
+  is the only way to build one.
+- `Kioku.Distill.L1.FindMergeCandidates` receives the pass's `MemoryAccessContext` rather than its
+  `MemorySpaceId`, and its error channel is `L1Error` rather than `ReadModelError`. `L1Error`
+  gained `L1RecallRefused`, so a recall refusal cannot arrive at the consolidator as an empty
+  candidate list.
 - Every memory and session command payload gained required fields: `memorySpaceId` and
   `actorPrincipal` on all of them, plus `ownerPrincipal` on `RecordMemoryData`,
   `StartSessionData`, and `RecordInteractiveSessionData`. Every construction site is a compile

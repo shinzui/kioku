@@ -1,9 +1,43 @@
+-- | Running a recall request, and the unranked scope scans beside it.
+--
+-- A recall call names two things that used to be one. The __target__ says what to search — one
+-- exact scope, or every scope in one namespace — and comes from the caller. The __memory space__
+-- says whose memories those are, and comes from the 'MemoryAccessContext' that authorized the
+-- call. Widening the first can never widen the second, which is the property the vocabulary in
+-- "Kioku.Api.Recall" exists to make visible at every call site.
+--
+-- The old entry point is still here. 'legacyRecall' takes the pre-target 'RecallRequest', maps
+-- its 'MemoryScope' through 'legacyRecallTarget', and returns exactly the rows it returns today;
+-- it is deprecated so that an unmigrated caller finds out at compile time rather than by counting
+-- rows. See @docs\/user\/recall.md@ for the migration table and the removal condition.
 module Kioku.Recall
-  ( RecallStrategy (..),
-    RecallRequest (..),
+  ( -- * What to search for
+    RecallTarget (..),
+    RecallQuery (..),
+    RecallStrategy (..),
+    RecallLimit,
+    mkRecallQuery,
+    mkRecallLimit,
+    recallLimitInt,
+    defaultRecallLimit,
+    maxRecallLimit,
+    recallStrategyText,
+    parseRecallStrategy,
+    allRecallStrategies,
+    recallTargetNamespace,
+    recallTargetExactScope,
+    recallTargetIsNamespaceWide,
+
+    -- * Running it
+    RecallError (..),
     RecallHit (..),
     RecallExecutionPlan (..),
     recall,
+
+    -- * The pre-target API, kept for one release
+    RecallRequest (..),
+    legacyRecall,
+    legacyRecallTarget,
     planRecallExecution,
     fuseRecallCandidates,
     blendScore,
@@ -21,6 +55,8 @@ module Kioku.Recall
 
     -- * Test seams
     -- $testSeams
+    ResolvedRecall,
+    resolveRecall,
     selectFtsCandidates,
     selectVectorCandidates,
     vectorLiteral,
@@ -58,8 +94,26 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
-import Kioku.Api.Access (MemorySpaceId)
-import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId, memoryContextSpace)
+import Kioku.Api.Recall
+  ( RecallLimit,
+    RecallQuery (..),
+    RecallStrategy (..),
+    RecallTarget (..),
+    allRecallStrategies,
+    defaultRecallLimit,
+    legacyRecallTarget,
+    maxRecallLimit,
+    mkRecallLimit,
+    mkRecallQuery,
+    parseRecallStrategy,
+    recallLimitInt,
+    recallStrategyText,
+    recallTargetExactScope,
+    recallTargetIsNamespaceWide,
+    recallTargetNamespace,
+  )
+import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), MemoryType, memoryTypeToText)
 import Kioku.Id (MemoryId, SessionId, idText)
 import Kioku.Memory.Embedding (embedWithRetry)
@@ -98,20 +152,16 @@ import Kiroku.Store.Transaction (runTransaction)
 -- Restating them in the harness rather than exporting them is how the harness got that wrong
 -- once.
 
-data RecallStrategy = Keyword | Embedding | Hybrid
-  deriving stock (Generic, Eq, Show)
-
--- | A recall request.
+-- | The pre-'RecallTarget' recall request.
 --
--- __Global scope means "namespace-wide" here.__ Recall searches namespace-wide for a global
--- scope; scoped reads are exact-scope. A 'ScopeGlobal' request returns every active memory in
--- the namespace, entity-scoped rows included — the scope filter simply vanishes. That is the
--- opposite of what 'getActiveByScope' does with the same value. See docs/user/recall.md.
+-- __Global scope means \"namespace-wide\" here.__ A 'ScopeGlobal' request returns every active
+-- memory in the namespace, entity-scoped rows included — the scope filter simply vanishes. That
+-- is the opposite of what 'getActiveByScope' does with the same value, and it is the ambiguity
+-- 'RecallTarget' replaces. The behaviour is preserved exactly for one release; see
+-- 'legacyRecall'.
 --
--- __The memory space is not part of that asymmetry.__ It is an equality predicate on every
--- channel and it never widens, whatever the scope says: \"namespace-wide\" means every scope in
--- one namespace of /this space/. Pass 'Kioku.Api.Access.memoryContextSpace' of the context that
--- authorized the recall.
+-- __The memory space was never part of that asymmetry.__ It is an equality predicate on every
+-- channel and it never widens, whatever the scope says.
 data RecallRequest = RecallRequest
   { memorySpaceId :: !MemorySpaceId,
     -- | 'ScopeGlobal' searches the whole namespace; an entity scope matches exactly.
@@ -120,6 +170,31 @@ data RecallRequest = RecallRequest
     strategy :: !RecallStrategy,
     maxResults :: !Int
   }
+  deriving stock (Generic, Eq, Show)
+{-# DEPRECATED RecallRequest "Use RecallQuery and a RecallTarget. ScopeGlobal here means namespace-wide; the exact global bucket is ExactScope (ScopeGlobal ns)." #-}
+
+-- | Why a recall call could not run at all, as distinct from running and matching nothing.
+--
+-- Keeping those apart is the whole point of returning an 'Either' here. A caller cannot tell
+-- \"this could not be asked\" from \"there is nothing here\" if both arrive as an empty list, and
+-- only one of them is worth acting on.
+data RecallError
+  = -- | A 'RecallRequest' named a memory space that is not the one its context authorizes:
+    -- @RecallSpaceMismatch requested authorized@. Only 'legacyRecall' can produce this, because
+    -- only the legacy request carries a space of its own.
+    RecallSpaceMismatch !MemorySpaceId !MemorySpaceId
+  | -- | The exact global bucket of a namespace was requested, and the candidate SQL cannot yet
+    -- express it.
+    --
+    -- This is a deliberate refusal rather than a wrong answer. Both candidate statements spell
+    -- the scope filter @(($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))@,
+    -- in which NULL scope columns mean /no scope filter at all/ — so the only rows an exact
+    -- global request could produce through them are the namespace-wide ones, silently. Splitting
+    -- those statements is
+    -- @docs\/plans\/29-enforce-exact-and-namespace-wide-recall-in-postgresql.md@; until it lands,
+    -- 'ExactScope' over a 'ScopeGlobal' is representable, round-trips on the wire, and refuses to
+    -- execute. Use 'getGlobal' for an unranked exact global read in the meantime.
+    RecallExactGlobalUnsupported !Namespace
   deriving stock (Generic, Eq, Show)
 
 data RecallHit = RecallHit
@@ -136,6 +211,57 @@ data RecallExecutionPlan = RecallExecutionPlan
     needsQueryEmbedding :: !Bool
   }
   deriving stock (Generic, Eq, Show)
+
+-- | A recall request bound to the memory space that authorized it, with its target already
+-- compiled to the scope columns the candidate SQL takes.
+--
+-- 'resolveRecall' is the only way to build one, which is what makes the binding trustworthy: the
+-- space comes from a 'MemoryAccessContext' and the columns come from a 'RecallTarget', and
+-- neither can be supplied independently of the other. Everything downstream of this type — both
+-- candidate statements, the fusion, the budgets — sees a request that has already had its
+-- authority and its breadth decided.
+data ResolvedRecall = ResolvedRecall
+  { memorySpaceId :: !MemorySpaceId,
+    namespace :: !Text,
+    scopeKind :: !(Maybe Text),
+    scopeRef :: !(Maybe Text),
+    query :: !Text,
+    strategy :: !RecallStrategy,
+    maxResults :: !Int
+  }
+  deriving stock (Generic, Eq, Show)
+
+-- | Bind a request to one authorized memory space and compile its target to scope columns.
+--
+-- This is the single mapping from what a caller asked for to what the SQL is given, and it is
+-- deliberately the only one:
+--
+-- @
+-- 'NamespaceWide' ns                    -> namespace = ns, scope columns NULL (no scope filter)
+-- 'ExactScope' ('ScopeEntity' ns k r)     -> namespace = ns, scope_kind = k, scope_ref = r
+-- 'ExactScope' ('ScopeGlobal' ns)         -> refused; see 'RecallExactGlobalUnsupported'
+-- @
+--
+-- The space is an argument rather than a field of the request, so no call site can widen a
+-- target and a tenancy in the same edit.
+resolveRecall :: MemorySpaceId -> RecallQuery -> Either RecallError ResolvedRecall
+resolveRecall space request =
+  case request.target of
+    NamespaceWide (Namespace ns) -> Right (bind ns Nothing Nothing)
+    ExactScope (ScopeEntity (Namespace ns) (ScopeKind kind) ref) ->
+      Right (bind ns (Just kind) (Just ref))
+    ExactScope (ScopeGlobal ns) -> Left (RecallExactGlobalUnsupported ns)
+  where
+    bind ns kind ref =
+      ResolvedRecall
+        { memorySpaceId = space,
+          namespace = ns,
+          scopeKind = kind,
+          scopeRef = ref,
+          query = request.query,
+          strategy = request.strategy,
+          maxResults = recallLimitInt request.maxResults
+        }
 
 data RecallCandidateQuery = RecallCandidateQuery
   { query :: !Text,
@@ -167,16 +293,83 @@ data FusedCandidate = FusedCandidate
 -- | Run a recall request: plan, optionally embed the query, select candidates from each
 -- active channel, fuse by reciprocal rank, score, and trim.
 --
--- Recall searches namespace-wide for a global scope; scoped reads are exact-scope.
+-- The memory space searched is 'Kioku.Api.Access.memoryContextSpace' of the context, and nothing
+-- in the request can change it. That is why the context is passed here rather than a bare space:
+-- a target that widens from one scope to a whole namespace is a retrieval choice, and it must be
+-- impossible for that choice to also select whose memories are searched.
+--
+-- The context is not asked for a second permission. A 'MemoryAccessContext' exists only for
+-- permissions 'Kioku.Api.Access.authorizeMemoryAccess' already checked against this space, which
+-- is the same reason the read functions below take only a space — see "Kioku.Memory".
 recall ::
   (IOE :> es, Store :> es) =>
   EmbeddingModel ->
   VectorCapability ->
+  MemoryAccessContext ->
+  RecallQuery ->
+  Eff es (Either RecallError [RecallHit])
+recall model capability context request =
+  case resolveRecall (memoryContextSpace context) request of
+    Left err -> pure (Left err)
+    Right resolved -> Right <$> runResolvedRecall model capability resolved
+
+{-# DEPRECATED legacyRecall "Use recall with a RecallQuery. ScopeGlobal in a RecallRequest means namespace-wide, which is legacyRecallTarget's mapping; the exact global bucket is ExactScope (ScopeGlobal ns)." #-}
+
+-- | Run a pre-'RecallTarget' 'RecallRequest' and return exactly what it returns today.
+--
+-- The scope is mapped through 'legacyRecallTarget', so a global scope stays namespace-wide. The
+-- request's own @memorySpaceId@ must be the one the context authorizes; a request naming another
+-- space is refused with 'RecallSpaceMismatch' rather than quietly retargeted, for the same reason
+-- the deprecated write wrappers in "Kioku.Memory" refuse rather than rewrite.
+--
+-- Two edges of @maxResults@ are handled here rather than by 'mkRecallLimit', because this
+-- function's contract is "what you get today":
+--
+-- * a zero or negative limit returns no hits, which is what @take (max 0 n)@ did;
+-- * a limit above 'maxRecallLimit' is clamped to it, which is unobservable — each channel
+--   contributes at most 50 candidates, so a fused result set holds at most 100 distinct
+--   memories and a larger @take@ never had anything more to take.
+legacyRecall ::
+  (IOE :> es, Store :> es) =>
+  EmbeddingModel ->
+  VectorCapability ->
+  MemoryAccessContext ->
   RecallRequest ->
+  Eff es (Either RecallError [RecallHit])
+legacyRecall model capability context req
+  | req.memorySpaceId /= authorized =
+      pure (Left (RecallSpaceMismatch req.memorySpaceId authorized))
+  | req.maxResults <= 0 = pure (Right [])
+  | otherwise =
+      recall
+        model
+        capability
+        context
+        RecallQuery
+          { target = legacyRecallTarget req.scope,
+            query = req.query,
+            strategy = req.strategy,
+            maxResults = legacyRecallLimit req.maxResults
+          }
+  where
+    authorized = memoryContextSpace context
+
+-- | Total by construction: 'legacyRecall' reaches this only with @requested >= 1@, so the
+-- 'defaultRecallLimit' fallback is unreachable and exists to keep the function total rather than
+-- to define behaviour.
+legacyRecallLimit :: Int -> RecallLimit
+legacyRecallLimit requested =
+  either (const defaultRecallLimit) id (mkRecallLimit (max 1 (min maxRecallLimit requested)))
+
+runResolvedRecall ::
+  (IOE :> es, Store :> es) =>
+  EmbeddingModel ->
+  VectorCapability ->
+  ResolvedRecall ->
   Eff es [RecallHit]
-recall model capability req = do
+runResolvedRecall model capability resolved = do
   now <- liftIO getCurrentTime
-  executeRecallPlan now model req (planRecallExecution capability req.strategy)
+  executeRecallPlan now model resolved (planRecallExecution capability resolved.strategy)
 
 planRecallExecution :: VectorCapability -> RecallStrategy -> RecallExecutionPlan
 planRecallExecution capability strategy =
@@ -204,7 +397,7 @@ executeRecallPlan ::
   (IOE :> es, Store :> es) =>
   UTCTime ->
   EmbeddingModel ->
-  RecallRequest ->
+  ResolvedRecall ->
   RecallExecutionPlan ->
   Eff es [RecallHit]
 executeRecallPlan now model req execution
@@ -218,7 +411,7 @@ embedThenRecall ::
   (IOE :> es, Store :> es) =>
   UTCTime ->
   EmbeddingModel ->
-  RecallRequest ->
+  ResolvedRecall ->
   RecallExecutionPlan ->
   Eff es [RecallHit]
 embedThenRecall now model req execution = do
@@ -234,7 +427,7 @@ embedThenRecall now model req execution = do
 keywordOnly ::
   (Store :> es) =>
   UTCTime ->
-  RecallRequest ->
+  ResolvedRecall ->
   Eff es [RecallHit]
 keywordOnly now req = do
   ftsRows <- selectFtsCandidates req
@@ -244,15 +437,15 @@ selectIf :: (Applicative f) => Bool -> f [a] -> f [a]
 selectIf True action = action
 selectIf False _ = pure []
 
-finishRecall :: UTCTime -> RecallRequest -> [MemoryRecord] -> [MemoryRecord] -> [RecallHit]
+finishRecall :: UTCTime -> ResolvedRecall -> [MemoryRecord] -> [MemoryRecord] -> [RecallHit]
 finishRecall now req ftsRows vecRows =
   applyCharacterBudgets perMemoryCharacterBudget totalCharacterBudget $
-    take (max 0 req.maxResults) $
+    take req.maxResults $
       fuseRecallCandidates now ftsRows vecRows
 
 selectFtsCandidates ::
   (Store :> es) =>
-  RecallRequest ->
+  ResolvedRecall ->
   Eff es [MemoryRecord]
 selectFtsCandidates req =
   runTransaction $
@@ -288,7 +481,7 @@ vectorChannelStarved outcome =
 
 selectVectorCandidates ::
   (Store :> es) =>
-  RecallRequest ->
+  ResolvedRecall ->
   Vector Double ->
   Eff es [MemoryRecord]
 selectVectorCandidates req queryVector =
@@ -329,7 +522,7 @@ selectVectorCandidates req queryVector =
 -- fills the pool and the fallback never fires, so the common path is unchanged.
 selectVectorCandidatesDiagnosed ::
   (Store :> es) =>
-  RecallRequest ->
+  ResolvedRecall ->
   Vector Double ->
   Eff es (VectorChannelOutcome, [MemoryRecord])
 selectVectorCandidatesDiagnosed req queryVector =
@@ -378,25 +571,25 @@ efSearchSetting :: ByteString
 efSearchSetting =
   TE.encodeUtf8 ("SET LOCAL hnsw.ef_search = " <> Text.pack (show candidatePoolSize))
 
-candidateQuery :: RecallRequest -> RecallCandidateQuery
+candidateQuery :: ResolvedRecall -> RecallCandidateQuery
 candidateQuery req =
   RecallCandidateQuery
     { query = req.query,
       memorySpaceId = req.memorySpaceId,
-      namespace = scopeNamespaceText req.scope,
-      scopeKind = scopeKindText req.scope,
-      scopeRef = scopeRefText req.scope,
+      namespace = req.namespace,
+      scopeKind = req.scopeKind,
+      scopeRef = req.scopeRef,
       limit = candidatePoolSize
     }
 
-vectorCandidateQuery :: RecallRequest -> Vector Double -> VectorCandidateQuery
+vectorCandidateQuery :: ResolvedRecall -> Vector Double -> VectorCandidateQuery
 vectorCandidateQuery req queryVector =
   VectorCandidateQuery
     { queryVector = vectorLiteral queryVector,
       memorySpaceId = req.memorySpaceId,
-      namespace = scopeNamespaceText req.scope,
-      scopeKind = scopeKindText req.scope,
-      scopeRef = scopeRefText req.scope,
+      namespace = req.namespace,
+      scopeKind = req.scopeKind,
+      scopeRef = req.scopeRef,
       limit = candidatePoolSize
     }
 
