@@ -44,9 +44,14 @@ newtype Namespace = Namespace Text
 newtype ScopeKind = ScopeKind Text
 
 data MemoryScope
-  = ScopeGlobal Namespace                 -- global bucket; recall treats it namespace-wide
+  = ScopeGlobal Namespace                 -- the global bucket: no entity scope
   | ScopeEntity Namespace ScopeKind Text  -- anchored to a specific entity
 ```
+
+A `MemoryScope` says where a memory *is*. It no longer says how widely to search: that is a
+[`RecallTarget`](#recall-kiokurecall), and `ScopeGlobal ns` reaches recall only as
+`ExactScope (ScopeGlobal ns)` — the bucket itself — or as `NamespaceWide ns`, which is a different
+value.
 
 From `Kioku.Api.Types`:
 

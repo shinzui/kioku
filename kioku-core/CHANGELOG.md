@@ -41,6 +41,12 @@
   `MemorySpaceId`, and its error channel is `L1Error` rather than `ReadModelError`. `L1Error`
   gained `L1RecallRefused`, so a recall refusal cannot arrive at the consolidator as an empty
   candidate list.
+- **Behavior change:** `Kioku.Distill.L1.recallCandidates` draws merge candidates from the
+  session's exact scope rather than from its whole namespace, so it agrees with
+  `scopedScanCandidates` about which memories a session's atoms may merge into. A globally-scoped
+  session used to draw candidates from every entity scope beside it — and could merge an atom into
+  one, rewriting a memory that feeds a scene the session has nothing to do with. Entity-scoped
+  sessions are unaffected; globally-scoped ones will report more `stored` and fewer `merged`.
 - Every memory and session command payload gained required fields: `memorySpaceId` and
   `actorPrincipal` on all of them, plus `ownerPrincipal` on `RecordMemoryData`,
   `StartSessionData`, and `RecordInteractiveSessionData`. Every construction site is a compile

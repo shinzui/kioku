@@ -87,6 +87,21 @@ reached were the namespace-wide ones; each target now compiles to its own statem
 the global bucket and nothing else. See
 [Each recall target gets its own statement](../adr/each-recall-target-gets-its-own-statement.md).
 
+### Known dependents
+
+`mori registry dependents shinzui/kioku --packages` reports two:
+`mori://shinzui/shikigami`, which links `kioku-core` directly, and `mori://shinzui/kikan`, the
+umbrella portfolio. Shikigami is the compile check the removal window waits on, and its migration
+is mechanical: `Shikigami.Memory.Scope.agentScope` builds a `ScopeEntity`, so
+`legacyRecallTarget` maps it to `ExactScope` and it returns exactly the rows it returns today. It
+has no namespace-wide recall to preserve — `sharedScope`, the one `ScopeGlobal` value in that
+repository, is defined but never recalled against.
+
+Shikigami is behind by more than a target, though: it still calls `recall` without a
+`MemoryAccessContext` and builds a `RecallRequest` with no `memorySpaceId`, both of which changed
+when memory spaces landed. Migrate it in its own repository, through its own process; see
+[Upgrading to memory spaces](upgrading-to-memory-spaces.md) for that half.
+
 ## Strategies
 
 A recall request carries a `target`, a `query`, a `strategy`, and a `maxResults`. There are three
@@ -381,9 +396,17 @@ or add `public` to the store's `extraSearchPath` when constructing the connectio
 
 ## CLI usage
 
+Each of the three targets has its own flag, and exactly one of them is required:
+
 ```bash
-# Hybrid (default)
+# One entity scope, exactly (hybrid is the default strategy)
 kioku recall "how should I format commits" --scope mori:repo:proj_01h4...
+
+# Only the rows recorded against `mori` itself, with no entity scope
+kioku recall "how do we work here" --global-bucket mori
+
+# Every scope in `mori`, the global bucket and every entity under it
+kioku recall "how do we work here" --namespace-wide mori
 
 # See the component ranks and fused score
 kioku recall "commit style" --scope mori:repo:proj_01h4... --show-scores
@@ -394,10 +417,24 @@ kioku recall "release script" --scope mori:repo:proj_01h4... --strategy keyword
 
 See the [CLI Reference](cli-reference.md#kioku-recall) for all flags.
 
-`--scope` keeps the meaning it has always had: a bare namespace searches the **whole namespace**,
-and a `namespace:kind:ref` scope matches exactly. The CLI has no way to ask for the exact global
-bucket yet; giving it explicit `--scope` / `--namespace-wide` grammar is
-`docs/plans/30-migrate-recall-consumers-to-explicit-targets.md`.
+**`--scope mori` no longer parses.** A bare namespace used to mean namespace-wide here — and the
+global bucket in `kioku scenes --scope mori`, the same text and the opposite meaning. Rather than
+quietly re-read it as the narrower one, the CLI refuses it and names both replacements:
+
+```text
+$ kioku recall "how do we work here" --scope mori
+option --scope: a bare namespace is ambiguous for recall, so --scope will not accept one.
+  --global-bucket mori   rows in mori recorded with no entity scope
+  --namespace-wide mori  every scope in mori (what --scope mori returned before)
+--scope takes a full NAMESPACE:KIND:REF entity scope.
+```
+
+Every run announces what it searched on stderr, so a widening is visible in a terminal while a
+script reading stdout sees exactly the lines it saw before:
+
+```text
+kioku recall: searching every scope in mori, in memory space kioku_legacy
+```
 
 The memory space comes from `KIOKU_MEMORY_SPACE` (default `kioku_legacy`), never from the target
 — see [Configuration](configuration.md).

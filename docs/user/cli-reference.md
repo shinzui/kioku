@@ -110,16 +110,21 @@ kioku demo-session --yes-write-events
 
 ## `kioku recall`
 
-Recall memories relevant to a query, within a scope, using the chosen strategy.
+Recall memories relevant to a query, within one target, using the chosen strategy.
 
 ```bash
-kioku recall QUERY --scope NAMESPACE[:KIND:REF] [options]
+kioku recall QUERY (--scope NAMESPACE:KIND:REF | --global-bucket NAMESPACE | --namespace-wide NAMESPACE) [options]
 ```
+
+Exactly one target flag is required, and each of the three things recall can search has exactly
+one spelling:
 
 | Argument / flag    | Default  | Description                                                    |
 |--------------------|----------|---------------------------------------------------------------|
 | `QUERY` (positional) | —      | The natural-language query to match against.                  |
-| `--scope`          | —        | Scope to search. Required. `NAMESPACE` or `NAMESPACE:KIND:REF`. |
+| `--scope`          | —        | One entity scope, exactly: `NAMESPACE:KIND:REF`. `REF` may contain `:`. |
+| `--global-bucket`  | —        | Only the rows recorded in `NAMESPACE` with no entity scope.    |
+| `--namespace-wide` | —        | Every scope in `NAMESPACE`: the global bucket and every entity under it. |
 | `--strategy`       | `hybrid` | `keyword`, `embedding`, or `hybrid`.                          |
 | `--limit N`        | `8`      | Maximum hits to return. Must be between **1 and 100**; anything else is a parse error stating the range. |
 | `--show-scores`    | off      | Print the fused score and the FTS/vector component ranks.     |
@@ -133,8 +138,18 @@ kioku recall "concise answers" --scope kioku_demo:demo:demo --strategy keyword
 # Keyword-only, limited to 3 hits
 kioku recall "deploy script" --scope mori:repo:proj_01h4... --strategy keyword --limit 3
 
-# Show scoring detail
-kioku recall "testing practices" --scope mori --show-scores
+# Everything in the namespace, with scoring detail
+kioku recall "testing practices" --namespace-wide mori --show-scores
+
+# Only the rows recorded against `mori` itself, with no entity scope
+kioku recall "testing practices" --global-bucket mori
+```
+
+Every run prints the target and memory space it searched to **stderr**, so widening is visible
+without changing what a script reading stdout sees:
+
+```text
+kioku recall: searching every scope in mori, in memory space kioku_legacy
 ```
 
 Output (`--show-scores`):
@@ -153,11 +168,13 @@ no boost.
 
 When nothing matches, `kioku recall` prints `(no matches)`.
 
-> **A bare `NAMESPACE` scope is the *broadest* search, not the narrowest.** `--scope mori` matches
-> every active memory in the `mori` namespace, entity-scoped rows included; an entity scope matches
-> exactly. The library API now names these apart — `NamespaceWide` and `ExactScope` — while the
-> command line keeps its existing spelling. There is no flag for the exact global bucket yet. See
-> [Recall](recall.md#recall-targets-vs-scoped-reads).
+> **`--scope mori` used to work, and no longer does.** A bare namespace meant the *broadest*
+> search — every active memory in `mori`, entity-scoped rows included — which is the opposite of
+> what `kioku scenes --scope mori` means by the same text. It is now a parse error naming both
+> replacements: `--namespace-wide mori` is what it used to return, and `--global-bucket mori` is
+> the narrow reading. It is an error rather than a silent re-reading because the two answers differ
+> in how many rows come back, and a script would otherwise keep exiting zero while returning a
+> fraction of them. See [Recall](recall.md#recall-targets-vs-scoped-reads).
 
 If pgvector is unavailable, `embedding` and `hybrid` fall back to keyword search automatically.
 See **[Recall](recall.md)** for the full scoring model.

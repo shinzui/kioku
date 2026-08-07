@@ -28,9 +28,9 @@ collide with another host's. It is tempting to conclude that a caller confined t
 therefore isolated within it.
 
 It is not, and the difference is not cosmetic. Nothing in the scope machinery authenticates
-anyone. A namespace is a label a caller supplies; it is not a claim anyone verified. Worse, the
-global scope deliberately means *no scope filter* for recall: `kioku recall --scope mori` returns
-every active memory in the namespace, entity-scoped rows included. A vocabulary with a documented
+anyone. A namespace is a label a caller supplies; it is not a claim anyone verified. Worse, recall
+has a documented "return everything in this namespace" target — `kioku recall --namespace-wide
+mori` returns every active memory in `mori`, entity-scoped rows included. A vocabulary with a
 "return everything" value cannot also be a containment boundary.
 
 There is also a shape mismatch. A namespace is a host label, so it is fixed per deployment of that

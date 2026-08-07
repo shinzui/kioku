@@ -349,13 +349,37 @@ downgrade the binary.
 The migration itself has no down step. Re-running it is a no-op — every statement is idempotent —
 so a deployment that failed part-way can simply be re-run.
 
-## What has not changed yet
+## The command line names its recall target too
 
-**The command line still spells a recall target as a `--scope`,** so `--scope mori` searches the
-whole `mori` namespace and there is no way to ask it for the exact global bucket. The library API
-names the three targets apart — see [Recall](recall.md#what-a-recall-call-targets) — and giving
-the CLI the same grammar is
-`docs/plans/30-migrate-recall-consumers-to-explicit-targets.md`.
+**`kioku recall --scope mori` no longer parses.** A bare namespace meant *the whole namespace* to
+recall and *the global bucket* to `kioku scenes` — one spelling, two answers, which is the
+ambiguity the library API removed. Each target now has its own flag:
+
+| You ran                        | You now run                       |
+|--------------------------------|-----------------------------------|
+| `kioku recall Q --scope mori`  | `kioku recall Q --namespace-wide mori` |
+| — (was not expressible)        | `kioku recall Q --global-bucket mori`  |
+| `kioku recall Q --scope mori:repo:web` | unchanged                 |
+
+Only the bare-namespace form changed, and it changed to an error rather than to a narrower search:
+the error names both replacements and says which one reproduces the old behavior. `kioku scenes`
+and `kioku persona` keep `--scope NAMESPACE` exactly as before — they have no namespace-wide
+reading to be confused with.
+
+Every run now prints its target and memory space to stderr. stdout is unchanged, so a script that
+pipes hits sees exactly what it saw before.
+
+## Distillation draws merge candidates from the session's own scope
+
+A session under a **global** scope used to draw L1 merge candidates from every entity scope in its
+namespace, because the recall-backed candidate finder inherited the overloaded `ScopeGlobal`. It
+could therefore merge a new atom into a memory belonging to a sibling entity — rewriting content
+that feeds a scene the session has nothing to do with. It now searches exactly the session's scope,
+matching the scan-based finder beside it.
+
+If your sessions are entity-scoped, nothing changes. If you have globally-scoped sessions, expect
+slightly more `stored` and fewer `merged` in an L1 summary; nothing is lost, and the memories that
+used to be merged across scopes stay where they were recorded.
 
 ## Related
 

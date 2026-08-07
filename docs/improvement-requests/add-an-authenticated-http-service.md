@@ -53,8 +53,11 @@ one authorized memory space.
    parallel roster, membership, or ACL schema.
 3. Every query/command carries one memory space and actor principal; cross-space ID substitution is
    denied and produces no database or filesystem mutation.
-4. Recall OpenAPI uses an explicit tagged exact-scope/namespace-wide union and all list routes are
-   cursor-paginated and server-bounded.
+4. Recall OpenAPI uses the shipped tagged target union — a required `kind` discriminator with one
+   tag per data-visible meaning (`exact_global`, `exact_entity`, `namespace_wide`), never a
+   nullable `scope_kind`/`scope_ref` pair whose absence carries the meaning — and all list routes
+   are cursor-paginated and server-bounded. See
+   `docs/adr/an-explicit-recall-target-replaces-the-overloaded-scope.md` and `docs/user/recall.md`.
 5. Idempotent command retries produce one logical result; unsafe retries are not automatic.
 6. Readiness checks database/migrations and required auth dependencies without exposing secrets.
 7. Generated OpenAPI is reproducible, diff-checked in CI, and drives a real-service conformance

@@ -58,10 +58,11 @@ declares, so the repair ships with the schema change. Do not hand-edit the regis
 
 ### `recall` returns `(no matches)`
 
-- **The scope is wrong.** An **entity** scope matches exactly: `rei:intention:abc` does not match
-  `rei:intention:xyz`. A **global** scope (`--scope rei`) is *namespace-wide* for recall — it
-  returns entity-scoped rows too, so it is the broader search, not the narrower one. (Library
-  reads like `getActiveByScope` are exact-scope even for a global scope. See
+- **The target is wrong.** `--scope rei:intention:abc` matches exactly and does not match
+  `rei:intention:xyz`. `--global-bucket rei` matches only the rows recorded against `rei` with no
+  entity scope, so a memory under `rei:intention:abc` is *not* one of them; `--namespace-wide rei`
+  is the broad search that includes them both. (Library reads like `getActiveByScope` are
+  exact-scope even for a global scope. See
   [Recall](recall.md#recall-targets-vs-scoped-reads).)
 - The memory isn't `active` (it was superseded/merged/archived). Only active memories are
   recalled.

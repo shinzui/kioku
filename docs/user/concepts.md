@@ -107,12 +107,14 @@ A recall call names its breadth with a **target**, and the reads have no equival
 | `getActiveByScope`, `getGlobal`, and distillation | only rows carrying exactly that scope                                 |
 | `getActiveInNamespace`                            | every active row in the namespace, unranked                           |
 
-So a memory under `mori:repo:proj_01h4...` *is* returned by `kioku recall --scope mori`, which is a
-namespace-wide search, but it does *not* feed `mori`'s scene or persona.
+So a memory under `mori:repo:proj_01h4...` *is* returned by `kioku recall --namespace-wide mori`,
+but it does *not* feed `mori`'s scene or persona, and `kioku recall --global-bucket mori` does not
+return it either.
 
 Before recall targets were explicit, a single `ScopeGlobal ns` value meant "no scope filter" to
 recall and "the global bucket" to every read — the same value, two answers. `legacyRecall`
-preserves the old reading for callers that have not migrated.
+preserves the old reading for callers that have not migrated. On the command line the same
+ambiguity lived in `--scope mori`, which is now a parse error naming the two flags above.
 
 Full detail: [Recall](recall.md#recall-targets-vs-scoped-reads). See
 [Scopes & Integrations](integrations.md) for per-host conventions.

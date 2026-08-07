@@ -40,8 +40,10 @@ Ship the supporting indexes/migrations and keep record fields direct under
 Coordinate this request with
 `docs/masterplans/5-portfolio-compatible-memory-isolation-and-authorization.md` and
 `docs/masterplans/6-explicit-and-safe-recall-boundaries.md`: every new query is partition-first,
-accepts one `MemoryAccessContext`, and uses the explicit exact-scope/namespace-wide target rather
-than the legacy overloaded `ScopeGlobal`. Subject-reference lookup is unique or ambiguous only
+accepts one `MemoryAccessContext`, and uses the explicit `RecallTarget` — the exact global bucket,
+one exact entity scope, or namespace-wide — rather than the legacy overloaded `ScopeGlobal`. A
+query whose breadth is a bounded read rather than a search should take the exact scope and say so,
+as `Kioku.Recall.getActiveByScope` does. Subject-reference lookup is unique or ambiguous only
 inside one memory space.
 
 ## Acceptance

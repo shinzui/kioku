@@ -13,9 +13,19 @@
 
 - `KIOKU_MEMORY_SPACE` now also decides what commands *read*. `kioku recall`, `kioku scenes`, and
   `kioku persona` return nothing outside it.
-- `kioku recall` runs on the explicit recall target API underneath. Its grammar and its results
-  are unchanged: `--scope mori` still searches the whole `mori` namespace and `--scope
-  mori:repo:web` still matches exactly. There is still no flag for the exact global bucket.
+- **Breaking:** `kioku recall --scope NAMESPACE` no longer parses. A bare namespace meant *every
+  scope in the namespace* to `recall` and *the global bucket* to `kioku scenes` — one spelling,
+  two answers. Each target now has its own flag, exactly one of which is required:
+  `--scope NAMESPACE:KIND:REF` for one entity scope, `--global-bucket NAMESPACE` for the rows with
+  no entity scope, and `--namespace-wide NAMESPACE` for every scope under it. `--namespace-wide
+  mori` is what `--scope mori` returned; `--scope mori:repo:web` is unchanged. It is an error
+  rather than a silent re-reading because the two readings differ in how many rows come back, and
+  a script would otherwise keep exiting zero while returning a fraction of them.
+- `kioku recall` can ask for the exact global bucket for the first time.
+- `kioku recall` prints the target and memory space it searched to stderr. stdout is byte-for-byte
+  unchanged, so a script piping hits is unaffected.
+- `kioku scenes` and `kioku persona` are untouched: `--scope NAMESPACE` still means the global
+  bucket there, because neither has a namespace-wide reading to be confused with.
 
 ## 0.3.0.0 — 2026-08-05
 

@@ -106,10 +106,28 @@ pass. Its error channel became `L1Error` so that a recall refusal surfaces as
 is nothing to merge into, which is the "a denial became an empty result" mistake
 `Kioku.Api.Access` exists to prevent.
 
-The command line is unchanged for now: `--scope mori` still searches the whole namespace, through
-`legacyRecallTarget`. Giving operators explicit exact and namespace-wide grammar is
-`docs/plans/30-migrate-recall-consumers-to-explicit-targets.md`, and until then there is no way to
-ask the CLI for the exact global bucket.
+**The command line has its own vocabulary now, and it made the same choice one layer up.** Each
+target has one flag — `--scope NAMESPACE:KIND:REF`, `--global-bucket NAMESPACE`,
+`--namespace-wide NAMESPACE` — and a bare-namespace `--scope`, the one spelling whose meaning would
+otherwise have changed, is a parse error naming both replacements and saying which reproduces the
+old behavior.
+
+Letting it quietly mean the global bucket would have been tidier: it matches
+`kioku scenes --scope mori`, and it needs one flag fewer. It is also precisely the narrowing this
+decision rejected for the library, and worse on a command line, where there is no compiler to warn
+and the exit status stays zero. **When a compatibility mapping's meaning changes on a surface that
+cannot warn, refuse the ambiguous input rather than re-reading it.** The refusal costs an operator
+one edit, once; the silent re-reading costs them rows they never learn are missing.
+
+**The last consumer of the overload was inside distillation, and it was not a call site anyone
+chose.** `Kioku.Distill.L1` has two `FindMergeCandidates` finders. `scopedScanCandidates` calls
+`getActiveByScope` and has always been exact; `recallCandidates` mapped the session scope through
+`legacyRecallTarget`, so for a globally-scoped session it drew merge candidates from every entity
+scope in the namespace — and the consolidator could merge an atom into one of them, rewriting a
+memory that feeds a scene the session has nothing to do with. It now targets `ExactScope`. **A
+candidate finder chooses how to rank and bound a population; it does not get to change which
+memories exist.** Two finders that disagree about that are not substitutable, and the disagreement
+was invisible until `RecallTarget` gave it a name.
 
 The cost is a second vocabulary beside `MemoryScope`, and a conversion between them at every
 boundary that still speaks the old one. The alternative was a single vocabulary that meant two

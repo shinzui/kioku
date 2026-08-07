@@ -45,8 +45,9 @@ silently publish incompatible clients.
 
 1. TypeScript and Python packages are generated reproducibly from the same committed OpenAPI
    document and contain no divergent handwritten wire models.
-2. Exact-scope and namespace-wide recall are distinct typed constructors and always require one
-   memory-space context.
+2. The exact global bucket, an exact entity scope, and namespace-wide recall are three distinct
+   typed constructors — matching the three `kind` tags on the wire — and always require one
+   memory-space context. No client may express a target by omitting a scope field.
 3. Pagination iterators preserve cursors and bounds; they never fetch an unbounded collection.
 4. Retry middleware retries only documented idempotent operations and carries idempotency keys
    across attempts.
