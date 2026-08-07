@@ -14,8 +14,10 @@ origin: mori://shinzui/shikigami
 
 ## Status
 
-Proposed. The session seam blocks Shikigami plan 26; the bounded memory seams block plan 34
-milestones 2 and 3.
+Proposed. The session seam blocks
+`mori://shinzui/shikigami/plans/26-conversation-workflow-lifecycle-idle-timeout-journal-rotation-session-completion`;
+the bounded memory seams block milestones 2 and 3 of
+`mori://shinzui/shikigami/plans/34-memory-lifecycle-distillation-retention-and-shared-scope`.
 
 ## Context
 
@@ -35,6 +37,13 @@ zero/one/many semantics. Add validated bounded query values and server-side SQL 
 Ship the supporting indexes/migrations and keep record fields direct under
 `DuplicateRecordFields`.
 
+Coordinate this request with
+`docs/masterplans/5-portfolio-compatible-memory-isolation-and-authorization.md` and
+`docs/masterplans/6-explicit-and-safe-recall-boundaries.md`: every new query is partition-first,
+accepts one `MemoryAccessContext`, and uses the explicit exact-scope/namespace-wide target rather
+than the legacy overloaded `ScopeGlobal`. Subject-reference lookup is unique or ambiguous only
+inside one memory space.
+
 ## Acceptance
 
 1. Subject-reference lookup uses an index and deterministically reports missing, unique, and
@@ -44,9 +53,17 @@ Ship the supporting indexes/migrations and keep record fields direct under
 4. Query plans and real-Postgres tests demonstrate index use and bounded page sizes on a large
    fixture.
 5. The APIs are exported in a tagged release compatible with the current Kioku cohort.
+6. Identical subject references, namespaces, and scopes in two memory spaces remain isolated in
+   real-Postgres and query-plan tests.
 
 ## Requested Deliverables
 
 - Public typed queries, migrations/indexes, and documentation.
 - Real-Postgres correctness and query-plan tests.
 - Tagged release.
+
+## Revision Notes
+
+- 2026-08-06: Made the proposed queries consume the new memory-space and explicit recall-target
+  contracts so the bounded-read work does not introduce unpartitioned APIs before those
+  MasterPlans land.

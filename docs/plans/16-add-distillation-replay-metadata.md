@@ -4,92 +4,260 @@ slug: add-distillation-replay-metadata
 title: "Add distillation replay metadata"
 kind: exec-plan
 created_at: 2026-07-07T20:46:37Z
+intention: "intention_01kzbs5w83e36t1gjtrz516yn5"
+master_plan: "docs/masterplans/4-secure-and-accountable-distillation-evidence.md"
 ---
 
 # Add distillation replay metadata
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries,
 Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.
+If durable project context changes, update or create ADRs in docs/adr/ in the same change.
 
 
 ## Purpose / Big Picture
 
-After this change, a Kioku user can inspect a distilled memory, scene, or persona and find the model-call metadata that produced it. "Replay metadata" means a durable record of each distillation model call: which phase ran, which behavior made the call, which model was used, what structured input and output were involved, and the hashes of those values. It does not mean Kioku will automatically re-run a whole agent or fork a workflow; it means Kioku can explain and later reconstruct the model-backed distillation steps without guessing.
+After this change, a Kioku user can inspect a memory, scene, or persona and find a durable,
+privacy-safe record of each model call that contributed to it. The record says which distillation
+phase ran, which logical run and retry attempt it belonged to, which model was requested and
+observed, which endpoint/transport served it, how it ended, what usage was observed, and the
+canonical commitments for the exact request, its configuration, and the response. It uses
+Baikai's provider-boundary evidence rather than guessing from Kioku's configured model.
 
-The observable behavior is a new queryable record for every L1 extraction, L1 consolidation, L2 scene generation, and L3 persona generation. A replay-backed test can run the existing distillation pipeline, then assert that rows exist in a new `kiroku.kioku_distillation_replay_calls` table and that generated artifact provenance from `docs/plans/8-add-first-class-provenance.md`, when implemented, references those rows by `replayCallIds`.
+“Replay metadata” remains metadata for audit and future reconstruction. This plan does not build
+an automatic replay executor and does not store raw prompt or output JSON by default. A user can
+query one partitioned ledger row per L1 extraction, L1 consolidation, L2 scene, and L3 persona
+call, then follow the call ID from first-class provenance in
+`docs/plans/8-add-first-class-provenance.md`.
 
 
 ## Progress
 
-- [ ] Add a durable replay metadata type and schema migration for `kioku_distillation_replay_calls`.
-- [ ] Add library functions to record replay-call rows and query them by id, session, scope, and artifact.
-- [ ] Instrument L1 extraction and consolidation so every model call writes replay metadata.
-- [ ] Instrument L2 scene and L3 persona generation so every model call writes replay metadata.
-- [ ] Link replay-call ids into artifact provenance when `docs/plans/8-add-first-class-provenance.md` has been implemented; otherwise keep this plan independently useful through the replay-call table and tests.
-- [ ] Add focused tests proving replay metadata is written with stable phase labels, model labels, input hashes, output hashes, and structured JSON.
-- [ ] Update user documentation and run the validation suite.
+- [ ] Land or consume a released Shikumi version compatible with Baikai 0.5 model-call evidence.
+- [ ] Upgrade Kioku's Baikai/Shikumi dependency cohort using released bounds and tags.
+- [ ] Add partition-aware distillation run/call types and a pg-migrate ledger schema.
+- [ ] Request strict minimum evidence and persist successful, failed, aborted, and refused calls.
+- [ ] Instrument L1 extraction/consolidation and L2/L3 generation with stable phase/artifact links.
+- [ ] Link Baikai call IDs into artifact provenance and L1 evidence-selection decisions.
+- [ ] Add retry, sink-failure, privacy, partition-isolation, and pipeline integration tests.
+- [ ] Expose inspection, retention configuration, and documentation.
 
 
 ## Surprises & Discoveries
 
-(None yet.)
+- Baikai 0.5.0.0 was released on 2026-08-05 and already supplies the evidence schema, globally
+  unique call IDs, canonical request/configuration/response commitments, requested-versus-
+  observed model fields, retry provenance, strict pre-dispatch requirements, and evidence trace
+  events. Reimplementing those features in Kioku would be less accurate because only the provider
+  adapter knows what crossed the boundary.
+- Kioku currently bounds `baikai ^>=0.4.1.0`, `baikai-claude ^>=0.4.0.1`,
+  `baikai-effectful ^>=0.3.0.2`, and `shikumi ^>=0.3.0.1`. The released Shikumi 0.3.0.1 package
+  requires Baikai `<0.5`, so simply widening Kioku's bounds cannot work.
+- Baikai commitments bind exact content without retaining it, and its configuration projection
+  removes content by allow-list. This is a better default than the original plan's durable
+  `input_json` and `output_json`, which would have duplicated secrets and rejected evidence.
 
 
 ## Decision Log
 
-- Decision: Store replay metadata in a dedicated table instead of embedding full input/output JSON in provenance.
-  Rationale: Provenance answers which evidence and artifacts caused a result. Replay metadata answers which model call produced a result and with what structured input/output. Keeping these separate avoids duplicating large JSON payloads in every memory, scene, and persona row while still allowing a user to follow links from an artifact to the exact model-call record.
-  Date: 2026-07-07
+- Decision: Adopt `Baikai.Evidence.ModelCallEvidence` and its schema version as the provider-call
+  evidence contract.
+  Rationale: The provider adapter observes the outgoing request, response identifiers, reported
+  model, and usage. Kioku cannot reconstruct those facts reliably after the call.
+  Date: 2026-08-06
 
-- Decision: The first implementation records structured inputs and outputs plus hashes, but does not provide automatic replay execution.
-  Rationale: Kioku already has model-backed distillation and replay-backed tests. Capturing enough metadata to audit and later build replay is valuable now. A runtime that automatically serves recorded outputs instead of calling an LLM would require a separate design around `Shikumi` execution and should not be hidden inside this metadata plan.
-  Date: 2026-07-07
+- Decision: Persist commitments and evidence metadata by default, not raw structured input/output.
+  Rationale: Commitments support later verification by someone who independently holds the
+  payload while avoiding a second durable secret/prompt-injection store.
+  Date: 2026-08-06
+
+- Decision: Require at least `EvidenceRequestedOnly` for distillation and treat evidence-sink
+  failure as call failure.
+  Rationale: A generated artifact must not be accepted when the audit record the caller required
+  was dropped. Higher evidence strength remains configurable per provider/deployment.
+  Date: 2026-08-06
 
 - Decision: Use phase labels `l1:extract`, `l1:consolidate`, `l2:scene`, and `l3:persona`.
-  Rationale: These labels map directly to existing modules: `Kioku.Distill.L1`, `Kioku.Distill.L2`, and `Kioku.Distill.L3`. They are short enough for queries and precise enough for tests.
+  Rationale: These labels map directly to existing Kioku modules and remain stable across model
+  providers.
   Date: 2026-07-07
+
+- Decision: Store each call in its memory space and require that space on all query paths.
+  Rationale: Model identity, commitments, timings, and error/usage metadata can reveal sensitive
+  activity even without raw prompts.
+  Date: 2026-08-06
+
+- Decision: Automatic replay and opt-in raw payload retention are separate future work.
+  Rationale: Replay execution needs a versioned program/model environment, while raw retention
+  needs encryption, access control, deletion, and data-classification policy. Neither should be
+  smuggled into an audit-ledger plan.
+  Date: 2026-08-06
 
 
 ## Outcomes & Retrospective
 
-No implementation has started yet. The expected outcome is a durable replay metadata ledger for Kioku's distillation pyramid, with tests showing that each model-backed phase writes a record and that generated artifacts can reference those records when first-class provenance is available.
+No implementation has started. The 2026-08-06 revision replaces the original bespoke JSON/hash
+design with Baikai 0.5 evidence, adds the real Shikumi cohort prerequisite, makes the ledger
+partition-aware, and changes raw payload retention from default to out of scope.
 
 
 ## Context and Orientation
 
-Kioku is a Haskell library for durable agent memory. It stores memories and sessions as event streams, then projects those streams into PostgreSQL read-model tables. A read model is a table optimized for queries; it is not the source of truth for memory events, but it is the user-visible surface for recall, inspection, and distillation artifacts.
+Kioku's model-driven distillation has four call sites. `Kioku.Distill.L1` runs extraction once
+per session pass and consolidation once per extracted atom. `Kioku.Distill.L2` generates a scene
+from active memories. `Kioku.Distill.L3` generates a persona from scenes. The runtime in
+`kioku-core/src/Kioku/Distill/Runtime.hs` hides these behind four functions returning typed
+Shikumi outputs. The existing `Kioku.DistillSpec` uses Shikumi replay fixtures for deterministic
+tests; that test helper is not production model-call evidence.
 
-Distillation is the pipeline that turns raw session evidence into compact memory. L0 is raw evidence such as session turns. L1 is atom extraction and consolidation into durable memories. L2 is scene generation from active memories. L3 is persona generation from scenes. The user-facing explanation of this pyramid lives in `docs/user/concepts.md` and `docs/user/distillation.md`.
+The authoritative dependency sources are `mori://shinzui/baikai/packages/baikai` and
+`mori://shinzui/shikumi/packages/shikumi`. Baikai 0.5 adds
+`Baikai.Evidence.ModelCallEvidence`, `EvidenceRequest`, strictness/strength types, and a
+`CallEvidence` trace event. A record contains schema/run/call/attempt identity, sanitized
+endpoint and transport, requested and observed model/thinking, provider/client response IDs,
+timing/status/error/usage, evidence strength, and three commitments. It deliberately does not
+pretend unobserved fields equal requested values.
 
-The main runtime type is `DistillRuntime` in `kioku-core/src/Kioku/Distill/Runtime.hs`. It carries the default model and four functions:
+Shikumi currently renders typed programs into Baikai `Context` and `Options`, runs the Baikai
+effect through resilient retry/routing layers, parses the `Response`, and returns only the typed
+program result to Kioku. The required upstream seam is a released version that both accepts
+Baikai 0.5 and lets the caller supply an `EvidenceRequest` plus durably consume the in-process
+evidence before the typed response is discarded. This plan must verify the actual released API;
+the signatures below are requirements, not a guess at its final names.
 
-```haskell
-data DistillRuntime = DistillRuntime
-  { config :: !LLMConfig
-  , defaultModel :: !Model
-  , runExtract :: !(ExtractInput -> IO (Either ShikumiError ExtractOutput))
-  , runConsolidate :: !(ConsolidateInput -> IO (Either ShikumiError ConsolidationDecision))
-  , runScene :: !(SceneInput -> IO (Either ShikumiError SceneOutput))
-  , runPersona :: !(PersonaInput -> IO (Either ShikumiError PersonaOutput))
-  }
-```
-
-The L1 pipeline in `kioku-core/src/Kioku/Distill/L1.hs` calls `runExtraction` once per session and `runConsolidation` once per extracted atom. It writes memories through `Kioku.Memory.record`, merges duplicates through `Kioku.Memory.merge`, and writes consolidation audit rows into `kiroku.kioku_consolidation_decisions`.
-
-The L2 pipeline in `kioku-core/src/Kioku/Distill/L2.hs` calls `runSceneDistillation` from `regenerateScene`, then writes a `SceneRow` to `kiroku.kioku_scenes`. The L3 pipeline in `kioku-core/src/Kioku/Distill/L3.hs` calls `runPersonaDistillation` from `regeneratePersona`, then writes a `PersonaRow` to `kiroku.kioku_personas`.
-
-The existing replay-backed test is `kioku-core/test/Kioku/DistillSpec.hs`. It uses `Shikumi.Trace.Replay.runLLMReplay` to provide deterministic model outputs for tests. This plan should extend that test pattern. The new feature is not the same as the test replay helper: the new feature writes production-visible metadata rows during normal distillation.
-
-This plan complements `docs/plans/8-add-first-class-provenance.md`. That plan should keep causal artifact provenance small and queryable. This plan creates the model-call records that provenance can point to through `replayCallIds`.
+Plan 23 owns evidence selection and policy version. Plan 8 owns artifact provenance. MasterPlan
+5 owns `MemorySpaceId` and the partitioned schema. The repository has no local ADR corpus yet;
+the default evidence-retention decision should become an ADR during implementation.
 
 
 ## Plan of Work
 
-### Milestone 1 - Add Replay Metadata Types And Schema
+### Milestone 1: release-compatible Baikai/Shikumi cohort
 
-Create a new module `kioku-core/src/Kioku/Distill/ReplayMetadata.hs`. It should define a stable record type for replay-call rows and helper functions for JSON hashing. A replay call is one attempt to run a model-backed distillation program. It has a phase, a scope, a behavior label, a model label, the structured input JSON, the structured output JSON when the call succeeds, and error text when the call fails.
+Use Mori to inspect both sources, then verify Hackage versions and upstream tags. Do not choose
+bounds from stale local registry metadata. If Shikumi still lacks the seam, request in its owning
+repository a minimal policy-neutral extension that:
 
-Use a type shaped like this:
+- widens its released Baikai cohort to 0.5;
+- lets a caller add an `EvidenceRequest` to each rendered `Options` value;
+- exposes each `ModelCallEvidence` in process or through a caller-supplied trace sink;
+- preserves attempt/supersedes information across Shikumi's retry/fallback loop;
+- fails a strict call when the evidence sink fails.
+
+After that release exists, update `kioku-core/kioku-core.cabal` as a coherent cohort. Compile and
+run Shikumi/Baikai surface tests before changing persistence. Do not pin an arbitrary source
+commit as a substitute for a release unless a separate decision explicitly authorizes it.
+
+### Milestone 2: partitioned run and evidence ledger
+
+Add `kioku-core/src/Kioku/Distill/ReplayMetadata.hs`. Define the four stable phases, a
+`DistillRunId`, artifact link, and a storage projection of `ModelCallEvidence`. Preserve the
+full evidence as JSON only after a field-by-field privacy review; at minimum materialize indexed
+columns for schema version, run/call/attempt/supersedes, phase, memory space, session/scope,
+artifact, requested/observed model, strength, status, and three commitments. Free-form raw
+provider bodies, prompts, and outputs are forbidden.
+
+Add the next pg-migrate file in `kioku-migrations/migrations/` after the partition migration.
+Create `kioku_distillation_model_calls` with `call_id` as the Baikai globally unique primary key
+and partition-leading indexes for run, session, scope, phase, and artifact queries. Include
+`evidence_decision_id` for L1 and `retention_mode` so a later protected payload feature can be
+distinguished without changing existing row meaning.
+
+### Milestone 3: request, persist, and retry evidence
+
+At the start of one L1/L2/L3 operation, generate a logical `DistillRunId`. For each provider
+attempt, construct `EvidenceRequest` with that run ID, one-based attempt, and the prior Baikai
+call ID in `supersedes`. Use strictness `EvidenceRequired EvidenceRequestedOnly` by default;
+allow a higher configured minimum, never a lower “no evidence” mode for production distillation.
+
+Install a sink/callback that writes the evidence row before accepting the typed result. A sink
+failure returns a distillation error and prevents artifact writes/watermark advancement. A model
+failure or pre-dispatch refusal still writes an evidence row with the honest status. If the model
+call succeeds and the later artifact transaction fails, the evidence row may remain orphaned;
+that is an accurate record of a call that occurred and the retry will produce a new attempt.
+
+### Milestone 4: instrument phases and link artifacts
+
+Instrument L1 extraction and each consolidation with session, scope, evidence-decision, and
+future artifact identifiers. Generate the consolidation decision ID before the call so the call,
+audit row, memory provenance, and merge outcome share it. Instrument L2/L3 with scene/persona IDs
+known before dispatch.
+
+Thread Baikai `callId` values into `Provenance.modelCallEvidenceIds`. Keep provenance and evidence
+independently queryable: a failed call may have no artifact, and a manual artifact may have no
+model call.
+
+### Milestone 5: inspection, retention, and validation
+
+Expose partitioned library queries by call, run, session, scope, and artifact. If CLI inspection
+is included, require `--memory-space` and print the storage-safe evidence projection as JSON.
+Document evidence strength, observed-versus-requested fields, commitments, retry chains, the
+absence of raw payloads, and retention/deletion expectations in `docs/user/distillation.md` and
+`docs/user/library-api.md`.
+
+
+## Concrete Steps
+
+Run dependency discovery and release verification from the repository root:
+
+```bash
+mori registry show shinzui/baikai --full
+mori registry show shinzui/shikumi --full
+curl -fsSL https://hackage.haskell.org/package/baikai/preferred.json
+curl -fsSL https://hackage.haskell.org/package/shikumi/preferred.json
+```
+
+After the compatible cohort is released and bounds are updated:
+
+```bash
+nix develop -c cabal build kioku-core
+nix develop -c cabal test kioku-core --test-options='-p "model-call evidence"'
+nix develop -c cabal test kioku-core --test-options='-p "Distillation pyramid"'
+nix develop -c cabal test kioku-migrations
+nix develop -c cabal test all
+```
+
+The focused suite must show one extraction call, the expected consolidation calls, one scene
+call, and one persona call, with run/call identity, phase, partition, status, and commitments.
+
+
+## Validation and Acceptance
+
+Acceptance requires all of the following:
+
+- Released dependency bounds solve as one Baikai 0.5-compatible Shikumi cohort; no unreleased
+  commit or local source override is silently required.
+- Every live distillation provider attempt produces exactly one durable evidence row, including
+  success, provider failure, pre-dispatch refusal, stream abort, and retry/fallback.
+- A strict evidence-sink failure prevents artifact writes and L1 watermark advancement.
+- Rows store no raw turn content, prompt, tool output, or model output by default. Request and
+  response commitments are non-empty and use Baikai's evidence schema.
+- Requested and observed model fields remain distinct; unobserved is never filled from requested.
+- Retry rows form a valid attempt/supersedes chain under one run ID.
+- Artifact provenance contains the corresponding Baikai call IDs; failed/orphan calls remain
+  queryable without fabricated artifact links.
+- Two spaces with identical sessions/scopes/artifact IDs cannot query each other's call rows.
+- Existing deterministic Shikumi replay tests continue to pass; they remain test fixtures rather
+  than being mislabeled production evidence.
+
+
+## Idempotence and Recovery
+
+The pg-migrate file is additive and never edits applied migrations. Insert by Baikai `call_id`.
+A duplicate is accepted only when schema version, run, attempt, phase, space, status, and
+commitments match; otherwise it is a fatal integrity error. Evidence writes happen before
+artifact acceptance, so retrying after a sink failure is safe and visible as another attempt.
+
+If the Shikumi prerequisite is unavailable, keep this plan blocked at Milestone 1; do not revive
+the old raw-JSON design. If a higher strict evidence strength is unsupported by a provider, the
+pre-dispatch refusal is expected and queryable. Operators can lower the configured requirement
+only to the plan's minimum `EvidenceRequestedOnly`, not disable evidence for production
+distillation.
+
+
+## Interfaces and Dependencies
+
+Kioku's storage-facing interface should be equivalent to:
 
 ```haskell
 data DistillReplayPhase
@@ -98,295 +266,38 @@ data DistillReplayPhase
   | ReplayL2Scene
   | ReplayL3Persona
 
-data DistillReplayCall = DistillReplayCall
-  { replayCallId :: !Text
-  , phase :: !DistillReplayPhase
-  , sessionId :: !(Maybe Text)
-  , namespace :: !Text
-  , scopeKind :: !(Maybe Text)
-  , scopeRef :: !(Maybe Text)
-  , artifactKind :: !(Maybe Text)
-  , artifactId :: !(Maybe Text)
-  , behavior :: !Text
-  , model :: !Text
-  , inputHash :: !Text
-  , outputHash :: !(Maybe Text)
-  , inputJson :: !Value
-  , outputJson :: !(Maybe Value)
-  , errorText :: !(Maybe Text)
-  , createdAt :: !UTCTime
-  }
-```
-
-`artifactKind` and `artifactId` are optional because an extraction call may produce several atoms and a failed call may produce no artifact. Use values such as `memory`, `consolidation-decision`, `scene`, and `persona` once an artifact id is known. If an artifact id is not known at first, the implementation can either update the replay row after writing the artifact or leave artifact fields null and rely on provenance or audit rows to link back.
-
-Create a migration named `kioku-migrations/sql-migrations/2026-07-07-01-00-00-kioku-distillation-replay-metadata.sql`. It should be additive and idempotent:
-
-```sql
--- codd: in-txn
-SET search_path TO kiroku, pg_catalog;
-
-CREATE TABLE IF NOT EXISTS kioku_distillation_replay_calls (
-  replay_call_id text PRIMARY KEY,
-  phase text NOT NULL,
-  session_id text,
-  namespace text NOT NULL,
-  scope_kind text,
-  scope_ref text,
-  artifact_kind text,
-  artifact_id text,
-  behavior text NOT NULL,
-  model text NOT NULL,
-  input_hash text NOT NULL,
-  output_hash text,
-  input_json jsonb NOT NULL,
-  output_json jsonb,
-  error_text text,
-  created_at timestamptz NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS kioku_distillation_replay_session_idx
-  ON kioku_distillation_replay_calls (session_id);
-
-CREATE INDEX IF NOT EXISTS kioku_distillation_replay_scope_idx
-  ON kioku_distillation_replay_calls (namespace, scope_kind, scope_ref);
-
-CREATE INDEX IF NOT EXISTS kioku_distillation_replay_phase_idx
-  ON kioku_distillation_replay_calls (phase);
-
-CREATE INDEX IF NOT EXISTS kioku_distillation_replay_artifact_idx
-  ON kioku_distillation_replay_calls (artifact_kind, artifact_id);
-```
-
-Add the new module to `kioku-core/kioku-core.cabal`. Add the migration file to the embedded migration list if `kioku-migrations/src/Kioku/Migrations.hs` requires any compile-time touch or module update.
-
-Milestone 1 acceptance: `cabal build kioku-core kioku-migrations` succeeds, and a migrated test database contains the `kioku_distillation_replay_calls` table with the columns above.
-
-### Milestone 2 - Add Recording And Query Functions
-
-In `Kioku.Distill.ReplayMetadata`, add functions that can be used by the distillation modules without exposing SQL details everywhere. The key helper should run a model call, record the input and result, and return both the call id and the original result.
-
-The shape can be:
-
-```haskell
-data ReplayCallContext = ReplayCallContext
-  { phase :: !DistillReplayPhase
-  , sessionId :: !(Maybe SessionId)
-  , scope :: !MemoryScope
-  , artifactKind :: !(Maybe Text)
-  , artifactId :: !(Maybe Text)
-  , behavior :: !Text
-  , model :: !Text
+data DistillCallContext = DistillCallContext
+  { memorySpaceId :: MemorySpaceId
+  , phase :: DistillReplayPhase
+  , runId :: DistillRunId
+  , sessionId :: Maybe SessionId
+  , scope :: MemoryScope
+  , evidenceDecisionId :: Maybe Text
+  , artifact :: Maybe ArtifactRef
   }
 
-recordReplayCall ::
-  (ToJSON input, ToJSON output, IOE :> es, Store :> es) =>
-  ReplayCallContext ->
-  input ->
-  Either ShikumiError output ->
-  Eff es Text
-
-withReplayMetadata ::
-  (ToJSON input, ToJSON output, IOE :> es, Store :> es) =>
-  ReplayCallContext ->
-  input ->
-  IO (Either ShikumiError output) ->
-  Eff es (Text, Either ShikumiError output)
+recordModelCallEvidence
+  :: DistillCallContext
+  -> ModelCallEvidence
+  -> Eff es ()
 ```
 
-`withReplayMetadata` should call the supplied `IO` action, record the row, and return the generated `replayCallId` with the original result. This keeps call sites small and ensures failed LLM calls still get metadata rows with `errorText`.
-
-Generate `replayCallId` deterministically enough for idempotent retries only if the inputs and phase are the same and that does not risk collisions. The conservative first implementation can use a fresh id derived from `genMemoryId` with a prefix such as `kioku_distillation_replay:`. If an insert hits a duplicate key during a retry, treat it as success only when the existing row has the same `inputHash`, `outputHash`, phase, and scope.
-
-For hashing, use SHA-256 over the Aeson-encoded JSON value:
-
-```haskell
-hashJson :: ToJSON a => a -> Text
-```
-
-This hash is a Kioku implementation fingerprint, not a cross-language canonical JSON promise. Record that in a code comment and in `docs/user/distillation.md`.
-
-Add query functions:
-
-```haskell
-getReplayCallById ::
-  (Store :> es) =>
-  Text ->
-  Eff es (Maybe DistillReplayCall)
-
-getReplayCallsBySession ::
-  (Store :> es) =>
-  SessionId ->
-  Eff es [DistillReplayCall]
-
-getReplayCallsByScope ::
-  (Store :> es) =>
-  MemoryScope ->
-  Eff es [DistillReplayCall]
-```
-
-Milestone 2 acceptance: a focused test can call `recordReplayCall` with a fake input and output, then read it back by id and observe matching `phase`, `inputHash`, `outputHash`, `inputJson`, and `outputJson`.
-
-### Milestone 3 - Instrument L1 Extraction And Consolidation
-
-Update `kioku-core/src/Kioku/Distill/L1.hs`. In `distillSessionL1`, wrap the `runExtraction rt input` call with `withReplayMetadata`. Use phase `ReplayL1Extract`, `sessionId = Just sid`, `scope = sessionScope session`, `artifactKind = Nothing`, `artifactId = Nothing`, `behavior = "Kioku.Distill.L1.extract"`, and `model = renderModel rt.defaultModel`.
-
-The current `buildExtractInput` returns only `ExtractInput`. If `docs/plans/8-add-first-class-provenance.md` is being implemented at the same time, replace it with a small local evidence record that also carries source turn ids and fallback memory ids. This plan only needs the `ExtractInput` for replay metadata.
-
-In `applyAtom`, wrap the `runConsolidation rt ConsolidateInput{...}` call with `withReplayMetadata`. Use phase `ReplayL1Consolidate`, the same session and scope, `artifactKind = Just "consolidation-decision"` when the decision id is generated before the call, or `Nothing` if that refactor has not happened yet. The better implementation is to coordinate with plan 8: generate the consolidation `decisionId` before applying the decision, pass it into `writeAudit`, and set `artifactId = Just decisionId` in the replay-call context.
-
-Thread the returned replay call ids into L1 provenance if `Kioku.Provenance` exists and has `replayCallIds`. If provenance is not implemented yet, tests should still assert the replay rows directly.
-
-Milestone 3 acceptance: the existing replay-backed distillation test writes at least three replay rows for the fixture: one `l1:extract` row and two `l1:consolidate` rows. The rows have the test session id, the test scope, non-empty `inputHash`, non-empty `outputHash`, non-null `inputJson`, and non-null `outputJson`.
-
-### Milestone 4 - Instrument L2 Scene And L3 Persona Generation
-
-Update `kioku-core/src/Kioku/Distill/L2.hs`. In `regenerateScene`, build the existing `SceneInput` value in a local binding before calling `runSceneDistillation`. Wrap the call with `withReplayMetadata` using phase `ReplayL2Scene`, `sessionId = Nothing`, the scene scope, `artifactKind = Just "scene"`, `artifactId = Just sceneId`, `behavior = "Kioku.Distill.L2.regenerateScene"`, and `model = renderModel rt.defaultModel`.
-
-Update `kioku-core/src/Kioku/Distill/L3.hs`. In `regeneratePersona`, build the existing `PersonaInput` value in a local binding before calling `runPersonaDistillation`. Wrap the call with `withReplayMetadata` using phase `ReplayL3Persona`, `sessionId = Nothing`, the persona scope, `artifactKind = Just "persona"`, `artifactId = Just personaId`, `behavior = "Kioku.Distill.L3.regeneratePersona"`, and `model = renderModel rt.defaultModel`.
-
-If first-class provenance is available, set `SceneRow.provenance.replayCallIds = [sceneReplayCallId]` and `PersonaRow.provenance.replayCallIds = [personaReplayCallId]` when creating or updating rows. If provenance is not available, do not block this plan; replay metadata remains queryable by `artifactKind` and `artifactId`.
-
-Milestone 4 acceptance: the replay-backed distillation test writes one `l2:scene` replay row and one `l3:persona` replay row. Both rows include the correct artifact id and a JSON output matching the deterministic replay fixture.
-
-### Milestone 5 - Expose Inspection And Document The Contract
-
-Expose replay metadata through library functions first. A CLI command is useful but not mandatory for the first implementation. If adding CLI support, add a `kioku replay-metadata` command group in `kioku-cli/src/Kioku/Cli.hs` and a new command module. Useful commands are:
-
-```text
-kioku replay-metadata call REPLAY_CALL_ID
-kioku replay-metadata session SESSION_ID
-kioku replay-metadata scope NAMESPACE[:KIND:REF]
-```
-
-Print JSON for scriptability. Keep default output concise if a row contains large `inputJson` or `outputJson`; provide a `--full` flag if needed.
-
-Update `docs/user/distillation.md` to explain that Kioku records distillation replay metadata for audit and future replay work. Explain that the hashes are generated from Kioku's current JSON encoding and are meant for detecting drift within Kioku, not as a universal canonical JSON standard. Update `docs/user/library-api.md` if the replay metadata query functions are public.
-
-Milestone 5 acceptance: a user can run a documented library query or CLI command after a distillation test/demo and see replay-call records with phase, model, hashes, and JSON payloads.
-
-
-## Concrete Steps
-
-All commands below run from the repository root:
-
-```bash
-cd /Users/shinzui/Keikaku/bokuno/kioku
-```
-
-Start by confirming the current branch state and project identity:
-
-```bash
-git status --short
-mori show --full
-```
-
-Expected `mori show --full` identifies the project as `shinzui/kioku` and lists dependencies including `shinzui/kiroku` and `shinzui/keiro`.
-
-Add `kioku-core/src/Kioku/Distill/ReplayMetadata.hs`, add it to `kioku-core/kioku-core.cabal`, and run:
-
-```bash
-cabal build kioku-core
-```
-
-Add the SQL migration and run:
-
-```bash
-cabal build kioku-migrations
-```
-
-After instrumenting L1/L2/L3, run the focused distillation test:
-
-```bash
-cabal test kioku-core --test-options='-p "Distillation pyramid"'
-```
-
-Expected final output includes:
-
-```text
-Test suite kioku-test: PASS
-```
-
-When the feature is fully wired, run:
-
-```bash
-cabal test all
-```
-
-If a CLI command is added, run it against a database populated by a distillation smoke test or demo and verify it prints valid JSON. The exact ids vary, but the output should contain a `phase`, `model`, `inputHash`, and either `outputHash` or `errorText`.
-
-
-## Validation and Acceptance
-
-The implementation is accepted when all of the following are true.
-
-First, all existing distillation behavior still works. `cabal test all` passes. The existing replay-backed test still produces one active memory, one merged memory, one scene, and one persona.
-
-Second, a replay-call row is written for each model-backed distillation phase. Extend `kioku-core/test/Kioku/DistillSpec.hs` to load rows from `kiroku.kioku_distillation_replay_calls` for the test scope and assert:
-
-```text
-count phase == "l1:extract" is 1
-count phase == "l1:consolidate" is 2
-count phase == "l2:scene" is 1
-count phase == "l3:persona" is 1
-```
-
-Third, replay rows carry useful metadata. The same test should assert every row has a non-empty `replay_call_id`, non-empty `model`, non-empty `behavior`, non-empty `input_hash`, non-null `input_json`, and either a successful `output_hash` plus `output_json` or an `error_text`. The normal replay-backed fixture should produce successful rows with output hashes.
-
-Fourth, artifact linkage works where an artifact id exists. Scene rows should be findable by `artifact_kind = 'scene'` and the generated scene id. Persona rows should be findable by `artifact_kind = 'persona'` and the generated persona id. Consolidation rows should be findable by `artifact_kind = 'consolidation-decision'` if the implementation coordinates with plan 8's early decision id generation.
-
-Fifth, if `docs/plans/8-add-first-class-provenance.md` is implemented, generated memory, scene, and persona provenance should include replay call ids. If plan 8 is not implemented yet, this acceptance point is deferred and must be recorded in this plan's Outcomes & Retrospective.
-
-
-## Idempotence and Recovery
-
-The migration must be idempotent. Use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`. Do not edit old migration files.
-
-Replay-call writes are additive. Retrying a distillation pass may create new replay-call rows, just as it may create new session or memory events depending on the existing command idempotency path. This is acceptable for the first implementation because replay metadata is an audit trail, not a deduplicated cache. If deterministic replay-call ids are added later, duplicate-key handling must compare the existing row's phase, scope, input hash, and output hash before treating the duplicate as success.
-
-If JSON encoding or hashing tests fail because field order changes, do not weaken the tests to ignore hashes entirely. Instead, assert that hashes are non-empty and that identical input values in the same process produce identical hashes. The first implementation does not promise canonical hashes across languages or all future schema versions.
-
-If first-class provenance is not yet implemented, keep all replay metadata changes buildable and testable without importing `Kioku.Provenance`. Add the provenance linkage in a later patch and record that decision in the Decision Log.
-
-If a cross-repo change to `Shikumi`, `Keiro`, or `Kiroku` appears necessary, stop and split it into a separate ExecPlan. This plan should be implementable inside Kioku using the existing `DistillRuntime`, `Hasql`, and migration patterns.
-
-
-## Interfaces and Dependencies
-
-New module:
-
-```haskell
-module Kioku.Distill.ReplayMetadata
-  ( DistillReplayPhase(..)
-  , DistillReplayCall(..)
-  , ReplayCallContext(..)
-  , phaseToText
-  , phaseFromText
-  , hashJson
-  , withReplayMetadata
-  , recordReplayCall
-  , getReplayCallById
-  , getReplayCallsBySession
-  , getReplayCallsByScope
-  )
-```
-
-The module depends on `Data.Aeson` for JSON encoding, `Crypto.Hash` for SHA-256 hashing, `Hasql.Encoders` and `Hasql.Decoders` for SQL, `Kiroku.Store.Transaction.runTransaction` for database access, `Kioku.Api.Scope` for scope columns, and `Kioku.Id` for session and generated identifiers.
-
-The distillation call sites are:
-
-```text
-kioku-core/src/Kioku/Distill/L1.hs: distillSessionL1 and applyAtom
-kioku-core/src/Kioku/Distill/L2.hs: regenerateScene
-kioku-core/src/Kioku/Distill/L3.hs: regeneratePersona
-```
-
-The existing runtime type in `kioku-core/src/Kioku/Distill/Runtime.hs` should not need a breaking API change. Use `rt.defaultModel` to derive a model label at each call site. If the `Model` type does not have a useful `Show` instance, add a local helper that renders enough stable information for tests, and record the decision here.
-
-The plan is intentionally compatible with `docs/plans/8-add-first-class-provenance.md`. When provenance exists, attach replay-call ids to generated artifacts. When provenance does not exist, replay metadata remains useful through direct queries.
-
-Every commit made while implementing this plan must include:
+The exact Shikumi seam is determined in its owning repository, but it must carry Baikai's
+`EvidenceRequest` and return/deliver `ModelCallEvidence` without rebuilding it from a typed
+Shikumi output. Kioku depends on `mori://shinzui/baikai/packages/baikai` for the evidence
+vocabulary, `mori://shinzui/shikumi/packages/shikumi` for typed program execution, plan 23 for
+evidence-selection IDs, plan 8 for artifact provenance, and MasterPlan 5 for `MemorySpaceId`.
+
+Every implementation commit must include:
 
 ```text
 ExecPlan: docs/plans/16-add-distillation-replay-metadata.md
 ```
+
+
+## Revision Notes
+
+- 2026-08-06: Reworked the unimplemented 2026-07-07 plan after Baikai 0.5 shipped model-call
+  evidence. Replaced bespoke raw input/output JSON and non-canonical hashes with provider-boundary
+  evidence and commitments; added the released Shikumi cohort prerequisite, strict sink failure,
+  retry provenance, memory-space isolation, and default no-raw-payload retention.

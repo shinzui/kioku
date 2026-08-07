@@ -79,7 +79,7 @@ testFindAwaitingByCorrelationKey =
     sid2 <- startFixture
     parkFixture sid1 "approval_req_1"
     parkFixture sid2 "approval_req_2"
-    found <- Session.getAwaitingByCorrelationKey testNamespace "approval_req_1" >>= liftEither "getAwaitingByCorrelationKey"
+    found <- Session.getAwaitingByCorrelationKey testSpace testNamespace "approval_req_1" >>= liftEither "getAwaitingByCorrelationKey"
     liftIO $
       assertEqual "only matching parked session is returned" [idText sid1] (map (.sessionId) found)
 
@@ -272,7 +272,7 @@ getExisting ::
   SessionId ->
   Eff es SessionRow
 getExisting sid = do
-  result <- Session.getById sid >>= liftEither "Session.getById"
+  result <- Session.getById testSpace sid >>= liftEither "Session.getById"
   case result of
     Nothing -> liftIO (assertFailure ("missing session row " <> show (idText sid)))
     Just row -> pure row

@@ -39,6 +39,7 @@ import Keiro.ReadModel (ReadModelError)
 import Kioku.Api.Access
   ( MemoryAccessContext,
     MemoryPermission (..),
+    MemorySpaceId,
     memoryContextAllows,
     memoryContextRecordedActor,
     memoryContextSpace,
@@ -57,6 +58,7 @@ import Kioku.Id (MemoryId, SessionId, idText, parseIdLenient)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
 import Kioku.Memory.ReadModel (MemoryRow (..))
+import Kioku.Partition (memorySpaceParam)
 import Kioku.Prelude
 import Kioku.Recall qualified as Recall
 import Kioku.Recall.Capability (VectorCapability)
@@ -68,8 +70,13 @@ import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Shikumi.Schema.Types (field, unField)
 
+-- | How a pass finds memories that a newly extracted atom might merge into.
+--
+-- The memory space is an argument rather than something the finder closes over, so a finder
+-- value can be built once at startup and still be used by passes running in different spaces.
 newtype FindMergeCandidates es = FindMergeCandidates
-  { runFindMergeCandidates :: MemoryScope -> Text -> Eff es (Either ReadModelError [MemoryRecord])
+  { runFindMergeCandidates ::
+      MemorySpaceId -> MemoryScope -> Text -> Eff es (Either ReadModelError [MemoryRecord])
   }
 
 data L1Error
@@ -125,14 +132,16 @@ data AppliedDecision = AppliedDecision
   }
 
 data WatermarkRow = WatermarkRow
-  { sessionId :: !Text,
+  { memorySpaceId :: !MemorySpaceId,
+    sessionId :: !Text,
     lastTurnIndex :: !Int32,
     distilledAt :: !UTCTime
   }
   deriving stock (Generic, Eq, Show)
 
 data AuditRow = AuditRow
-  { decisionId :: !Text,
+  { memorySpaceId :: !MemorySpaceId,
+    decisionId :: !Text,
     sessionId :: !Text,
     namespace :: !Text,
     scopeKind :: !(Maybe Text),
@@ -167,21 +176,21 @@ distillSessionL1 context mode rt finder sid
   | not (memoryContextAllows MemoryDistill context) =
       pure (Left (L1NotPermitted MemoryDistill))
   | otherwise = do
-      sessionResult <- Session.getById sid
+      sessionResult <- Session.getById space sid
       case sessionResult of
         Left err -> pure (Left (L1SessionReadFailed err))
         Right Nothing -> pure (Left (L1SessionNotFound sid))
         Right (Just session) -> do
-          turnsResult <- Session.getTurns sid
+          turnsResult <- Session.getTurns space sid
           case turnsResult of
             Left err -> pure (Left (L1TurnReadFailed err))
             Right turns -> do
               let maxTurnIndex = maximum (0 : fmap (.turnIndex) turns)
-              upToDate <- watermarkCovers mode sid maxTurnIndex
+              upToDate <- watermarkCovers mode space sid maxTurnIndex
               if upToDate
                 then pure (Right L1SkippedUpToDate)
                 else do
-                  inputResult <- buildExtractInput sid session turns
+                  inputResult <- buildExtractInput space sid session turns
                   case inputResult of
                     Left err -> pure (Left err)
                     Right input -> do
@@ -197,9 +206,11 @@ distillSessionL1 context mode rt finder sid
                           case foldResult of
                             Left err -> pure (Left err)
                             Right summary -> do
-                              writeWatermark sid maxTurnIndex
+                              writeWatermark space sid maxTurnIndex
                               pure (Right (L1Distilled summary))
   where
+    space = memoryContextSpace context
+
     stepAtom _ _ (Left err) _ = pure (Left err)
     stepAtom maxTurnIndex session (Right summary) atom =
       applyAtom context rt finder sid session maxTurnIndex summary atom
@@ -207,45 +218,51 @@ distillSessionL1 context mode rt finder sid
 watermarkCovers ::
   (Store :> es) =>
   L1RunMode ->
+  MemorySpaceId ->
   SessionId ->
   Int ->
   Eff es Bool
-watermarkCovers IgnoreWatermark _ _ = pure False
-watermarkCovers RespectWatermark sid maxTurnIndex = do
-  stored <- readWatermark sid
+watermarkCovers IgnoreWatermark _ _ _ = pure False
+watermarkCovers RespectWatermark space sid maxTurnIndex = do
+  stored <- readWatermark space sid
   pure (maybe False (>= maxTurnIndex) stored)
 
 readWatermark ::
   (Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   Eff es (Maybe Int)
-readWatermark sid =
+readWatermark space sid =
   runTransaction $
-    fmap fromIntegral <$> Tx.statement (idText sid) selectWatermarkStmt
+    fmap fromIntegral <$> Tx.statement (WatermarkKey space (idText sid)) selectWatermarkStmt
 
 writeWatermark ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   Int ->
   Eff es ()
-writeWatermark sid maxTurnIndex = do
+writeWatermark space sid maxTurnIndex = do
   now <- liftIO getCurrentTime
   runTransaction $
     Tx.statement
       WatermarkRow
-        { sessionId = idText sid,
+        { memorySpaceId = space,
+          sessionId = idText sid,
           lastTurnIndex = fromIntegral maxTurnIndex,
           distilledAt = now
         }
       upsertWatermarkStmt
+
+data WatermarkKey = WatermarkKey !MemorySpaceId !Text
 
 scopedScanCandidates ::
   (IOE :> es, Store :> es) =>
   Int ->
   FindMergeCandidates es
 scopedScanCandidates limit =
-  FindMergeCandidates \scope _query ->
-    fmap (take (max 0 limit)) <$> Recall.getActiveByScope scope
+  FindMergeCandidates \space scope _query ->
+    fmap (take (max 0 limit)) <$> Recall.getActiveByScope space scope
 
 recallCandidates ::
   (IOE :> es, Store :> es) =>
@@ -254,13 +271,14 @@ recallCandidates ::
   Int ->
   FindMergeCandidates es
 recallCandidates model capability limit =
-  FindMergeCandidates \scope query -> do
+  FindMergeCandidates \space scope query -> do
     hits <-
       Recall.recall
         model
         capability
         Recall.RecallRequest
-          { scope,
+          { memorySpaceId = space,
+            scope,
             query,
             strategy = Recall.Hybrid,
             maxResults = max 0 limit
@@ -269,14 +287,15 @@ recallCandidates model capability limit =
 
 buildExtractInput ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   SessionRow ->
   [TurnRow] ->
   Eff es (Either L1Error ExtractInput)
-buildExtractInput sid session turns = do
+buildExtractInput space sid session turns = do
   memoryTextResult <-
     if null turns
-      then fallbackMemoryText sid (sessionScope session)
+      then fallbackMemoryText space sid (sessionScope session)
       else pure (Right (renderTurns turns))
   pure do
     memoryText <- memoryTextResult
@@ -289,17 +308,18 @@ buildExtractInput sid session turns = do
 
 fallbackMemoryText ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   MemoryScope ->
   Eff es (Either L1Error Text)
-fallbackMemoryText sid scope = do
-  bySession <- Recall.getBySession sid
+fallbackMemoryText space sid scope = do
+  bySession <- Recall.getBySession space sid
   case bySession of
     Left err -> pure (Left (L1MemoryReadFailed err))
     Right rows
       | not (null rows) -> pure (Right (renderMemories rows))
       | otherwise -> do
-          byScope <- Recall.getActiveByScope scope
+          byScope <- Recall.getActiveByScope space scope
           pure $
             case byScope of
               Left err -> Left (L1MemoryReadFailed err)
@@ -317,7 +337,11 @@ applyAtom ::
   ExtractedAtom ->
   Eff es (Either L1Error L1Summary)
 applyAtom context rt finder sid session maxTurnIndex summary atom = do
-  candidatesResult <- finder.runFindMergeCandidates (sessionScope session) (unField atom.content)
+  candidatesResult <-
+    finder.runFindMergeCandidates
+      (memoryContextSpace context)
+      (sessionScope session)
+      (unField atom.content)
   case candidatesResult of
     Left err -> pure (Left (L1MemoryReadFailed err))
     Right candidates -> do
@@ -337,7 +361,7 @@ applyAtom context rt finder sid session maxTurnIndex summary atom = do
           case appliedResult of
             Left err -> pure (Left err)
             Right applied -> do
-              writeAudit sid session atom maxTurnIndex decision applied
+              writeAudit (memoryContextSpace context) sid session atom maxTurnIndex decision applied
               pure (Right (addAppliedDecision summary applied))
 
 -- | Apply a consolidation decision, writing nothing until the whole plan for
@@ -390,14 +414,14 @@ applyDecision context sid session atom decision =
       if not (null requested) && null nonSelf
         then pure (Right (appliedSkip (Just selfTargetNote)))
         else do
-          winnerRow <- Memory.getMemoryRowById winner
+          winnerRow <- Memory.getMemoryRowById (memoryContextSpace context) winner
           case winnerRow of
             Left err -> pure (Left (L1MemoryReadFailed err))
             Right (Just row)
               | row.status /= "active" ->
                   pure (Right (appliedSkip (Just (retiredWinnerNote row.status))))
             _ -> do
-              resolved <- resolveExistingTargets nonSelf
+              resolved <- resolveExistingTargets (memoryContextSpace context) nonSelf
               case resolved of
                 Left err -> pure (Left err)
                 Right [] -> storeWinner (Just degradeNote) Nothing
@@ -428,14 +452,15 @@ applyDecision context sid session atom decision =
 -- wedging the timer and leaking one memory per retry.
 resolveExistingTargets ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   [MemoryId] ->
   Eff es (Either L1Error [MemoryId])
-resolveExistingTargets =
+resolveExistingTargets space =
   foldM step (Right [])
   where
     step (Left err) _ = pure (Left err)
     step (Right acc) mid = do
-      row <- Memory.getMemoryRowById mid
+      row <- Memory.getMemoryRowById space mid
       pure $
         case row of
           Left err -> Left (L1MemoryReadFailed err)
@@ -497,6 +522,7 @@ requireMemoryWrite = \case
 -- over new turns still writes its own.
 writeAudit ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   SessionRow ->
   ExtractedAtom ->
@@ -504,12 +530,13 @@ writeAudit ::
   ConsolidationDecision ->
   AppliedDecision ->
   Eff es ()
-writeAudit sid session atom maxTurnIndex decision applied = do
+writeAudit space sid session atom maxTurnIndex decision applied = do
   now <- liftIO getCurrentTime
   runTransaction $
     Tx.statement
       AuditRow
-        { decisionId = l1AuditKey sid maxTurnIndex (unField atom.content),
+        { memorySpaceId = space,
+          decisionId = l1AuditKey sid maxTurnIndex (unField atom.content),
           sessionId = idText sid,
           namespace = scopeNamespaceText (sessionScope session),
           scopeKind = scopeKindText (sessionScope session),
@@ -635,15 +662,18 @@ encodeTargetIds :: [Text] -> Text
 encodeTargetIds =
   TE.decodeUtf8 . BL.toStrict . Aeson.encode
 
-selectWatermarkStmt :: Statement Text (Maybe Int32)
+selectWatermarkStmt :: Statement WatermarkKey (Maybe Int32)
 selectWatermarkStmt =
   preparable
     """
     SELECT last_turn_index
     FROM kioku_l1_watermarks
-    WHERE session_id = $1
+    WHERE memory_space_id = $1
+      AND session_id = $2
     """
-    (E.param (E.nonNullable E.text))
+    ( ((\(WatermarkKey space _) -> space) >$< memorySpaceParam)
+        <> ((\(WatermarkKey _ sessionId) -> sessionId) >$< E.param (E.nonNullable E.text))
+    )
     (D.rowMaybe (D.column (D.nonNullable D.int4)))
 
 -- | @GREATEST@ keeps the watermark monotonic: a slow pass over turns 1-3 that
@@ -652,8 +682,8 @@ upsertWatermarkStmt :: Statement WatermarkRow ()
 upsertWatermarkStmt =
   preparable
     """
-    INSERT INTO kioku_l1_watermarks (session_id, last_turn_index, distilled_at)
-    VALUES ($1, $2, $3)
+    INSERT INTO kioku_l1_watermarks (memory_space_id, session_id, last_turn_index, distilled_at)
+    VALUES ($1, $2, $3, $4)
     ON CONFLICT (session_id) DO UPDATE
       SET last_turn_index =
             GREATEST(kioku_l1_watermarks.last_turn_index, EXCLUDED.last_turn_index),
@@ -664,7 +694,8 @@ upsertWatermarkStmt =
 
 watermarkRowEncoder :: E.Params WatermarkRow
 watermarkRowEncoder =
-  ((\row -> row.sessionId) >$< E.param (E.nonNullable E.text))
+  ((\row -> row.memorySpaceId) >$< memorySpaceParam)
+    <> ((\row -> row.sessionId) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.lastTurnIndex) >$< E.param (E.nonNullable E.int4))
     <> ((\row -> row.distilledAt) >$< E.param (E.nonNullable E.timestamptz))
 
@@ -673,9 +704,9 @@ insertAuditStmt =
   preparable
     """
     INSERT INTO kioku_consolidation_decisions
-      (decision_id, session_id, namespace, scope_kind, scope_ref, candidate_content,
-       decision, target_ids, result_memory_id, rationale, decided_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
+      (memory_space_id, decision_id, session_id, namespace, scope_kind, scope_ref,
+       candidate_content, decision, target_ids, result_memory_id, rationale, decided_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
     ON CONFLICT (decision_id) DO NOTHING
     """
     auditRowEncoder
@@ -683,7 +714,8 @@ insertAuditStmt =
 
 auditRowEncoder :: E.Params AuditRow
 auditRowEncoder =
-  ((\row -> row.decisionId) >$< E.param (E.nonNullable E.text))
+  ((\row -> row.memorySpaceId) >$< memorySpaceParam)
+    <> ((\row -> row.decisionId) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.sessionId) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.namespace) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.scopeKind) >$< E.param (E.nullable E.text))

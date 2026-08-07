@@ -58,6 +58,7 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
+import Kioku.Api.Access (MemorySpaceId)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), MemoryType, memoryTypeToText)
 import Kioku.Id (MemoryId, SessionId, idText)
@@ -75,6 +76,7 @@ import Kioku.Memory.ReadModel
     memoriesByTypeReadModel,
     memoryByIdReadModel,
   )
+import Kioku.Partition (memorySpaceParam)
 import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..))
 import Kiroku.Store.Effect (Store)
@@ -105,8 +107,14 @@ data RecallStrategy = Keyword | Embedding | Hybrid
 -- scope; scoped reads are exact-scope. A 'ScopeGlobal' request returns every active memory in
 -- the namespace, entity-scoped rows included — the scope filter simply vanishes. That is the
 -- opposite of what 'getActiveByScope' does with the same value. See docs/user/recall.md.
+--
+-- __The memory space is not part of that asymmetry.__ It is an equality predicate on every
+-- channel and it never widens, whatever the scope says: \"namespace-wide\" means every scope in
+-- one namespace of /this space/. Pass 'Kioku.Api.Access.memoryContextSpace' of the context that
+-- authorized the recall.
 data RecallRequest = RecallRequest
-  { -- | 'ScopeGlobal' searches the whole namespace; an entity scope matches exactly.
+  { memorySpaceId :: !MemorySpaceId,
+    -- | 'ScopeGlobal' searches the whole namespace; an entity scope matches exactly.
     scope :: !MemoryScope,
     query :: !Text,
     strategy :: !RecallStrategy,
@@ -131,6 +139,7 @@ data RecallExecutionPlan = RecallExecutionPlan
 
 data RecallCandidateQuery = RecallCandidateQuery
   { query :: !Text,
+    memorySpaceId :: !MemorySpaceId,
     namespace :: !Text,
     scopeKind :: !(Maybe Text),
     scopeRef :: !(Maybe Text),
@@ -140,6 +149,7 @@ data RecallCandidateQuery = RecallCandidateQuery
 
 data VectorCandidateQuery = VectorCandidateQuery
   { queryVector :: !Text,
+    memorySpaceId :: !MemorySpaceId,
     namespace :: !Text,
     scopeKind :: !(Maybe Text),
     scopeRef :: !(Maybe Text),
@@ -372,6 +382,7 @@ candidateQuery :: RecallRequest -> RecallCandidateQuery
 candidateQuery req =
   RecallCandidateQuery
     { query = req.query,
+      memorySpaceId = req.memorySpaceId,
       namespace = scopeNamespaceText req.scope,
       scopeKind = scopeKindText req.scope,
       scopeRef = scopeRefText req.scope,
@@ -382,6 +393,7 @@ vectorCandidateQuery :: RecallRequest -> Vector Double -> VectorCandidateQuery
 vectorCandidateQuery req queryVector =
   VectorCandidateQuery
     { queryVector = vectorLiteral queryVector,
+      memorySpaceId = req.memorySpaceId,
       namespace = scopeNamespaceText req.scope,
       scopeKind = scopeKindText req.scope,
       scopeRef = scopeRefText req.scope,
@@ -533,11 +545,12 @@ selectFtsCandidatesStmt =
         <> """
             FROM kiroku.kioku_memories
            WHERE status = 'active'
-             AND namespace = $2
-             AND (($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4))
+             AND memory_space_id = $2
+             AND namespace = $3
+             AND (($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))
              AND content_tsv @@ websearch_to_tsquery('english', $1)
            ORDER BY ts_rank(content_tsv, websearch_to_tsquery('english', $1)) DESC, created_at DESC
-           LIMIT $5
+           LIMIT $6
            """
     )
     recallCandidateQueryEncoder
@@ -568,11 +581,12 @@ selectVectorCandidatesStmt =
         <> """
             FROM kiroku.kioku_memories
            WHERE status = 'active'
-             AND namespace = $2
-             AND (($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4))
+             AND memory_space_id = $2
+             AND namespace = $3
+             AND (($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))
              AND embedding IS NOT NULL
            ORDER BY embedding <=> $1::vector
-           LIMIT $5
+           LIMIT $6
            """
     )
     vectorCandidateQueryEncoder
@@ -603,12 +617,13 @@ selectVectorCandidatesExactStmt =
             FROM (SELECT *
                     FROM kiroku.kioku_memories
                    WHERE status = 'active'
-                     AND namespace = $2
-                     AND (($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4))
+                     AND memory_space_id = $2
+                     AND namespace = $3
+                     AND (($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))
                      AND embedding IS NOT NULL
                   OFFSET 0) AS scoped
            ORDER BY embedding <=> $1::vector
-           LIMIT $5
+           LIMIT $6
            """
     )
     vectorCandidateQueryEncoder
@@ -617,6 +632,7 @@ selectVectorCandidatesExactStmt =
 recallCandidateQueryEncoder :: E.Params RecallCandidateQuery
 recallCandidateQueryEncoder =
   ((\q -> q.query) >$< E.param (E.nonNullable E.text))
+    <> ((\q -> q.memorySpaceId) >$< memorySpaceParam)
     <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
     <> ((\q -> q.scopeKind) >$< E.param (E.nullable E.text))
     <> ((\q -> q.scopeRef) >$< E.param (E.nullable E.text))
@@ -625,6 +641,7 @@ recallCandidateQueryEncoder =
 vectorCandidateQueryEncoder :: E.Params VectorCandidateQuery
 vectorCandidateQueryEncoder =
   ((\q -> q.queryVector) >$< E.param (E.nonNullable E.text))
+    <> ((\q -> q.memorySpaceId) >$< memorySpaceParam)
     <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
     <> ((\q -> q.scopeKind) >$< E.param (E.nullable E.text))
     <> ((\q -> q.scopeRef) >$< E.param (E.nullable E.text))
@@ -771,55 +788,82 @@ ellipsis = "..."
 -- not by this. For the read-side equivalent of recall's breadth, use 'getActiveInNamespace'.
 getActiveByScope ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   MemoryScope ->
   Eff es (Either ReadModelError [MemoryRecord])
-getActiveByScope scope =
+getActiveByScope space scope =
   runQueryWith
     Nothing
     Eventual
     memoriesByScopeReadModel
-    (MemoriesByScopeQuery (scopeNamespaceText scope) (scopeKindText scope) (scopeRefText scope))
+    MemoriesByScopeQuery
+      { memorySpaceId = space,
+        namespace = scopeNamespaceText scope,
+        scopeKind = scopeKindText scope,
+        scopeRef = scopeRefText scope
+      }
 
 -- | Every active memory in the namespace, whatever its scope. This is the read-side
--- equivalent of what 'recall' does with a global scope.
+-- equivalent of what 'recall' does with a global scope — inside one memory space.
 getActiveInNamespace ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   Namespace ->
   Eff es (Either ReadModelError [MemoryRecord])
-getActiveInNamespace (Namespace ns) =
-  runQueryWith Nothing Eventual memoriesByNamespaceReadModel (MemoriesByNamespaceQuery ns)
+getActiveInNamespace space (Namespace ns) =
+  runQueryWith
+    Nothing
+    Eventual
+    memoriesByNamespaceReadModel
+    MemoriesByNamespaceQuery {memorySpaceId = space, namespace = ns}
 
 -- | The global bucket of a namespace: rows recorded with no entity scope. Not the same as a
 -- 'recall' scoped to the namespace, which also returns entity-scoped rows.
 getGlobal ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   Namespace ->
   Eff es (Either ReadModelError [MemoryRecord])
-getGlobal ns =
-  getActiveByScope (ScopeGlobal ns)
+getGlobal space ns =
+  getActiveByScope space (ScopeGlobal ns)
 
 getById ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   MemoryId ->
   Eff es (Either ReadModelError (Maybe MemoryRecord))
-getById mid =
+getById space mid =
   fmap (fmap (fmap memoryRowToRecord)) $
-    runQueryWith Nothing Eventual memoryByIdReadModel (MemoryByIdQuery (idText mid))
+    runQueryWith
+      Nothing
+      Eventual
+      memoryByIdReadModel
+      MemoryByIdQuery {memorySpaceId = space, memoryId = idText mid}
 
 getBySession ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   Eff es (Either ReadModelError [MemoryRecord])
-getBySession sid =
-  runQueryWith Nothing Eventual memoriesBySessionReadModel (MemoriesBySessionQuery (idText sid))
+getBySession space sid =
+  runQueryWith
+    Nothing
+    Eventual
+    memoriesBySessionReadModel
+    MemoriesBySessionQuery {memorySpaceId = space, sessionId = idText sid}
 
 getByType ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   Namespace ->
   MemoryType ->
   Eff es (Either ReadModelError [MemoryRecord])
-getByType (Namespace ns) mt =
-  runQueryWith Nothing Eventual memoriesByTypeReadModel (MemoriesByTypeQuery ns (memoryTypeToText mt))
+getByType space (Namespace ns) mt =
+  runQueryWith
+    Nothing
+    Eventual
+    memoriesByTypeReadModel
+    MemoriesByTypeQuery {memorySpaceId = space, namespace = ns, memoryType = memoryTypeToText mt}
 
 memoryRowToRecord :: MemoryRow -> MemoryRecord
 memoryRowToRecord row =

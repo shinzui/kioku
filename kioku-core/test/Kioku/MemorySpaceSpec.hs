@@ -44,7 +44,8 @@ import Kioku.Session qualified as Session
 import Kioku.Session.Domain (RecordTurnData (..), SessionEvent (..), StartSessionData (..))
 import Kioku.Session.EventStream (parseSessionEvent, sessionStream)
 import Kioku.SpaceFixtures
-  ( otherActorPrincipal,
+  ( legacyContext,
+    otherActorPrincipal,
     otherContext,
     otherSpace,
     testActor,
@@ -66,9 +67,10 @@ tests =
   testGroup
     "Memory space isolation"
     [ testGroup
-        "the aggregate refuses a command from another space"
+        "a command from another space cannot see, let alone change, the row"
         [ testCase "a memory cannot be archived from another space" testCrossSpaceArchiveRejected,
-          testCase "a turn cannot be appended from another space" testCrossSpaceTurnRejected
+          testCase "a turn cannot be appended from another space" testCrossSpaceTurnRejected,
+          testCase "an id in another space is indistinguishable from one that does not exist" testCrossSpaceIsNotAnOracle
         ],
       testGroup
         "the context and the command must agree"
@@ -87,9 +89,16 @@ tests =
     ]
 
 -- | The load-bearing case. A caller legitimately authorized for @space_other@ presents the id
--- of a memory that lives in @space_test@. The read-model precheck cannot tell the difference —
--- it has no space column yet — so the refusal has to come from the aggregate, and the proof is
--- that the memory's event stream still contains exactly one event.
+-- of a memory that lives in @space_test@.
+--
+-- The refusal now arrives before the aggregate is reached at all: the read-model precheck is
+-- scoped to the caller's own space, so the row is simply not there and the write fails with
+-- 'Memory.MemoryNotFound'. The aggregate's guard is still behind it and would refuse the
+-- command too — see 'testPayloadSpaceMismatch' for the context check and the plan's Decision
+-- Log for why the guard lives in the state machine — but nothing gets that far.
+--
+-- The proof is unchanged: the memory's event stream still contains exactly one event and the
+-- row is still active.
 testCrossSpaceArchiveRejected :: Assertion
 testCrossSpaceArchiveRejected =
   withApp do
@@ -105,13 +114,43 @@ testCrossSpaceArchiveRejected =
             archivedAt = now
           }
     liftIO case result of
-      Left (Memory.MemoryCommandRejected _) -> pure ()
-      other -> assertFailure ("expected the aggregate to reject the archive, got " <> show other)
+      Left Memory.MemoryNotFound -> pure ()
+      other -> assertFailure ("expected the archive to be refused, got " <> show other)
     events <- readMemoryEvents mid
     row <- getMemory mid
     liftIO do
       assertEqual "no event was appended" ["MemoryRecorded"] (memoryEventName <$> events)
       assertEqual "the memory is still active" "active" row.status
+
+-- | The residual this plan closed.
+--
+-- Before the read models carried a memory space, the write-path precheck compared against a
+-- row it could see whatever space that row was in, so an idempotent answer told a caller in
+-- another space that the id existed and whether it was still active. Now the two cases are
+-- byte-identical, which is the only way \"you may not look here\" and \"there is nothing here\"
+-- can stay indistinguishable.
+testCrossSpaceIsNotAnOracle :: Assertion
+testCrossSpaceIsNotAnOracle =
+  withApp do
+    real <- recordFixture testContext "cross-space oracle"
+    absent <- liftIO genMemoryId
+    now <- liftIO getCurrentTime
+    let archiveFrom mid =
+          Memory.archiveWithContext
+            otherContext
+            ArchiveMemoryData
+              { memoryId = mid,
+                memorySpaceId = otherSpace,
+                actorPrincipal = otherActorPrincipal,
+                archivedAt = now
+              }
+    existsElsewhere <- archiveFrom real
+    doesNotExist <- archiveFrom absent
+    liftIO $
+      assertEqual
+        "an id in another space answers exactly as an id that does not exist"
+        (show doesNotExist)
+        (show existsElsewhere)
 
 testCrossSpaceTurnRejected :: Assertion
 testCrossSpaceTurnRejected =
@@ -135,8 +174,8 @@ testCrossSpaceTurnRejected =
             recordedAt = now
           }
     liftIO case result of
-      Left (Session.SessionCommandRejected _) -> pure ()
-      other -> assertFailure ("expected the aggregate to reject the turn, got " <> show other)
+      Left Session.SessionNotFound -> pure ()
+      other -> assertFailure ("expected the turn to be refused, got " <> show other)
     events <- readSessionEvents sid
     liftIO $
       assertEqual "no turn was appended" ["SessionStarted"] (sessionEventName <$> events)
@@ -157,7 +196,7 @@ testPayloadSpaceMismatch =
         assertEqual "names the requested space" otherSpace requested
         assertEqual "names the authorized space" testSpace authorized
       other -> assertFailure ("expected MemorySpaceMismatch, got " <> show other)
-    stored <- Memory.getMemoryRowById mid
+    stored <- Memory.getMemoryRowById testSpace mid
     liftIO case stored of
       Right Nothing -> pure ()
       other -> assertFailure ("nothing should have been written, got " <> show other)
@@ -238,8 +277,9 @@ testWrapperCannotTouchOtherSpace =
   withApp do
     mid <- recordFixture testContext "not reachable from the wrapper"
     now <- liftIO getCurrentTime
-    -- Named honestly: the only payload the wrapper accepts claims the legacy space, and the
-    -- aggregate knows this memory is not in it.
+    -- Named honestly: the only payload the wrapper accepts claims the legacy space, and this
+    -- memory is not in it — so the wrapper's own lookup, scoped to the legacy space, does not
+    -- find it and the write is refused before the aggregate is consulted.
     result <-
       Memory.archive
         ArchiveMemoryData
@@ -249,8 +289,8 @@ testWrapperCannotTouchOtherSpace =
             archivedAt = now
           }
     liftIO case result of
-      Left (Memory.MemoryCommandRejected _) -> pure ()
-      other -> assertFailure ("expected the aggregate to reject the archive, got " <> show other)
+      Left Memory.MemoryNotFound -> pure ()
+      other -> assertFailure ("expected the archive to be refused, got " <> show other)
     row <- getMemory mid
     liftIO $ assertEqual "the memory is still active" "active" row.status
 
@@ -345,9 +385,6 @@ narrowContext space permissions =
       Internal.decisionToken = Nothing
     }
 
-legacyContext :: MemoryAccessContext
-legacyContext = Internal.assumeAuthorizedMemoryContext legacyMemorySpaceId testActor
-
 testScope :: MemoryScope
 testScope = ScopeEntity (Namespace "kioku_test") (ScopeKind "space") "isolation"
 
@@ -364,7 +401,7 @@ withApp action =
 
 getMemory :: (IOE :> es, Store :> es) => MemoryId -> Eff es MemoryRow
 getMemory mid = do
-  result <- Memory.getMemoryRowById mid
+  result <- Memory.getMemoryRowById testSpace mid
   case result of
     Right (Just row) -> pure row
     other -> liftIO (assertFailure ("missing memory row: " <> show other))

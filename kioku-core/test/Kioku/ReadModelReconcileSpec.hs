@@ -56,19 +56,19 @@ testStaleThenReconcile :: Assertion
 testStaleThenReconcile =
   withApp \sid -> do
     -- Application startup registered every model at the identity the code declares.
-    healthy <- Session.getById sid
+    healthy <- Session.getById testSpace sid
     liftIO $ assertBool "a fresh database serves session queries" (isRight healthy)
 
-    downgradeSessionByIdTo 2 "kioku-session-v2"
+    downgradeSessionByIdTo 3 "kioku-session-v3"
 
-    stale <- Session.getById sid
+    stale <- Session.getById testSpace sid
     liftIO case stale of
       Left (ReadModelStaleSchema name expectedVersion foundVersion expectedHash foundHash) -> do
         assertEqual "the stale model" "kioku-session-by-id" name
-        assertEqual "expected version" 3 expectedVersion
-        assertEqual "found version" 2 foundVersion
-        assertEqual "expected hash" "kioku-session-v3" expectedHash
-        assertEqual "found hash" "kioku-session-v2" foundHash
+        assertEqual "expected version" 4 expectedVersion
+        assertEqual "found version" 3 foundVersion
+        assertEqual "expected hash" "kioku-session-v4" expectedHash
+        assertEqual "found hash" "kioku-session-v3" foundHash
       other ->
         assertFailure
           ("expected the query to fail closed on the stale row, got " <> show (() <$ other))
@@ -94,7 +94,7 @@ testStaleThenReconcile =
           outcome /= AlreadyCurrent
         ]
 
-    repaired <- Session.getById sid
+    repaired <- Session.getById testSpace sid
     liftIO $ assertBool "the query works again" (isRight repaired)
 
 -- | A second pass must write nothing. If it reported 'Reconciled' again, the reconciler
@@ -103,7 +103,7 @@ testStaleThenReconcile =
 testIdempotent :: Assertion
 testIdempotent =
   withApp \sid -> do
-    void (Session.getById sid)
+    void (Session.getById testSpace sid)
     _ <- reconcileReadModelRegistry
     second <- reconcileReadModelRegistry
     liftIO $

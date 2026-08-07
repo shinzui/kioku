@@ -19,7 +19,7 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), scheduleTimerTx)
-import Kioku.Api.Access (MemorySpaceId)
+import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId, legacyMemorySpaceId, memoryContextRecordedActor)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L1 (scopedScanCandidates)
@@ -32,7 +32,7 @@ import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
-import Kioku.SpaceFixtures (testActorPrincipal, testContext, testContextProvider, testSpace)
+import Kioku.SpaceFixtures (legacyContext, testContext, testContextProvider, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -49,6 +49,7 @@ tests =
     [ testCase "permanent failure dead-letters the timer" testPermanentFailureDeadLetters,
       testCase "transient failure reschedules with backoff" testTransientFailureReschedules,
       testCase "a timer scheduled before memory spaces fires in the legacy space" testPrePartitionPayloadFiresInLegacySpace,
+      testCase "a pre-partition timer cannot reach a session in another space" testPrePartitionPayloadCannotReachAnotherSpace,
       testCase "a malformed L1 payload dead-letters" testMalformedL1PayloadDeadLetters,
       testCase "unknown process manager requeues with a long delay" testUnknownProcessManagerRequeues,
       testCase "the attempt ceiling dead-letters" testAttemptCeilingDeadLetters,
@@ -98,19 +99,46 @@ testTransientFailureReschedules =
 -- proof is indirect but decisive: the pass runs (and here fails on the stubbed extractor, so the
 -- timer is rescheduled) rather than dead-lettering, which is what an unreadable payload or a
 -- refused space would do.
+--
+-- The session lives in the legacy space too, because that is the only arrangement a
+-- pre-partition database can produce. The companion case below is what happens when it does
+-- not.
 testPrePartitionPayloadFiresInLegacySpace :: Assertion
 testPrePartitionPayloadFiresInLegacySpace =
   withTimerEnv \env rt -> do
     timerId <- freshTimerId
     sid <- genSessionId
     let failing = rt {runExtract = \_ -> pure (Left (ProviderFailure "the model is down"))}
-        prePartitionPayload = Aeson.object ["kind" Aeson..= ("idle" :: Text), "turnCount" Aeson..= (1 :: Int)]
     row <- runOrFail env do
-      startFixtureSession sid
-      scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) prePartitionPayload (-1)
+      startFixtureSessionIn legacyContext legacyMemorySpaceId sid
+      scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) prePartitionL1Payload (-1)
       fireOnce failing
       fetchTimer timerId
     row.status @?= "scheduled"
+
+-- | The same pre-partition timer, against a session that belongs to another space.
+--
+-- The pass looks the session up in the legacy space, does not find it, and treats it as a
+-- session that is gone — which marks the timer fired. That is the right outcome and the
+-- important one: a timer defaulted into the legacy space must never reach into a space that
+-- was created after it.
+testPrePartitionPayloadCannotReachAnotherSpace :: Assertion
+testPrePartitionPayloadCannotReachAnotherSpace =
+  withTimerEnv \env rt -> do
+    timerId <- freshTimerId
+    sid <- genSessionId
+    let failing = rt {runExtract = \_ -> liftIO (assertFailure "the extractor must not run")}
+    row <- runOrFail env do
+      startFixtureSession sid
+      scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) prePartitionL1Payload (-1)
+      fireOnce failing
+      fetchTimer timerId
+    row.status @?= "fired"
+
+-- | An L1 timer payload as it was written before memory spaces existed.
+prePartitionL1Payload :: Aeson.Value
+prePartitionL1Payload =
+  Aeson.object ["kind" Aeson..= ("idle" :: Text), "turnCount" Aeson..= (1 :: Int)]
 
 -- | A payload this handler cannot read will not become readable on the next attempt, so it
 -- dead-letters where an operator can see it rather than retrying for an hour first.
@@ -233,15 +261,26 @@ startFixtureSession ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   SessionId ->
   Eff es ()
-startFixtureSession sid = do
+startFixtureSession = startFixtureSessionIn testContext testSpace
+
+-- | Start a fixture session in a named space. The pre-partition case needs the legacy one:
+-- in a genuinely pre-partition database the timer and its session are both there, and a
+-- fixture that put them in different spaces would be testing nothing that can happen.
+startFixtureSessionIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  MemorySpaceId ->
+  SessionId ->
+  Eff es ()
+startFixtureSessionIn context space sid = do
   now <- liftIO getCurrentTime
   started <-
     Session.startWithContext
-      testContext
+      context
       StartSessionData
         { sessionId = sid,
-          memorySpaceId = testSpace,
-          actorPrincipal = testActorPrincipal,
+          memorySpaceId = space,
+          actorPrincipal = memoryContextRecordedActor context,
           ownerPrincipal = Nothing,
           agentId = "test-agent",
           focus = "timer worker spec",

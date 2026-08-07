@@ -1,3 +1,8 @@
+-- | The @kioku_sessions@ and @kioku_turns@ projections and every query over them.
+--
+-- A session belongs to the memory space it was started in, and a turn belongs to its session's
+-- space. Both columns are written by the projection from the event payload rather than looked
+-- up, and every query below filters on the space as well as on whatever it is keyed by.
 module Kioku.Session.ReadModel
   ( sessionInlineProjection,
     SessionRow (..),
@@ -23,23 +28,26 @@ module Kioku.Session.ReadModel
   )
 where
 
-import Contravariant.Extras (contrazip2, contrazip3, contrazip4)
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int32)
+import Data.Text qualified as Text
 import Hasql.Decoders qualified as D
 import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Projection (InlineProjection (..))
 import Keiro.ReadModel (ConsistencyMode (..), ReadModel (..), StrongScope (..))
+import Kioku.Api.Access (MemorySpaceId)
 import Kioku.Api.Scope (scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Id (idText)
+import Kioku.Partition (memorySpaceColumn, memorySpaceParam)
 import Kioku.Prelude
 import Kioku.Session.Domain
 import Kiroku.Store.Types (RecordedEvent)
 
 data SessionRow = SessionRow
-  { sessionId :: !Text,
+  { memorySpaceId :: !MemorySpaceId,
+    sessionId :: !Text,
     agentId :: !Text,
     focus :: !Text,
     namespace :: !Text,
@@ -63,7 +71,8 @@ data SessionRow = SessionRow
   deriving stock (Generic, Eq, Show)
 
 data TurnRow = TurnRow
-  { turnId :: !Text,
+  { memorySpaceId :: !MemorySpaceId,
+    turnId :: !Text,
     sessionId :: !Text,
     turnIndex :: !Int,
     role :: !Text,
@@ -75,23 +84,57 @@ data TurnRow = TurnRow
   }
   deriving stock (Generic, Eq, Show)
 
-newtype SessionByIdQuery = SessionByIdQuery Text
+data SessionByIdQuery = SessionByIdQuery
+  { memorySpaceId :: !MemorySpaceId,
+    sessionId :: !Text
+  }
 
-data SessionsByNamespaceQuery = SessionsByNamespaceQuery Text Int
+data SessionsByNamespaceQuery = SessionsByNamespaceQuery
+  { memorySpaceId :: !MemorySpaceId,
+    namespace :: !Text,
+    limit :: !Int
+  }
 
-data SessionsByScopeQuery = SessionsByScopeQuery Text (Maybe Text) (Maybe Text)
+data SessionsByScopeQuery = SessionsByScopeQuery
+  { memorySpaceId :: !MemorySpaceId,
+    namespace :: !Text,
+    scopeKind :: !(Maybe Text),
+    scopeRef :: !(Maybe Text)
+  }
 
-data SessionsByFocusQuery = SessionsByFocusQuery Text Text
+data SessionsByFocusQuery = SessionsByFocusQuery
+  { memorySpaceId :: !MemorySpaceId,
+    namespace :: !Text,
+    focus :: !Text
+  }
 
-data SessionsByStartedRangeQuery = SessionsByStartedRangeQuery Text UTCTime UTCTime
+data SessionsByStartedRangeQuery = SessionsByStartedRangeQuery
+  { memorySpaceId :: !MemorySpaceId,
+    namespace :: !Text,
+    startedAfter :: !UTCTime,
+    startedBefore :: !UTCTime
+  }
 
-newtype SessionChainQuery = SessionChainQuery Text
+data SessionChainQuery = SessionChainQuery
+  { memorySpaceId :: !MemorySpaceId,
+    sessionId :: !Text
+  }
 
-newtype SessionDelegationChildrenQuery = SessionDelegationChildrenQuery Text
+data SessionDelegationChildrenQuery = SessionDelegationChildrenQuery
+  { memorySpaceId :: !MemorySpaceId,
+    parentSessionId :: !Text
+  }
 
-data AwaitingSessionsByCorrelationKeyQuery = AwaitingSessionsByCorrelationKeyQuery Text Text
+data AwaitingSessionsByCorrelationKeyQuery = AwaitingSessionsByCorrelationKeyQuery
+  { memorySpaceId :: !MemorySpaceId,
+    namespace :: !Text,
+    correlationKey :: !Text
+  }
 
-newtype TurnsBySessionQuery = TurnsBySessionQuery Text
+data TurnsBySessionQuery = TurnsBySessionQuery
+  { memorySpaceId :: !MemorySpaceId,
+    sessionId :: !Text
+  }
 
 sessionInlineProjection :: InlineProjection SessionEvent
 sessionInlineProjection =
@@ -107,26 +150,80 @@ applySessionEvent event _recorded =
     InteractiveSessionRecorded d -> Tx.statement (interactiveRow d) upsertSessionStmt
     SessionCompleted d ->
       Tx.statement
-        (idText d.sessionId, d.completedAt, d.modelUsed, d.summary)
+        SessionCompletion
+          { memorySpaceId = d.memorySpaceId,
+            sessionId = idText d.sessionId,
+            completedAt = d.completedAt,
+            modelUsed = d.modelUsed,
+            summary = d.summary
+          }
         updateSessionCompletedStmt
     SessionFailed d ->
       Tx.statement
-        (idText d.sessionId, d.failedAt, d.errorMessage)
+        SessionFailure
+          { memorySpaceId = d.memorySpaceId,
+            sessionId = idText d.sessionId,
+            failedAt = d.failedAt,
+            errorMessage = d.errorMessage
+          }
         updateSessionFailedStmt
     SessionAwaiting d ->
       Tx.statement
-        (idText d.sessionId, d.reason, d.correlationKey, d.deadline)
+        SessionPark
+          { memorySpaceId = d.memorySpaceId,
+            sessionId = idText d.sessionId,
+            reason = d.reason,
+            correlationKey = d.correlationKey,
+            deadline = d.deadline
+          }
         updateSessionAwaitingStmt
     SessionResumed d ->
       Tx.statement
-        (idText d.sessionId, d.input)
+        SessionResumption
+          { memorySpaceId = d.memorySpaceId,
+            sessionId = idText d.sessionId,
+            input = d.input
+          }
         updateSessionResumedStmt
     TurnRecorded d -> Tx.statement (turnRow d) insertTurnStmt
+
+-- | The parameters of each lifecycle update, as records rather than tuples, so that the
+-- partition is named at every call site instead of being the first of five positional
+-- arguments.
+data SessionCompletion = SessionCompletion
+  { memorySpaceId :: !MemorySpaceId,
+    sessionId :: !Text,
+    completedAt :: !UTCTime,
+    modelUsed :: !(Maybe Text),
+    summary :: !(Maybe Text)
+  }
+
+data SessionFailure = SessionFailure
+  { memorySpaceId :: !MemorySpaceId,
+    sessionId :: !Text,
+    failedAt :: !UTCTime,
+    errorMessage :: !Text
+  }
+
+data SessionPark = SessionPark
+  { memorySpaceId :: !MemorySpaceId,
+    sessionId :: !Text,
+    reason :: !Text,
+    correlationKey :: !(Maybe Text),
+    deadline :: !(Maybe UTCTime)
+  }
+
+data SessionResumption = SessionResumption
+  { memorySpaceId :: !MemorySpaceId,
+    sessionId :: !Text,
+    input :: !Text
+  }
 
 startedRow :: SessionStartedData -> SessionRow
 startedRow d =
   SessionRow
-    { sessionId = idText d.sessionId,
+    { memorySpaceId = d.memorySpaceId,
+      sessionId = idText d.sessionId,
       agentId = d.agentId,
       focus = d.focus,
       namespace = scopeNamespaceText d.scope,
@@ -151,7 +248,8 @@ startedRow d =
 interactiveRow :: InteractiveSessionRecordedData -> SessionRow
 interactiveRow d =
   SessionRow
-    { sessionId = idText d.sessionId,
+    { memorySpaceId = d.memorySpaceId,
+      sessionId = idText d.sessionId,
       agentId = d.agentId,
       focus = d.focus,
       namespace = scopeNamespaceText d.scope,
@@ -176,7 +274,8 @@ interactiveRow d =
 turnRow :: TurnRecordedData -> TurnRow
 turnRow d =
   TurnRow
-    { turnId = d.turnId,
+    { memorySpaceId = d.memorySpaceId,
+      turnId = d.turnId,
       sessionId = idText d.sessionId,
       turnIndex = d.turnIndex,
       role = d.role,
@@ -194,11 +293,11 @@ sessionByIdReadModel =
       schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 3,
-      shapeHash = "kioku-session-v3",
+      version = sessionReadModelVersion,
+      shapeHash = sessionReadModelShapeHash,
       defaultConsistency = Eventual,
       strongScope = EntireLog,
-      query = \(SessionByIdQuery sid) -> Tx.statement sid selectSessionByIdStmt
+      query = \q -> Tx.statement q selectSessionByIdStmt
     }
 
 sessionsByNamespaceReadModel :: ReadModel SessionsByNamespaceQuery [SessionRow]
@@ -208,8 +307,8 @@ sessionsByNamespaceReadModel =
       schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 3,
-      shapeHash = "kioku-session-v3",
+      version = sessionReadModelVersion,
+      shapeHash = sessionReadModelShapeHash,
       defaultConsistency = Eventual,
       strongScope = EntireLog,
       query = \q -> Tx.statement q selectSessionsByNamespaceStmt
@@ -222,8 +321,8 @@ sessionsByScopeReadModel =
       schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 3,
-      shapeHash = "kioku-session-v3",
+      version = sessionReadModelVersion,
+      shapeHash = sessionReadModelShapeHash,
       defaultConsistency = Eventual,
       strongScope = EntireLog,
       query = \q -> Tx.statement q selectSessionsByScopeStmt
@@ -236,8 +335,8 @@ sessionsByFocusReadModel =
       schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 3,
-      shapeHash = "kioku-session-v3",
+      version = sessionReadModelVersion,
+      shapeHash = sessionReadModelShapeHash,
       defaultConsistency = Eventual,
       strongScope = EntireLog,
       query = \q -> Tx.statement q selectSessionsByFocusStmt
@@ -250,8 +349,8 @@ sessionsByStartedRangeReadModel =
       schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 3,
-      shapeHash = "kioku-session-v3",
+      version = sessionReadModelVersion,
+      shapeHash = sessionReadModelShapeHash,
       defaultConsistency = Eventual,
       strongScope = EntireLog,
       query = \q -> Tx.statement q selectSessionsByStartedRangeStmt
@@ -264,11 +363,11 @@ sessionChainReadModel =
       schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 3,
-      shapeHash = "kioku-session-v3",
+      version = sessionReadModelVersion,
+      shapeHash = sessionReadModelShapeHash,
       defaultConsistency = Eventual,
       strongScope = EntireLog,
-      query = \(SessionChainQuery sid) -> Tx.statement sid selectSessionChainStmt
+      query = \q -> Tx.statement q selectSessionChainStmt
     }
 
 sessionDelegationChildrenReadModel :: ReadModel SessionDelegationChildrenQuery [SessionRow]
@@ -278,11 +377,11 @@ sessionDelegationChildrenReadModel =
       schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 3,
-      shapeHash = "kioku-session-v3",
+      version = sessionReadModelVersion,
+      shapeHash = sessionReadModelShapeHash,
       defaultConsistency = Eventual,
       strongScope = EntireLog,
-      query = \(SessionDelegationChildrenQuery sid) -> Tx.statement sid selectDelegationChildrenStmt
+      query = \q -> Tx.statement q selectDelegationChildrenStmt
     }
 
 awaitingSessionsByCorrelationKeyReadModel :: ReadModel AwaitingSessionsByCorrelationKeyQuery [SessionRow]
@@ -292,8 +391,8 @@ awaitingSessionsByCorrelationKeyReadModel =
       schema = "kiroku",
       tableName = "kioku_sessions",
       subscriptionName = "kioku-session-inline",
-      version = 3,
-      shapeHash = "kioku-session-v3",
+      version = sessionReadModelVersion,
+      shapeHash = sessionReadModelShapeHash,
       defaultConsistency = Eventual,
       strongScope = EntireLog,
       query = \q -> Tx.statement q selectAwaitingByCorrelationKeyStmt
@@ -306,17 +405,36 @@ turnsBySessionReadModel =
       schema = "kiroku",
       tableName = "kioku_turns",
       subscriptionName = "kioku-session-inline",
-      version = 1,
-      shapeHash = "kioku-turn-v1",
+      version = turnReadModelVersion,
+      shapeHash = turnReadModelShapeHash,
       defaultConsistency = Eventual,
       strongScope = EntireLog,
-      query = \(TurnsBySessionQuery sid) -> Tx.statement sid selectTurnsBySessionStmt
+      query = \q -> Tx.statement q selectTurnsBySessionStmt
     }
+
+-- | The registry identity of every session read model.
+--
+-- The session model reshaped v1 -> v2 (delegation lineage) -> v3 (awaiting park/resume) -> v4
+-- (the memory-space partition). Each step was an additive migration that left the table data
+-- correct for the newer version, so @Kioku.ReadModel.reconcileReadModelRegistry@ advances the
+-- guard rather than rebuilding.
+sessionReadModelVersion :: Int
+sessionReadModelVersion = 4
+
+sessionReadModelShapeHash :: Text
+sessionReadModelShapeHash = "kioku-session-v4"
+
+turnReadModelVersion :: Int
+turnReadModelVersion = 2
+
+turnReadModelShapeHash :: Text
+turnReadModelShapeHash = "kioku-turn-v2"
 
 sessionRowDecoder :: D.Row SessionRow
 sessionRowDecoder =
   SessionRow
-    <$> D.column (D.nonNullable D.text)
+    <$> memorySpaceColumn
+    <*> D.column (D.nonNullable D.text)
     <*> D.column (D.nonNullable D.text)
     <*> D.column (D.nonNullable D.text)
     <*> D.column (D.nonNullable D.text)
@@ -340,7 +458,8 @@ sessionRowDecoder =
 turnRowDecoder :: D.Row TurnRow
 turnRowDecoder =
   TurnRow
-    <$> D.column (D.nonNullable D.text)
+    <$> memorySpaceColumn
+    <*> D.column (D.nonNullable D.text)
     <*> D.column (D.nonNullable D.text)
     <*> (fromIntegral @Int32 @Int <$> D.column (D.nonNullable D.int4))
     <*> D.column (D.nonNullable D.text)
@@ -350,97 +469,112 @@ turnRowDecoder =
     <*> (fmap (fromIntegral @Int32 @Int) <$> D.column (D.nullable D.int4))
     <*> D.column (D.nonNullable D.timestamptz)
 
-selectSessionByIdStmt :: Statement Text (Maybe SessionRow)
+-- | The projection 'sessionRowDecoder' expects, in its exact order. The partition comes first,
+-- so a reviewer reading any session query sees the space before anything it is keyed by.
+sessionRowColumnNames :: [Text]
+sessionRowColumnNames =
+  [ "memory_space_id",
+    "session_id",
+    "agent_id",
+    "focus",
+    "namespace",
+    "scope_kind",
+    "scope_ref",
+    "subject_ref",
+    "previous_session_id",
+    "parent_session_id",
+    "delegation_depth",
+    "status",
+    "started_at",
+    "completed_at",
+    "model_used",
+    "summary",
+    "error_message",
+    "awaiting_reason",
+    "awaiting_correlation_key",
+    "awaiting_deadline",
+    "resume_input"
+  ]
+
+sessionRowColumns :: Text
+sessionRowColumns = Text.intercalate ", " sessionRowColumnNames
+
+qualifiedSessionRowColumns :: Text -> Text
+qualifiedSessionRowColumns prefix =
+  Text.intercalate ", " ((\column -> prefix <> "." <> column) <$> sessionRowColumnNames)
+
+selectSessionByIdStmt :: Statement SessionByIdQuery (Maybe SessionRow)
 selectSessionByIdStmt =
   preparable
-    """
-    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message,
-           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
-    FROM kioku_sessions
-    WHERE session_id = $1
-    """
-    (E.param (E.nonNullable E.text))
+    ( "SELECT "
+        <> sessionRowColumns
+        <> " FROM kioku_sessions WHERE memory_space_id = $1 AND session_id = $2"
+    )
+    ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+        <> ((\q -> q.sessionId) >$< E.param (E.nonNullable E.text))
+    )
     (D.rowMaybe sessionRowDecoder)
 
 selectSessionsByNamespaceStmt :: Statement SessionsByNamespaceQuery [SessionRow]
 selectSessionsByNamespaceStmt =
   preparable
-    """
-    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message,
-           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
-    FROM kioku_sessions
-    WHERE namespace = $1
-    ORDER BY started_at DESC
-    LIMIT $2
-    """
-    ( ((\(SessionsByNamespaceQuery ns _) -> ns) >$< E.param (E.nonNullable E.text))
-        <> ((\(SessionsByNamespaceQuery _ limit) -> fromIntegral @Int @Int32 limit) >$< E.param (E.nonNullable E.int4))
+    ( "SELECT "
+        <> sessionRowColumns
+        <> " FROM kioku_sessions WHERE memory_space_id = $1 AND namespace = $2 ORDER BY started_at DESC LIMIT $3"
+    )
+    ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+        <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
+        <> ((\q -> fromIntegral @Int @Int32 q.limit) >$< E.param (E.nonNullable E.int4))
     )
     (D.rowList sessionRowDecoder)
 
 selectSessionsByScopeStmt :: Statement SessionsByScopeQuery [SessionRow]
 selectSessionsByScopeStmt =
   preparable
-    """
-    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message,
-           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
-    FROM kioku_sessions
-    WHERE namespace = $1
-      AND scope_kind IS NOT DISTINCT FROM $2
-      AND scope_ref IS NOT DISTINCT FROM $3
-    ORDER BY started_at DESC
-    """
-    ( ((\(SessionsByScopeQuery ns _ _) -> ns) >$< E.param (E.nonNullable E.text))
-        <> ((\(SessionsByScopeQuery _ sk _) -> sk) >$< E.param (E.nullable E.text))
-        <> ((\(SessionsByScopeQuery _ _ sr) -> sr) >$< E.param (E.nullable E.text))
+    ( "SELECT "
+        <> sessionRowColumns
+        <> " FROM kioku_sessions WHERE memory_space_id = $1 AND namespace = $2\
+           \ AND scope_kind IS NOT DISTINCT FROM $3 AND scope_ref IS NOT DISTINCT FROM $4\
+           \ ORDER BY started_at DESC"
+    )
+    ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+        <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
+        <> ((\q -> q.scopeKind) >$< E.param (E.nullable E.text))
+        <> ((\q -> q.scopeRef) >$< E.param (E.nullable E.text))
     )
     (D.rowList sessionRowDecoder)
 
 selectSessionsByFocusStmt :: Statement SessionsByFocusQuery [SessionRow]
 selectSessionsByFocusStmt =
   preparable
-    """
-    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message,
-           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
-    FROM kioku_sessions
-    WHERE namespace = $1
-      AND focus = $2
-    ORDER BY started_at DESC
-    """
-    ( ((\(SessionsByFocusQuery ns _) -> ns) >$< E.param (E.nonNullable E.text))
-        <> ((\(SessionsByFocusQuery _ focus) -> focus) >$< E.param (E.nonNullable E.text))
+    ( "SELECT "
+        <> sessionRowColumns
+        <> " FROM kioku_sessions WHERE memory_space_id = $1 AND namespace = $2 AND focus = $3\
+           \ ORDER BY started_at DESC"
+    )
+    ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+        <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
+        <> ((\q -> q.focus) >$< E.param (E.nonNullable E.text))
     )
     (D.rowList sessionRowDecoder)
 
 selectSessionsByStartedRangeStmt :: Statement SessionsByStartedRangeQuery [SessionRow]
 selectSessionsByStartedRangeStmt =
   preparable
-    """
-    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message,
-           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
-    FROM kioku_sessions
-    WHERE namespace = $1
-      AND started_at >= $2
-      AND started_at < $3
-    ORDER BY started_at DESC
-    """
-    ( ((\(SessionsByStartedRangeQuery ns _ _) -> ns) >$< E.param (E.nonNullable E.text))
-        <> ((\(SessionsByStartedRangeQuery _ start _) -> start) >$< E.param (E.nonNullable E.timestamptz))
-        <> ((\(SessionsByStartedRangeQuery _ _ end) -> end) >$< E.param (E.nonNullable E.timestamptz))
+    ( "SELECT "
+        <> sessionRowColumns
+        <> " FROM kioku_sessions WHERE memory_space_id = $1 AND namespace = $2\
+           \ AND started_at >= $3 AND started_at < $4 ORDER BY started_at DESC"
+    )
+    ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+        <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
+        <> ((\q -> q.startedAfter) >$< E.param (E.nonNullable E.timestamptz))
+        <> ((\q -> q.startedBefore) >$< E.param (E.nonNullable E.timestamptz))
     )
     (D.rowList sessionRowDecoder)
 
--- | Walk a session's continuation chain backwards through @previous_session_id@.
+-- | Walk a session's continuation chain backwards through @previous_session_id@, without
+-- leaving the memory space it started in.
 --
 -- The @path@ array makes revisiting a session impossible, so the walk terminates on any
 -- data — including a cycle, which 'Kioku.Session.start' now refuses to create but which
@@ -448,66 +582,76 @@ selectSessionsByStartedRangeStmt =
 -- With a plain @UNION ALL@ and no guard, a cycle loops until timeout or OOM. The depth cap
 -- is defense in depth, far above any legitimate chain.
 --
+-- @previous_session_id@ is a bare id with no foreign key, so the recursive arm carries the
+-- space predicate too: without it a chain could be walked out of its space by any id written
+-- before the partition existed.
+--
 -- The final @SELECT@ omits @depth@/@path@, so 'sessionRowDecoder' is unchanged.
-selectSessionChainStmt :: Statement Text [SessionRow]
+selectSessionChainStmt :: Statement SessionChainQuery [SessionRow]
 selectSessionChainStmt =
   preparable
-    """
-    WITH RECURSIVE chain AS (
-      SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-             previous_session_id, parent_session_id, delegation_depth, status, started_at,
-             completed_at, model_used, summary, error_message,
-             awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input,
-             1 AS depth, ARRAY[session_id] AS path
-      FROM kioku_sessions
-      WHERE session_id = $1
-      UNION ALL
-      SELECT s.session_id, s.agent_id, s.focus, s.namespace, s.scope_kind, s.scope_ref, s.subject_ref,
-             s.previous_session_id, s.parent_session_id, s.delegation_depth, s.status, s.started_at,
-             s.completed_at, s.model_used, s.summary, s.error_message,
-             s.awaiting_reason, s.awaiting_correlation_key, s.awaiting_deadline, s.resume_input,
-             c.depth + 1, c.path || s.session_id
-      FROM kioku_sessions s
-      INNER JOIN chain c ON s.session_id = c.previous_session_id
-      WHERE NOT s.session_id = ANY (c.path)
-        AND c.depth < 10000
+    ( "WITH RECURSIVE chain AS ("
+        <> "SELECT "
+        <> sessionRowColumns
+        <> ", 1 AS depth, ARRAY[session_id] AS path"
+        <> " FROM kioku_sessions WHERE memory_space_id = $1 AND session_id = $2"
+        <> " UNION ALL "
+        <> "SELECT "
+        <> qualifiedSessionRowColumns "s"
+        <> ", c.depth + 1, c.path || s.session_id"
+        <> " FROM kioku_sessions s INNER JOIN chain c"
+        <> " ON s.session_id = c.previous_session_id AND s.memory_space_id = c.memory_space_id"
+        <> " WHERE NOT s.session_id = ANY (c.path) AND c.depth < 10000"
+        <> ") SELECT "
+        <> sessionRowColumns
+        <> " FROM chain ORDER BY started_at ASC"
     )
-    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message,
-           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
-    FROM chain
-    ORDER BY started_at ASC
-    """
-    (E.param (E.nonNullable E.text))
+    ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+        <> ((\q -> q.sessionId) >$< E.param (E.nonNullable E.text))
+    )
     (D.rowList sessionRowDecoder)
 
-selectDelegationChildrenStmt :: Statement Text [SessionRow]
+selectDelegationChildrenStmt :: Statement SessionDelegationChildrenQuery [SessionRow]
 selectDelegationChildrenStmt =
   preparable
-    """
-    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message,
-           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
-    FROM kioku_sessions
-    WHERE parent_session_id = $1
-    ORDER BY started_at ASC, session_id ASC
-    """
-    (E.param (E.nonNullable E.text))
+    ( "SELECT "
+        <> sessionRowColumns
+        <> " FROM kioku_sessions WHERE memory_space_id = $1 AND parent_session_id = $2\
+           \ ORDER BY started_at ASC, session_id ASC"
+    )
+    ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+        <> ((\q -> q.parentSessionId) >$< E.param (E.nonNullable E.text))
+    )
     (D.rowList sessionRowDecoder)
 
-selectTurnsBySessionStmt :: Statement Text [TurnRow]
+selectAwaitingByCorrelationKeyStmt :: Statement AwaitingSessionsByCorrelationKeyQuery [SessionRow]
+selectAwaitingByCorrelationKeyStmt =
+  preparable
+    ( "SELECT "
+        <> sessionRowColumns
+        <> " FROM kioku_sessions WHERE memory_space_id = $1 AND namespace = $2\
+           \ AND status = 'awaiting' AND awaiting_correlation_key = $3 ORDER BY started_at DESC"
+    )
+    ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+        <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
+        <> ((\q -> q.correlationKey) >$< E.param (E.nonNullable E.text))
+    )
+    (D.rowList sessionRowDecoder)
+
+selectTurnsBySessionStmt :: Statement TurnsBySessionQuery [TurnRow]
 selectTurnsBySessionStmt =
   preparable
     """
-    SELECT turn_id, session_id, turn_index, role, content, tool_summary, prompt_tokens,
-           output_tokens, recorded_at
+    SELECT memory_space_id, turn_id, session_id, turn_index, role, content, tool_summary,
+           prompt_tokens, output_tokens, recorded_at
     FROM kioku_turns
-    WHERE session_id = $1
+    WHERE memory_space_id = $1
+      AND session_id = $2
     ORDER BY turn_index ASC
     """
-    (E.param (E.nonNullable E.text))
+    ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+        <> ((\q -> q.sessionId) >$< E.param (E.nonNullable E.text))
+    )
     (D.rowList turnRowDecoder)
 
 upsertSessionStmt :: Statement SessionRow ()
@@ -515,12 +659,13 @@ upsertSessionStmt =
   preparable
     """
     INSERT INTO kioku_sessions
-      (session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-       previous_session_id, parent_session_id, delegation_depth, status, started_at,
+      (memory_space_id, session_id, agent_id, focus, namespace, scope_kind, scope_ref,
+       subject_ref, previous_session_id, parent_session_id, delegation_depth, status, started_at,
        completed_at, model_used, summary, error_message,
        awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())
     ON CONFLICT (session_id) DO UPDATE SET
+      memory_space_id = EXCLUDED.memory_space_id,
       agent_id = EXCLUDED.agent_id,
       focus = EXCLUDED.focus,
       namespace = EXCLUDED.namespace,
@@ -547,7 +692,8 @@ upsertSessionStmt =
 
 sessionRowEncoder :: E.Params SessionRow
 sessionRowEncoder =
-  ((\row -> row.sessionId) >$< E.param (E.nonNullable E.text))
+  ((\row -> row.memorySpaceId) >$< memorySpaceParam)
+    <> ((\row -> row.sessionId) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.agentId) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.focus) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.namespace) >$< E.param (E.nonNullable E.text))
@@ -568,26 +714,26 @@ sessionRowEncoder =
     <> ((\row -> row.awaitingDeadline) >$< E.param (E.nullable E.timestamptz))
     <> ((\row -> row.resumeInput) >$< E.param (E.nullable E.text))
 
-updateSessionCompletedStmt :: Statement (Text, UTCTime, Maybe Text, Maybe Text) ()
+updateSessionCompletedStmt :: Statement SessionCompletion ()
 updateSessionCompletedStmt =
   preparable
-    "UPDATE kioku_sessions SET status = 'completed', completed_at = $2, model_used = $3, summary = $4, awaiting_reason = NULL, awaiting_correlation_key = NULL, awaiting_deadline = NULL, updated_at = NOW() WHERE session_id = $1"
-    ( contrazip4
-        (E.param (E.nonNullable E.text))
-        (E.param (E.nonNullable E.timestamptz))
-        (E.param (E.nullable E.text))
-        (E.param (E.nullable E.text))
+    "UPDATE kioku_sessions SET status = 'completed', completed_at = $3, model_used = $4, summary = $5, awaiting_reason = NULL, awaiting_correlation_key = NULL, awaiting_deadline = NULL, updated_at = NOW() WHERE memory_space_id = $1 AND session_id = $2"
+    ( ((\c -> c.memorySpaceId) >$< memorySpaceParam)
+        <> ((\c -> c.sessionId) >$< E.param (E.nonNullable E.text))
+        <> ((\c -> c.completedAt) >$< E.param (E.nonNullable E.timestamptz))
+        <> ((\c -> c.modelUsed) >$< E.param (E.nullable E.text))
+        <> ((\c -> c.summary) >$< E.param (E.nullable E.text))
     )
     D.noResult
 
-updateSessionFailedStmt :: Statement (Text, UTCTime, Text) ()
+updateSessionFailedStmt :: Statement SessionFailure ()
 updateSessionFailedStmt =
   preparable
-    "UPDATE kioku_sessions SET status = 'failed', completed_at = $2, error_message = $3, awaiting_reason = NULL, awaiting_correlation_key = NULL, awaiting_deadline = NULL, updated_at = NOW() WHERE session_id = $1"
-    ( contrazip3
-        (E.param (E.nonNullable E.text))
-        (E.param (E.nonNullable E.timestamptz))
-        (E.param (E.nonNullable E.text))
+    "UPDATE kioku_sessions SET status = 'failed', completed_at = $3, error_message = $4, awaiting_reason = NULL, awaiting_correlation_key = NULL, awaiting_deadline = NULL, updated_at = NOW() WHERE memory_space_id = $1 AND session_id = $2"
+    ( ((\c -> c.memorySpaceId) >$< memorySpaceParam)
+        <> ((\c -> c.sessionId) >$< E.param (E.nonNullable E.text))
+        <> ((\c -> c.failedAt) >$< E.param (E.nonNullable E.timestamptz))
+        <> ((\c -> c.errorMessage) >$< E.param (E.nonNullable E.text))
     )
     D.noResult
 
@@ -596,56 +742,47 @@ updateSessionFailedStmt =
 --
 -- @awaiting_deadline@ is advisory only: it is stored for hosts, and kioku does not enforce
 -- it (no timer fires, nothing expires). See MasterPlan 2's Decision Log (2026-07-07).
-updateSessionAwaitingStmt :: Statement (Text, Text, Maybe Text, Maybe UTCTime) ()
+updateSessionAwaitingStmt :: Statement SessionPark ()
 updateSessionAwaitingStmt =
   preparable
-    "UPDATE kioku_sessions SET status = 'awaiting', awaiting_reason = $2, awaiting_correlation_key = $3, awaiting_deadline = $4, resume_input = NULL, updated_at = NOW() WHERE session_id = $1"
-    ( contrazip4
-        (E.param (E.nonNullable E.text))
-        (E.param (E.nonNullable E.text))
-        (E.param (E.nullable E.text))
-        (E.param (E.nullable E.timestamptz))
+    "UPDATE kioku_sessions SET status = 'awaiting', awaiting_reason = $3, awaiting_correlation_key = $4, awaiting_deadline = $5, resume_input = NULL, updated_at = NOW() WHERE memory_space_id = $1 AND session_id = $2"
+    ( ((\c -> c.memorySpaceId) >$< memorySpaceParam)
+        <> ((\c -> c.sessionId) >$< E.param (E.nonNullable E.text))
+        <> ((\c -> c.reason) >$< E.param (E.nonNullable E.text))
+        <> ((\c -> c.correlationKey) >$< E.param (E.nullable E.text))
+        <> ((\c -> c.deadline) >$< E.param (E.nullable E.timestamptz))
     )
     D.noResult
 
-updateSessionResumedStmt :: Statement (Text, Text) ()
+updateSessionResumedStmt :: Statement SessionResumption ()
 updateSessionResumedStmt =
   preparable
-    "UPDATE kioku_sessions SET status = 'running', resume_input = $2, awaiting_reason = NULL, awaiting_correlation_key = NULL, awaiting_deadline = NULL, updated_at = NOW() WHERE session_id = $1"
-    (contrazip2 (E.param (E.nonNullable E.text)) (E.param (E.nonNullable E.text)))
-    D.noResult
-
-selectAwaitingByCorrelationKeyStmt :: Statement AwaitingSessionsByCorrelationKeyQuery [SessionRow]
-selectAwaitingByCorrelationKeyStmt =
-  preparable
-    """
-    SELECT session_id, agent_id, focus, namespace, scope_kind, scope_ref, subject_ref,
-           previous_session_id, parent_session_id, delegation_depth, status, started_at,
-           completed_at, model_used, summary, error_message,
-           awaiting_reason, awaiting_correlation_key, awaiting_deadline, resume_input
-    FROM kioku_sessions
-    WHERE namespace = $1
-      AND status = 'awaiting'
-      AND awaiting_correlation_key = $2
-    ORDER BY started_at DESC
-    """
-    ( ((\(AwaitingSessionsByCorrelationKeyQuery ns _) -> ns) >$< E.param (E.nonNullable E.text))
-        <> ((\(AwaitingSessionsByCorrelationKeyQuery _ k) -> k) >$< E.param (E.nonNullable E.text))
+    "UPDATE kioku_sessions SET status = 'running', resume_input = $3, awaiting_reason = NULL, awaiting_correlation_key = NULL, awaiting_deadline = NULL, updated_at = NOW() WHERE memory_space_id = $1 AND session_id = $2"
+    ( ((\c -> c.memorySpaceId) >$< memorySpaceParam)
+        <> ((\c -> c.sessionId) >$< E.param (E.nonNullable E.text))
+        <> ((\c -> c.input) >$< E.param (E.nonNullable E.text))
     )
-    (D.rowList sessionRowDecoder)
+    D.noResult
 
 -- | @(session_id, turn_index)@ is the turn's identity; @turn_id@ is an idempotency token
 -- that travels with it. The conflict clause updates @turn_id@ as well, so rebuilding the
 -- projection from the event stream cannot leave a superseded turn's id attached to the
 -- winning event's content.
+--
+-- The conflict target stays @(session_id, turn_index)@ rather than gaining the space. A
+-- session id is globally unique and the aggregate pins each session to exactly one space, so
+-- two spaces cannot produce the same pair; widening the key would /weaken/ it by letting one
+-- session's turn index be written twice.
 insertTurnStmt :: Statement TurnRow ()
 insertTurnStmt =
   preparable
     """
     INSERT INTO kioku_turns
-      (turn_id, session_id, turn_index, role, content, tool_summary, prompt_tokens, output_tokens, recorded_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      (memory_space_id, turn_id, session_id, turn_index, role, content, tool_summary,
+       prompt_tokens, output_tokens, recorded_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     ON CONFLICT (session_id, turn_index) DO UPDATE SET
+      memory_space_id = EXCLUDED.memory_space_id,
       turn_id = EXCLUDED.turn_id,
       role = EXCLUDED.role,
       content = EXCLUDED.content,
@@ -659,7 +796,8 @@ insertTurnStmt =
 
 turnRowEncoder :: E.Params TurnRow
 turnRowEncoder =
-  ((\row -> row.turnId) >$< E.param (E.nonNullable E.text))
+  ((\row -> row.memorySpaceId) >$< memorySpaceParam)
+    <> ((\row -> row.turnId) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.sessionId) >$< E.param (E.nonNullable E.text))
     <> ((\row -> fromIntegral @Int @Int32 row.turnIndex) >$< E.param (E.nonNullable E.int4))
     <> ((\row -> row.role) >$< E.param (E.nonNullable E.text))

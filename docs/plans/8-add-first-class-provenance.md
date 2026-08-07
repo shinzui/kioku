@@ -5,6 +5,7 @@ title: "Add first-class provenance"
 kind: exec-plan
 created_at: 2026-07-07T03:36:53Z
 intention: intention_01kwxabxj6ewdr5fncb56nh67n
+master_plan: "docs/masterplans/4-secure-and-accountable-distillation-evidence.md"
 ---
 
 # Add first-class provenance
@@ -15,20 +16,21 @@ Decision Log, and Outcomes & Retrospective must be kept up to date as work proce
 
 ## Purpose / Big Picture
 
-After this change, a Kioku user can inspect any memory, scene, or persona and answer the question: "what caused this artifact to exist?" Today Kioku stores durable event streams and read-model rows, but many generated artifacts only carry indirect clues such as `session_id`, `atom_ids`, or `source_hash`. First-class provenance means Kioku records a structured, queryable explanation alongside each derived artifact: the origin kind, source session, source turn ids, source memory ids, consolidation decision id, timer id, optional distillation replay-call ids, and any model/behavior label that produced the artifact.
+After this change, a Kioku user can inspect any memory, scene, or persona and answer the question: "what caused this artifact to exist?" Today Kioku stores durable event streams and read-model rows, but many generated artifacts only carry indirect clues such as `session_id`, `atom_ids`, or `source_hash`. First-class provenance means Kioku records a structured, queryable explanation alongside each derived artifact: the memory space, origin kind, source session, selected source turn ids, source memory ids, evidence-selection decision id, consolidation decision id, timer id, optional model-call evidence ids, and the behavior label that produced the artifact.
 
-The observable result is not only that code compiles. A user can run a distillation pass, query the resulting `kioku_memories`, `kioku_consolidation_decisions`, `kioku_scenes`, and `kioku_personas` rows, and see structured provenance JSON that links the L1 memory back to the session turns, the L2 scene back to the atom memories, and the L3 persona back to the scene rows. If `docs/plans/16-add-distillation-replay-metadata.md` has also been implemented, the same provenance object can point to the stored metadata for the LLM calls that produced the artifact. Existing callers continue to work because default/manual provenance is supplied where older write paths do not know a cause.
+The observable result is not only that code compiles. A user can run a distillation pass, query the resulting `kioku_memories`, `kioku_consolidation_decisions`, `kioku_scenes`, and `kioku_personas` rows, and see structured provenance JSON that links the L1 memory to the accepted evidence decision, the L2 scene to atom memories, and the L3 persona to scene rows, all inside one memory space. If `docs/plans/16-add-distillation-replay-metadata.md` has also been implemented, the same provenance object points to Baikai model-call evidence. Existing callers continue to work because default/manual provenance is supplied where older write paths do not know a cause.
 
 
 ## Progress
 
 - [ ] Add a `Kioku.Provenance` module with a stable JSON type, constructors, and helpers for manual writes, L1 distillation, L2 scene regeneration, and L3 persona regeneration.
-- [ ] Add a migration that stores provenance on the relevant Kioku read-model tables and audit table.
+- [ ] Make provenance partition-aware and link L1 artifacts to the evidence decision from `docs/plans/23-gate-untrusted-session-evidence-before-l1-distillation.md`.
+- [ ] Add a pg-migrate migration that stores provenance on the relevant Kioku read-model tables and audit table.
 - [ ] Thread provenance through memory event payloads and memory write APIs without breaking existing callers.
 - [ ] Update the memory read model so `MemoryRow` exposes provenance and legacy rows decode to default manual provenance.
 - [ ] Thread L1 distillation provenance through extraction, consolidation, memory writes, memory merges, and consolidation audit rows.
 - [ ] Thread L2 and L3 provenance into scene and persona rows.
-- [ ] Include optional distillation replay-call ids in provenance so generated artifacts can link to `docs/plans/16-add-distillation-replay-metadata.md` records when that plan is implemented.
+- [ ] Include optional model-call evidence ids in provenance so generated artifacts can link to `docs/plans/16-add-distillation-replay-metadata.md` records when that plan is implemented.
 - [ ] Add CLI or library-facing inspection for provenance, or extend existing row output used by tests so provenance is externally observable.
 - [ ] Add focused tests proving a distilled memory, scene, and persona carry the expected provenance chain.
 - [ ] Update docs to describe provenance semantics and run the full validation suite.
@@ -36,8 +38,15 @@ The observable result is not only that code compiles. A user can run a distillat
 
 ## Surprises & Discoveries
 
-- The ActiveGraph paper's useful lesson for Kioku is not to replace Kioku with a full reactive graph runtime. Kioku already treats event streams as source of truth for memory and sessions; the immediate gap is artifact-level lineage. The separate replay-metadata plan should capture LLM request and response fingerprints, while this plan should keep provenance focused on causal links.
+- The earlier lineage review's useful lesson for Kioku is not to replace Kioku with a full reactive graph runtime. Kioku already treats event streams as source of truth for memory and sessions; the immediate gap is artifact-level lineage. The separate replay-metadata plan should capture provider-boundary commitments and observed call metadata, while this plan should keep provenance focused on causal links.
   Evidence: `docs/user/concepts.md` says memories and sessions are event-sourced projections, while current memory and distillation rows lack structured provenance fields.
+
+- Baikai 0.5.0.0 now owns provider-boundary evidence and canonical request/response commitments.
+  Provenance should reference its call IDs instead of naming a Kioku-specific replay hash format.
+  Evidence: `mori://shinzui/baikai/packages/baikai` exposes `Baikai.Evidence`.
+
+- The isolation initiative makes `MemorySpaceId` mandatory before this plan's migration lands.
+  Adding unpartitioned provenance now would create an audit path able to cross the boundary later.
 
 
 ## Decision Log
@@ -54,14 +63,25 @@ The observable result is not only that code compiles. A user can run a distillat
   Rationale: Kioku already supports legacy Rei event decoding in `kioku-core/src/Kioku/Memory/EventStream.hs`; adding required provenance fields without defaults would break replaying old streams.
   Date: 2026-07-07
 
-- Decision: Provenance will reference distillation replay metadata by id, not inline prompt, input, output, or hash payloads.
-  Rationale: Provenance answers "what caused this artifact?" Replay metadata answers "which model call, input, output, and hashes produced it?" Keeping those contracts separate prevents every memory, scene, and persona row from duplicating large LLM metadata while still allowing a user or test to walk from an artifact to the exact distillation call record.
+- Decision: Provenance will reference Baikai model-call evidence by id, not inline prompt, output, or provider evidence payloads.
+  Rationale: Provenance answers "what caused this artifact?" Provider evidence answers what crossed the model boundary and what the provider reported. Keeping those contracts separate prevents every artifact row from duplicating sensitive or large data.
   Date: 2026-07-07
+
+- Decision: L1 provenance references one evidence-selection decision and only the turn IDs that
+  policy selected.
+  Rationale: Referencing every raw turn would claim excluded prompt-injection or secret material
+  caused the artifact and would make the security gate unauditable.
+  Date: 2026-08-06
+
+- Decision: Every provenance record carries `memorySpaceId` and all inspection queries require
+  that space.
+  Rationale: Causal metadata is as sensitive as the artifact and must obey the same partition.
+  Date: 2026-08-06
 
 
 ## Outcomes & Retrospective
 
-No implementation has started yet. The expected outcome is a Kioku-owned provenance contract visible on memories, consolidation decisions, scenes, and personas, with tests showing the chain from session turns to L1 memories to L2 scenes to L3 personas. A later or parallel implementation of `docs/plans/16-add-distillation-replay-metadata.md` can make the optional replay-call id fields non-empty for generated artifacts.
+No implementation has started yet. The expected outcome is a Kioku-owned provenance contract visible on memories, consolidation decisions, scenes, and personas, with tests showing the chain from accepted session evidence to L1 memories to L2 scenes to L3 personas. A later or parallel implementation of `docs/plans/16-add-distillation-replay-metadata.md` can make the optional model-call evidence ID fields non-empty for generated artifacts.
 
 
 ## Context and Orientation
@@ -72,11 +92,11 @@ The key memory aggregate lives in `kioku-core/src/Kioku/Memory/Domain.hs`. It de
 
 Session events live in `kioku-core/src/Kioku/Session/Domain.hs`, and session read-model rows live in `kioku-core/src/Kioku/Session/ReadModel.hs`. Session turns are the L0 evidence for distillation. A turn is one recorded conversation/tool step with fields such as role, content, and token counts. Session lineage already records `previousSessionId`, `parentSessionId`, and `delegationDepth`, but that lineage is about session relationships, not about why a specific memory or scene exists.
 
-Distillation is Kioku's model-driven pipeline that turns raw evidence into compact memory. `kioku-core/src/Kioku/Distill/L1.hs` extracts atoms from session turns, consolidates each atom against existing memories, writes new memories through `Kioku.Memory.record`, merges duplicates through `Kioku.Memory.merge`, and writes audit rows into `kiroku.kioku_consolidation_decisions`. L2 scenes are generated in `kioku-core/src/Kioku/Distill/L2.hs` from active atom memories and stored in `kiroku.kioku_scenes`. L3 personas are generated in `kioku-core/src/Kioku/Distill/L3.hs` from scenes and stored in `kiroku.kioku_personas`. `kioku-core/src/Kioku/Distill/Timer.hs` schedules L1 timers from session events, and `kioku-core/src/Kioku/Distill/Timer/Worker.hs` fires due timers. This plan records causal provenance for these artifacts. `docs/plans/16-add-distillation-replay-metadata.md` records metadata for the model calls themselves and should use the replay-call id fields described here when both plans are present.
+Distillation is Kioku's model-driven pipeline that turns raw evidence into compact memory. `kioku-core/src/Kioku/Distill/L1.hs` extracts atoms from session turns, consolidates each atom against existing memories, writes new memories through `Kioku.Memory.record`, merges duplicates through `Kioku.Memory.merge`, and writes audit rows into `kiroku.kioku_consolidation_decisions`. L2 scenes are generated in `kioku-core/src/Kioku/Distill/L2.hs` from active atom memories and stored in `kiroku.kioku_scenes`. L3 personas are generated in `kioku-core/src/Kioku/Distill/L3.hs` from scenes and stored in `kiroku.kioku_personas`. `kioku-core/src/Kioku/Distill/Timer.hs` schedules L1 timers from session events, and `kioku-core/src/Kioku/Distill/Timer/Worker.hs` fires due timers. This plan records causal provenance for these artifacts. `docs/plans/16-add-distillation-replay-metadata.md` records Baikai evidence for the model calls themselves and supplies the model-call evidence IDs described here when both plans are present.
 
-The database tables are created by SQL migrations in `kioku-migrations/sql-migrations/`. `2026-06-24-00-00-00-kioku-base.sql` creates `kioku_memories`, `kioku_sessions`, and `kioku_turns`. `2026-06-24-02-00-00-kioku-distillation.sql` creates `kioku_scenes`, `kioku_personas`, and `kioku_consolidation_decisions`. This plan adds a new migration rather than editing old migrations, because existing databases may already have applied the old files.
+The active database history is now the numbered pg-migrate chain in `kioku-migrations/migrations/`; historical Codd reconciliation remains temporarily under plan 22. This plan adds the next numbered migration rather than editing applied files. It runs after `docs/plans/26-migrate-kioku-read-models-to-partitioned-memory-spaces.md`, or includes the same non-null `memory_space_id` contract if coordinated in one release.
 
-The dependency lookup relevant to provenance is Kiroku and Keiro. `Kiroku.Store.Types.RecordedEvent` has `eventId`, `causationId`, `correlationId`, `metadata`, and `globalPosition`; `Kiroku.Store.Causation` can walk causation descendants and ancestors. Keiro's `RunCommandOptions` currently exposes `eventIds` and `metadata`, but not a direct causation or correlation option for plain aggregate commands. For this plan, "first-class provenance" therefore means a Kioku-owned structured data type that appears in Kioku payloads, read models, tests, and user-facing inspection. A later plan can map that type into Kiroku's store-level causation fields if Keiro grows the needed options.
+The dependency lookup relevant to provenance is `mori://shinzui/kiroku/packages/kiroku-store` and `mori://shinzui/keiro/packages/keiro`. `Kiroku.Store.Types.RecordedEvent` has `eventId`, `causationId`, `correlationId`, `metadata`, and `globalPosition`; `Kiroku.Store.Causation` can walk causation descendants and ancestors. Keiro's `RunCommandOptions` currently exposes `eventIds` and `metadata`, but not a direct causation or correlation option for plain aggregate commands. For this plan, "first-class provenance" therefore means a Kioku-owned structured data type that appears in Kioku payloads, read models, tests, and user-facing inspection. A later plan can map that type into Kiroku's store-level causation fields if Keiro grows the needed options.
 
 Use `docs/plans/3-kioku-distillation-pyramid-l0-to-l3.md` as background for the distillation pipeline. This plan must remain self-contained, so the key facts from that plan are repeated here: L1 writes atom memories from session evidence, L2 writes scene rows from atom memories, and L3 writes persona rows from scenes.
 
@@ -89,32 +109,33 @@ Add a new module `kioku-core/src/Kioku/Provenance.hs`. It should define a small 
 
 ```haskell
 data Provenance = Provenance
-  { kind :: !Text
+  { memorySpaceId :: !MemorySpaceId
+  , kind :: !Text
   , causedBySessionId :: !(Maybe Text)
   , causedByTurnIds :: ![Text]
   , causedByMemoryIds :: ![Text]
   , causedBySceneIds :: ![Text]
+  , evidenceDecisionId :: !(Maybe Text)
   , causedByDecisionId :: !(Maybe Text)
   , causedByTimerId :: !(Maybe Text)
-  , replayCallIds :: ![Text]
+  , modelCallEvidenceIds :: ![Text]
   , behavior :: !(Maybe Text)
-  , model :: !(Maybe Text)
   , note :: !(Maybe Text)
   }
 ```
 
-The field names should remain in lower camel case in JSON because the rest of Kioku event payloads use ordinary record field encoding through `ToJSON` and `FromJSON`. The `kind` field is a short machine-readable origin label. Use at least these values: `manual`, `imported:rei`, `distillation:l1`, `distillation:l2`, and `distillation:l3`. `replayCallIds` is optional linkage to rows from `docs/plans/16-add-distillation-replay-metadata.md`; it should be an empty list when replay metadata is unavailable. Provide helpers named `manualProvenance`, `importedReiProvenance`, `l1Provenance`, `l2Provenance`, and `l3Provenance`. Define a parser helper `parseProvenanceDefault :: Provenance -> Value -> Parser Provenance` or equivalent so old JSON payloads and old read-model rows can default safely.
+The field names should remain in lower camel case in JSON because the rest of Kioku event payloads use ordinary record field encoding through `ToJSON` and `FromJSON`. The `kind` field is a short machine-readable origin label. Use at least these values: `manual`, `imported:rei`, `distillation:l1`, `distillation:l2`, and `distillation:l3`. `modelCallEvidenceIds` links to rows from plan 16 and defaults to an empty list. `evidenceDecisionId` is present for policy-gated L1 work and absent for manual/imported writes. Provide helpers named `manualProvenance`, `importedReiProvenance`, `l1Provenance`, `l2Provenance`, and `l3Provenance`. Define compatibility parsing so old JSON defaults to the legacy memory space and empty optional links.
 
 Add the module to `kioku-core/kioku-core.cabal` under the library's `exposed-modules` or `other-modules`, matching the surrounding convention. If the module is intended for library consumers, expose it. The recommended choice is to expose `Kioku.Provenance`, because hosts need to attach provenance to manual memory writes.
 
-Create a migration `kioku-migrations/sql-migrations/2026-07-07-00-00-00-kioku-provenance.sql` with `-- codd: in-txn` and `SET search_path TO kiroku, pg_catalog;`. It should add `provenance jsonb NOT NULL DEFAULT '{}'::jsonb` to `kioku_memories`, `kioku_scenes`, `kioku_personas`, and `kioku_consolidation_decisions`. Add indexes only where they support likely queries. A useful first set is:
+Create the next numbered migration in `kioku-migrations/migrations/`. It should add `provenance jsonb NOT NULL DEFAULT '{}'::jsonb` to `kioku_memories`, `kioku_scenes`, `kioku_personas`, and `kioku_consolidation_decisions`. Add indexes only where they support partitioned queries. A useful first set is:
 
 ```sql
-CREATE INDEX IF NOT EXISTS kioku_memories_provenance_kind_idx
-  ON kioku_memories ((provenance->>'kind'));
+CREATE INDEX IF NOT EXISTS kioku_memories_space_provenance_kind_idx
+  ON kioku_memories (memory_space_id, (provenance->>'kind'));
 
-CREATE INDEX IF NOT EXISTS kioku_consolidation_provenance_kind_idx
-  ON kioku_consolidation_decisions ((provenance->>'kind'));
+CREATE INDEX IF NOT EXISTS kioku_consolidation_space_provenance_kind_idx
+  ON kioku_consolidation_decisions (memory_space_id, (provenance->>'kind'));
 ```
 
 Do not add many JSON expression indexes until a query needs them. Keep the migration additive and safe to run on an existing database.
@@ -127,7 +148,7 @@ Update `kioku-core/src/Kioku/Memory/Domain.hs`. Add a `provenance :: !Provenance
 
 Update the `FromJSON` instances where automatic deriving cannot default missing fields. `MemoryRecordedData` already has a custom legacy parser in `kioku-core/src/Kioku/Memory/EventStream.hs`; keep legacy Rei parsing and set `provenance = importedReiProvenance`. For native event payloads missing `provenance`, decode successfully with `manualProvenance`. This is required because old event streams and tests may replay old JSON.
 
-Update `kioku-core/src/Kioku/Memory.hs` so existing functions remain easy to call. Preserve existing `record`, `supersede`, `archive`, `updateTags`, `updateConfidence`, and `merge` behavior by filling `manualProvenance` when callers do not provide one. Add explicit provenance variants only if the command payload approach becomes awkward. Recommended names are `recordWithProvenance` and `mergeWithProvenance`; these wrappers construct or update command data and call the same internal `runMemoryCommand`. L1 distillation should use the provenance-aware variants.
+Update `kioku-core/src/Kioku/Memory.hs` so the context-aware functions fill `manualProvenance` when callers do not provide a more specific cause, while still using the caller's required memory-space context. Deprecated legacy wrappers may preserve the old signatures only by targeting the configured legacy space from plan 25. Add explicit provenance variants only if the command payload approach becomes awkward. Recommended names are `recordWithProvenance` and `mergeWithProvenance`; these wrappers construct or update command data and call the same internal `runMemoryCommand`. L1 distillation should use the provenance-aware variants.
 
 Update `kioku-core/src/Kioku/Memory/ReadModel.hs`. Add `provenance :: !Provenance` to `MemoryRow`, update decoders/encoders, and update `upsertMemoryStmt` and update statements so the row carries the provenance of the event that most recently changed the artifact. For `MemoryRecorded`, insert the event provenance. For `MemoryMerged`, update the loser row with merge provenance. For updates and archive/supersede events, update provenance to the corresponding event provenance. If tests reveal a more useful semantic, record it in the Decision Log before changing this rule.
 
@@ -141,21 +162,22 @@ Build an L1 provenance value from the session and evidence:
 
 ```haskell
 l1Provenance
-  { causedBySessionId = Just (idText sid)
-  , causedByTurnIds = (.turnId) <$> turnsUsedForExtraction
+  { memorySpaceId = access.memorySpaceId
+  , causedBySessionId = Just (idText sid)
+  , causedByTurnIds = selectedTurnIds evidenceDecision
   , causedByMemoryIds = candidate memory ids or fallback memory ids
   , causedByDecisionId = Just decisionId
-  , replayCallIds = extractCallId : consolidateCallIds
+  , evidenceDecisionId = Just (decisionIdOf evidenceDecision)
+  , modelCallEvidenceIds = extractCallId : consolidateCallIds
   , behavior = Just "Kioku.Distill.L1.distillSessionL1"
-  , model = Just (render model when available)
   }
 ```
 
-The exact helper should live in `Kioku.Provenance`; the record update shown above is illustrative. `buildExtractInput` currently returns only `ExtractInput`, so add a small local record such as `ExtractEvidence` that contains the input plus `sourceTurnIds` and fallback memory ids. Keep rendering functions unchanged unless they need to return ids. If the replay metadata plan has not been implemented yet, set `replayCallIds = []` and keep this plan independently deliverable.
+The exact helper should live in `Kioku.Provenance`; the record update shown above is illustrative. Consume `EvidenceDecision` from plan 23 instead of inventing a second `ExtractEvidence` type. `causedByTurnIds` is exactly the decision's selected IDs. If plan 16 has not been implemented, set `modelCallEvidenceIds = []` and keep this plan independently deliverable.
 
 When `applyDecision` stores a memory, pass L1 provenance into `Memory.record` or `recordWithProvenance`. When `applyDecision` merges target memories into the winner, pass merge provenance into `Memory.merge` or `mergeWithProvenance`. Update the `AuditRow` type and `insertAuditStmt` in `L1.hs` to write the same provenance JSON into `kioku_consolidation_decisions.provenance`.
 
-Milestone 3 acceptance: the replay-backed distillation test in `kioku-core/test/Kioku/DistillSpec.hs` proves that the stored L1 memory row has `provenance.kind == "distillation:l1"`, `causedBySessionId` set to the test session id, a non-empty `causedByTurnIds`, and `causedByDecisionId` equal to the audit row's decision id. It should also prove the loser merged row carries merge provenance rather than losing the chain.
+Milestone 3 acceptance: the replay-backed distillation test in `kioku-core/test/Kioku/DistillSpec.hs` proves that the stored L1 memory row has `provenance.kind == "distillation:l1"`, the test memory space and session, `causedByTurnIds` exactly equal to the evidence decision's selected IDs, `evidenceDecisionId` equal to that decision, and `causedByDecisionId` equal to the audit row's decision id. It should also prove excluded turn IDs are absent and the loser merged row carries merge provenance rather than losing the chain.
 
 ### Milestone 4 - Add L2/L3 artifact provenance
 
@@ -172,9 +194,9 @@ Milestone 4 acceptance: the existing distillation pyramid test verifies `SceneRo
 Choose one user-visible inspection path. The minimal path is to expose provenance in row-returning library APIs and add focused tests; the better path is to add CLI support. If adding CLI support, extend `kioku-cli` with a command such as:
 
 ```text
-kioku provenance memory MEMORY_ID
-kioku provenance scene --scope NAMESPACE[:KIND:REF]
-kioku provenance persona --scope NAMESPACE[:KIND:REF]
+kioku provenance memory --memory-space SPACE MEMORY_ID
+kioku provenance scene --memory-space SPACE --scope NAMESPACE[:KIND:REF]
+kioku provenance persona --memory-space SPACE --scope NAMESPACE[:KIND:REF]
 ```
 
 The command should print JSON so scripts can consume it. For a memory created by L1 distillation, expected output should include at least:
@@ -195,17 +217,14 @@ Milestone 5 acceptance: a user can run a documented command or library query and
 
 ## Concrete Steps
 
-All commands below run from the repository root:
-
-```bash
-cd /Users/shinzui/Keikaku/bokuno/kioku
-```
-
 Start by confirming the tree and project identity:
 
 ```bash
 git status --short
 mori show --full
+mori registry show shinzui/kiroku --full
+mori registry show shinzui/keiro --full
+mori registry show shinzui/baikai --full
 ```
 
 Expected `git status --short` output is empty or contains only files intentionally related to this ExecPlan. `mori show --full` should identify the project as `shinzui/kioku`.
@@ -213,33 +232,29 @@ Expected `git status --short` output is empty or contains only files intentional
 Create the provenance module and add it to the cabal file. After the module compiles, run:
 
 ```bash
-cabal build kioku-core
+nix develop -c cabal build kioku-core
 ```
 
-Expected final output includes a successful build and no `Failed to build` line:
-
-```text
-Building library for kioku-core-0.1.0.0...
-```
+Expected final output includes a successful build and no `Failed to build` line.
 
 Add the migration file:
 
 ```bash
-ls kioku-migrations/sql-migrations/*kioku-provenance.sql
-cabal build kioku-migrations
+ls kioku-migrations/migrations/*kioku-provenance.sql
+nix develop -c cabal build kioku-migrations
 ```
 
 Then update memory event payloads and read models. Run the focused tests after each chunk:
 
 ```bash
-cabal test kioku-core --test-options='-p "Rei legacy codec compatibility"'
-cabal test kioku-core --test-options='-p "Distillation pyramid"'
+nix develop -c cabal test kioku-core --test-options='-p "Rei legacy codec compatibility"'
+nix develop -c cabal test kioku-core --test-options='-p "Distillation pyramid"'
 ```
 
 When the full feature is wired, run:
 
 ```bash
-cabal test all
+nix develop -c cabal test all
 ```
 
 Expected final test summary:
@@ -252,7 +267,7 @@ Test suite kioku-test: PASS
 If adding CLI inspection, run a smoke command after creating test data through an existing demo or distillation flow:
 
 ```bash
-cabal run kioku -- provenance memory MEMORY_ID
+nix develop -c cabal run kioku -- provenance memory --memory-space SPACE MEMORY_ID
 ```
 
 Expected output is valid JSON containing a `kind` field. The exact ids vary by run.
@@ -268,6 +283,7 @@ Second, a manual memory write produces default provenance. A focused unit or int
 
 ```text
 provenance.kind == "manual"
+provenance.memorySpaceId == <request memory space>
 provenance.causedBySessionId == Nothing
 provenance.causedByMemoryIds == []
 ```
@@ -276,8 +292,10 @@ Third, L1 distillation produces linked provenance. Extend `kioku-core/test/Kioku
 
 ```text
 provenance.kind == "distillation:l1"
+provenance.memorySpaceId == <test memory space>
 provenance.causedBySessionId == Just <test session id>
-provenance.causedByTurnIds is not empty
+provenance.causedByTurnIds == <evidence decision selected turn ids>
+provenance.evidenceDecisionId == Just <evidence decision id>
 provenance.causedByDecisionId == Just <audit decision id>
 ```
 
@@ -288,19 +306,24 @@ Fourth, L2 and L3 artifacts expose their source sets. The distillation pyramid t
 ```text
 scene.provenance.kind == "distillation:l2"
 scene.provenance.causedByMemoryIds contains the atom memory id
-scene.provenance.replayCallIds is [] before replay metadata is implemented, or contains the scene replay call id after it is implemented
+scene.provenance.modelCallEvidenceIds is [] before model-call evidence is implemented, or contains the scene call id after it is implemented
 persona.provenance.kind == "distillation:l3"
 persona.provenance.causedBySceneIds contains the scene id
-persona.provenance.replayCallIds is [] before replay metadata is implemented, or contains the persona replay call id after it is implemented
+persona.provenance.modelCallEvidenceIds is [] before model-call evidence is implemented, or contains the persona call id after it is implemented
 ```
 
-Fifth, if CLI inspection is included, `kioku provenance memory MEMORY_ID` prints parseable JSON and includes the expected `kind` and cause fields. This proves the feature is visible to users without direct SQL access.
+Fifth, two spaces with identical namespace/scope fixtures cannot inspect each other's provenance.
+Every library and CLI inspection accepts memory space before artifact identity.
+
+Sixth, if CLI inspection is included, `kioku provenance memory --memory-space SPACE MEMORY_ID`
+prints parseable JSON and includes the expected `kind`, `memorySpaceId`, and cause fields. This
+proves the feature is visible to users without direct SQL access.
 
 The validation commands are:
 
 ```bash
-cabal build all
-cabal test all
+nix develop -c cabal build all
+nix develop -c cabal test all
 ```
 
 If the migration is changed, also run a migration-backed test through the existing test suite, because `withKiokuMigratedDatabase` applies the SQL migrations before tests. No separate production database migration command is required for the automated test path.
@@ -308,13 +331,15 @@ If the migration is changed, also run a migration-backed test through the existi
 
 ## Idempotence and Recovery
 
-The SQL migration must be idempotent. Use `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`. Do not mutate old migration files. If the migration fails during development on a disposable test database, rerun `cabal test all`; the test support creates fresh migrated databases.
+The SQL migration must be idempotent. Use `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`. Do not mutate old migration files. If the migration fails during development on a disposable test database, rerun `nix develop -c cabal test all`; the test support creates fresh migrated databases.
 
 The Haskell changes should preserve decoding of old events by supplying default provenance when JSON lacks the new field. If a test fails with a JSON parse error mentioning `provenance`, fix the `FromJSON` instance or legacy parser rather than editing old event fixtures.
 
 If row decoder changes break unrelated read models, isolate the change by adding provenance to row-returning models first and only then to public record types. Keep each intermediate state buildable. If a direct CLI provenance command proves too large, defer it and satisfy first visibility through library row fields plus tests; record that decision in the Decision Log.
 
-If a cross-repo Keiro/Kiroku change becomes necessary, stop and split that work into a separate ExecPlan. Do not opportunistically edit `/Users/shinzui/Keikaku/bokuno/keiro` or `/Users/shinzui/Keikaku/bokuno/kiroku-project/kiroku` from this plan. This plan's scope is Kioku-owned provenance in payloads and read models.
+If a change to `mori://shinzui/keiro/packages/keiro` or
+`mori://shinzui/kiroku/packages/kiroku-store` becomes necessary, stop and split that work into
+the owning repository. This plan's scope is Kioku-owned provenance in payloads and read models.
 
 
 ## Interfaces and Dependencies
@@ -407,9 +432,9 @@ data AuditRow = AuditRow
 
 External dependencies and how they shape this plan:
 
-`Kiroku.Store.Types.RecordedEvent` contains store-level event id, causation id, correlation id, metadata, and global position. `Kiroku.Store.Causation` can query causation chains. These are not the first implementation target because the Kioku command path goes through Keiro.
+`mori://shinzui/kiroku/packages/kiroku-store` exposes `Kiroku.Store.Types.RecordedEvent` with store-level event id, causation id, correlation id, metadata, and global position. `Kiroku.Store.Causation` can query causation chains. These are not the first implementation target because the Kioku command path goes through Keiro.
 
-`Keiro.Command.RunCommandOptions` currently exposes `eventIds`, `metadata`, and tracing, but not plain command causation/correlation fields. Use `metadata` only for ambient context if needed. Do not rely on metadata for the core Kioku provenance contract; store the core contract in event payloads and read-model columns.
+`mori://shinzui/keiro/packages/keiro` exposes `Keiro.Command.RunCommandOptions` with `eventIds`, `metadata`, and tracing, but not plain command causation/correlation fields. Use `metadata` only for ambient context if needed. Do not rely on metadata for the core Kioku provenance contract; store the core contract in event payloads and read-model columns.
 
 `Data.Aeson` is the JSON library to use for `Provenance` encoding. `Hasql.Encoders` and `Hasql.Decoders` are already used in `Kioku.Memory.ReadModel`, `Kioku.Distill.L1`, `Kioku.Distill.L2`, and `Kioku.Distill.L3`; extend the existing JSONB patterns there.
 
@@ -418,11 +443,11 @@ The provenance type should include this replay link field when implemented:
 ```haskell
 data Provenance = Provenance
   { ...
-  , replayCallIds :: ![Text]
+  , modelCallEvidenceIds :: ![Text]
   }
 ```
 
-This field points to distillation replay metadata rows from `docs/plans/16-add-distillation-replay-metadata.md`. It must default to `[]` for old events, manual writes, imported rows, and deployments where that later plan has not been implemented.
+This field points to Baikai-derived distillation evidence rows from `docs/plans/16-add-distillation-replay-metadata.md`. It must default to `[]` for old events, manual writes, imported rows, and deployments where that plan has not been implemented.
 
 Every commit made while implementing this plan must include:
 
@@ -432,4 +457,8 @@ ExecPlan: docs/plans/8-add-first-class-provenance.md
 
 ## Revision Notes
 
-- 2026-07-07: Updated the plan after reviewing ActiveGraph's log-primary lineage argument. The change keeps first-class provenance focused on causal artifact links, adds optional `replayCallIds`, and points detailed LLM replay-call capture to `docs/plans/16-add-distillation-replay-metadata.md`.
+- 2026-07-07: Updated the plan after the earlier log-primary lineage review. The change kept first-class provenance focused on causal artifact links and delegated detailed model-call capture to `docs/plans/16-add-distillation-replay-metadata.md`. The field proposed then was renamed by the 2026-08-06 revision.
+- 2026-08-06: Incorporated the secure-evidence and portfolio-isolation MasterPlans. Provenance is
+  now memory-space scoped, references evidence-selection decisions, and uses Baikai model-call
+  evidence IDs instead of a Kioku-specific replay hash vocabulary. Migration instructions now
+  target the active pg-migrate chain.

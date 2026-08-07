@@ -8,6 +8,7 @@ where
 import Data.Text qualified as Text
 import Kioku.Api.Scope (MemoryScope)
 import Kioku.App (runAppIO, withNoopAppEnv)
+import Kioku.Cli.Context (cliMemorySpace)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope)
 import Kiroku.Store.Connection (defaultConnectionSettings)
@@ -32,8 +33,9 @@ personaOptionsParser =
 runPersona :: PersonaOptions -> IO ()
 runPersona opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
+  space <- cliMemorySpace
   withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
-    result <- runAppIO env (getPersonaByScope opts.scope)
+    result <- runAppIO env (getPersonaByScope space opts.scope)
     case result of
       Left storeErr -> ioError (userError ("kioku persona store error: " <> show storeErr))
       Right Nothing -> putStrLn "(no persona yet)"

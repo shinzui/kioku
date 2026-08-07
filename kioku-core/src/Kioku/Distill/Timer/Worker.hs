@@ -128,9 +128,9 @@ fireKiokuTimer contexts rt finder row = do
   l1Result <- fireL1Timer contexts rt finder row
   case l1Result of
     FireNotMine -> do
-      l2Result <- fireL2SceneTimer rt row
+      l2Result <- fireL2SceneTimer contexts rt row
       case l2Result of
-        FireNotMine -> fireL3PersonaTimer rt row
+        FireNotMine -> fireL3PersonaTimer contexts rt row
         outcome -> pure outcome
     outcome -> pure outcome
 

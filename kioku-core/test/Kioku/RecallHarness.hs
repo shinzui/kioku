@@ -82,6 +82,7 @@ import Hasql.Decoders qualified as D
 import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
+import Kioku.Api.Access (memorySpaceIdText)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Recall
@@ -94,6 +95,7 @@ import Kioku.Recall
     selectVectorCandidatesStmt,
     vectorCandidateQuery,
   )
+import Kioku.SpaceFixtures (testSpace)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
 import Text.Read (readMaybe)
@@ -148,15 +150,28 @@ data CorpusConfig = CorpusConfig
   deriving stock (Eq, Show)
 
 -- | The probe the previous initiative recorded as "1648 rows removed by filter, zero returned":
--- 2000 in-scope memories, 2000 nearer decoys in another namespace.
+-- in-scope memories in one namespace, nearer decoys in another.
 --
 -- Every decoy is strictly nearer the query than every in-scope row. In cosine distance the
 -- decoys span roughly 0.001 to 0.12 and the in-scope rows roughly 0.30 to 0.64, so the index,
 -- descending towards the query, meets all 2000 decoys before the first true answer.
+--
+-- __@inScopeCount@ was 2000 until the memory-space partition landed, and 2000 stopped
+-- starving.__ Not because anything about the ANN scan changed, but because the partition-first
+-- rebuild of @kioku_memories_scope_idx@ — now @kioku_memories_space_scope_idx@, leading with
+-- @memory_space_id@ — made the planner prefer an ordinary index scan of the in-scope rows plus
+-- a top-N sort over the HNSW scan entirely. Measured: at 2000 in-scope rows the exact plan cost
+-- 213.97 and won; dropping that one index restored the HNSW plan and the starvation with it,
+-- while dropping the other two new partition-first indexes changed nothing.
+--
+-- The sort's cost grows with the in-scope row count and the HNSW scan's does not, so the fix is
+-- the one this file's starvation case asks for: a harsher corpus, not a relaxed assertion. 4000
+-- is the first power-of-two step at which the planner goes back to HNSW; it was measured
+-- starving at 4000, 8000, 16000 and 32000, and it is the smallest of those.
 defaultStarvationCorpus :: CorpusConfig
 defaultStarvationCorpus =
   CorpusConfig
-    { inScopeCount = 2000,
+    { inScopeCount = 4000,
       decoyCount = 2000,
       inScopeAngles = (0.8, 1.2),
       decoyAngles = (0.05, 0.5)
@@ -232,11 +247,13 @@ insertBatch [] = pure ()
 insertBatch rows =
   runTransaction . Tx.sql . encodeUtf8 $
     "INSERT INTO kioku_memories \
-    \(memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at, embedding) VALUES "
+    \(memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at, embedding) VALUES "
       <> Text.intercalate ", " (row <$> rows)
   where
     row (memoryId, namespace, t) =
       "('"
+        <> memorySpaceIdText testSpace
+        <> "', '"
         <> memoryId
         <> "', 'agent', '"
         <> namespace
@@ -407,7 +424,8 @@ scoreRecallQuality corpus k rows plan annPassRows fallbackFired =
 vectorRequest :: SeededCorpus -> RecallRequest
 vectorRequest corpus =
   RecallRequest
-    { scope = corpus.targetScope,
+    { memorySpaceId = testSpace,
+      scope = corpus.targetScope,
       query = "seeded corpus row",
       strategy = Embedding,
       maxResults = 10
@@ -427,6 +445,7 @@ explainVectorQueryWith settings corpus =
     traverse_ (Tx.sql . encodeUtf8) settings
     Tx.statement
       ( Text.pack (show (Vector.toList queryVector)),
+        memorySpaceIdText testSpace,
         scopeNamespaceText corpus.targetScope,
         scopeKindText corpus.targetScope,
         scopeRefText corpus.targetScope,
@@ -452,28 +471,36 @@ explainVectorQueryWith settings corpus =
 -- corpus the narrow projection made the sort look cheap, the planner took the exact plan, and
 -- the EXPLAIN reported 50 happy rows — while the real query, with its 13 real columns, took
 -- the HNSW plan and returned zero. The instrument was describing a query nobody runs.
-explainVectorStmt :: Statement (Text, Text, Maybe Text, Maybe Text, Int32) [Text]
+-- __The memory-space predicate is load-bearing for the same reason the select list is.__ It is
+-- the leading column of every partition-first index the schema installs, so an @EXPLAIN@ that
+-- omits it cannot use any of them and describes a plan the real query would never take. That is
+-- not hypothetical: when the partition landed, this copy still said @WHERE namespace = $2@, and
+-- it reported an index scan whose @Index Cond@ named the namespace alone — a plan no live query
+-- can produce.
+explainVectorStmt :: Statement (Text, Text, Text, Maybe Text, Maybe Text, Int32) [Text]
 explainVectorStmt =
   preparable
     ( "EXPLAIN (ANALYZE, BUFFERS) SELECT "
         <> memoryRecordColumns
         <> " FROM kiroku.kioku_memories \
            \ WHERE status = 'active' \
-           \   AND namespace = $2 \
-           \   AND (($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4)) \
+           \   AND memory_space_id = $2 \
+           \   AND namespace = $3 \
+           \   AND (($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5)) \
            \   AND embedding IS NOT NULL \
            \ ORDER BY embedding <=> $1::vector \
-           \ LIMIT $5"
+           \ LIMIT $6"
     )
     encoder
     (D.rowList (D.column (D.nonNullable D.text)))
   where
     encoder =
-      ((\(v, _, _, _, _) -> v) >$< E.param (E.nonNullable E.text))
-        <> ((\(_, n, _, _, _) -> n) >$< E.param (E.nonNullable E.text))
-        <> ((\(_, _, sk, _, _) -> sk) >$< E.param (E.nullable E.text))
-        <> ((\(_, _, _, sr, _) -> sr) >$< E.param (E.nullable E.text))
-        <> ((\(_, _, _, _, l) -> l) >$< E.param (E.nonNullable E.int4))
+      ((\(v, _, _, _, _, _) -> v) >$< E.param (E.nonNullable E.text))
+        <> ((\(_, space, _, _, _, _) -> space) >$< E.param (E.nonNullable E.text))
+        <> ((\(_, _, n, _, _, _) -> n) >$< E.param (E.nonNullable E.text))
+        <> ((\(_, _, _, sk, _, _) -> sk) >$< E.param (E.nullable E.text))
+        <> ((\(_, _, _, _, sr, _) -> sr) >$< E.param (E.nullable E.text))
+        <> ((\(_, _, _, _, _, l) -> l) >$< E.param (E.nonNullable E.int4))
 
 -- | A failure message that reads as a diagnosis rather than an assertion.
 --

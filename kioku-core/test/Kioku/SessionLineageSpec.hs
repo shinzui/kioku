@@ -8,6 +8,7 @@ import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
 import Hasql.Transaction qualified as Tx
+import Kioku.Api.Access (memorySpaceIdText)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
 import Kioku.App (runAppIO, withNoopAppEnv)
 import Kioku.Id (SessionId, genSessionId, idText)
@@ -64,8 +65,8 @@ testDelegationLineage =
           startFixture parent "parent" Nothing Nothing 0 now
           startFixture child1 "child-1" Nothing (Just parent) 1 (addUTCTime 1 now)
           startFixture child2 "child-2" (Just child1) (Just parent) 1 child2Started
-          children <- Session.getDelegationChildren parent >>= liftEither "getDelegationChildren"
-          childChain <- Session.getChain child2 >>= liftEither "getChain"
+          children <- Session.getDelegationChildren testSpace parent >>= liftEither "getDelegationChildren"
+          childChain <- Session.getChain testSpace child2 >>= liftEither "getChain"
           pure LineageResult {children, childChain}
       case result of
         Left storeErr -> assertFailure ("store error: " <> show storeErr)
@@ -160,7 +161,7 @@ testChainTerminatesOnCycle =
       result <-
         runAppIO env do
           insertCyclicPair a b
-          Session.getChain a >>= liftEither "getChain"
+          Session.getChain testSpace a >>= liftEither "getChain"
       case result of
         Left storeErr -> assertFailure ("store error: " <> show storeErr)
         Right chain -> do
@@ -177,16 +178,22 @@ insertCyclicPair ::
   Eff es ()
 insertCyclicPair a b =
   runTransaction . Tx.sql . encodeUtf8 $
-    "INSERT INTO kioku_sessions (session_id, agent_id, focus, namespace, delegation_depth, status, started_at, previous_session_id) VALUES "
+    "INSERT INTO kioku_sessions (memory_space_id, session_id, agent_id, focus, namespace, delegation_depth, status, started_at, previous_session_id) VALUES "
       <> "('"
+      <> space
+      <> "','"
       <> idText a
       <> "','t','f','kioku-test',0,'completed',NOW(),'"
       <> idText b
       <> "'),('"
+      <> space
+      <> "','"
       <> idText b
       <> "','t','f','kioku-test',0,'completed',NOW() - interval '1 second','"
       <> idText a
       <> "')"
+  where
+    space = memorySpaceIdText testSpace
 
 liftEither :: (Show e, IOE :> es) => String -> Either e a -> Eff es a
 liftEither label = \case

@@ -15,6 +15,7 @@ import Hasql.Decoders qualified as D
 import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
+import Kioku.Api.Access (memorySpaceIdText)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
@@ -33,6 +34,7 @@ import Kioku.RecallHarness
     queryVector,
     seedCorpus,
   )
+import Kioku.SpaceFixtures (testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Error (StoreError)
@@ -424,7 +426,7 @@ ns2Global = ScopeGlobal (Namespace "ns2")
 
 request :: MemoryScope -> Text -> RecallRequest
 request scope query =
-  RecallRequest {scope, query, strategy = Keyword, maxResults = 10}
+  RecallRequest {memorySpaceId = testSpace, scope, query, strategy = Keyword, maxResults = 10}
 
 memoryIds :: [MemoryRecord] -> [Text]
 memoryIds = sort . fmap (\row -> row.memoryId)
@@ -444,11 +446,13 @@ seedMemories ::
   Eff es ()
 seedMemories rows =
   runTransaction . Tx.sql . encodeUtf8 $
-    "INSERT INTO kioku_memories (memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) VALUES "
+    "INSERT INTO kioku_memories (memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) VALUES "
       <> Text.intercalate ", " (row <$> rows)
   where
     row (memoryId, scope, content, status) =
       "('"
+        <> memorySpaceIdText testSpace
+        <> "', '"
         <> memoryId
         <> "', 'agent', '"
         <> namespaceOf scope

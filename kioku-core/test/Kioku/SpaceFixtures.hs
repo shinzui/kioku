@@ -15,6 +15,7 @@ module Kioku.SpaceFixtures
     otherActor,
     testContext,
     otherContext,
+    legacyContext,
     testActorPrincipal,
     otherActorPrincipal,
     testContextProvider,
@@ -33,6 +34,7 @@ import Kioku.Api.Access
     RecordedPrincipal,
     assumeAuthorizedContextProvider,
     assumeAuthorizedMemoryContext,
+    legacyMemorySpaceId,
     memoryContextRecordedActor,
     mkMemorySpaceId,
     mkPrincipalRef,
@@ -55,6 +57,12 @@ testContext = contextFor testSpace testActor
 
 otherContext :: MemoryAccessContext
 otherContext = contextFor otherSpace otherActor
+
+-- | The space every row written before memory spaces existed was backfilled into. Tests that
+-- rehearse an upgrade — a pre-partition event stream, a pre-partition timer payload — act in
+-- this one, because it is the only space such data can be in.
+legacyContext :: MemoryAccessContext
+legacyContext = contextFor legacyMemorySpaceId testActor
 
 -- | The provider a background worker under test uses: authorized for whatever space the work
 -- names, as 'testActor'.

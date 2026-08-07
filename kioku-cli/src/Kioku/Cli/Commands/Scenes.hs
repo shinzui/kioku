@@ -8,6 +8,7 @@ where
 import Data.Text qualified as Text
 import Kioku.Api.Scope (MemoryScope)
 import Kioku.App (runAppIO, withNoopAppEnv)
+import Kioku.Cli.Context (cliMemorySpace)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Distill.L2 (SceneRow (..), getScenesByScope)
 import Kiroku.Store.Connection (defaultConnectionSettings)
@@ -32,8 +33,9 @@ scenesOptionsParser =
 runScenes :: ScenesOptions -> IO ()
 runScenes opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
+  space <- cliMemorySpace
   withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
-    result <- runAppIO env (getScenesByScope opts.scope)
+    result <- runAppIO env (getScenesByScope space opts.scope)
     case result of
       Left storeErr -> ioError (userError ("kioku scenes store error: " <> show storeErr))
       Right [] -> putStrLn "(no scenes)"

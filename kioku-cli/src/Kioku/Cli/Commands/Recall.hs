@@ -10,6 +10,7 @@ import Data.Text qualified as Text
 import Kioku.Api.Scope (MemoryScope)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.App (runAppIO, withNoopAppEnv)
+import Kioku.Cli.Context (cliMemorySpace)
 import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
@@ -62,11 +63,13 @@ runRecall :: RecallOptions -> IO ()
 runRecall opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
   config <- resolveEmbeddingConfig
+  space <- cliMemorySpace
   withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
     let model = toEmbeddingModel config
         request =
           RecallRequest
-            { scope = opts.scope,
+            { memorySpaceId = space,
+              scope = opts.scope,
               query = opts.query,
               strategy = opts.strategy,
               maxResults = opts.limit

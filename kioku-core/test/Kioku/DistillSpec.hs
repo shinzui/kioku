@@ -218,9 +218,9 @@ testWorkerPropagatesConfidence = withDistillWorkspaceEnv \env workspace -> do
       -- 'recordForgetFixture' records at 'HighConfidence'.
       recordForgetFixture memoryId scope confidenceContent now
       void (drainTimers runtime)
-      builtScene <- getScenesByScope scope >>= liftIO . expectOneScene "the initial distillation"
+      builtScene <- getScenesByScope testSpace scope >>= liftIO . expectOneScene "the initial distillation"
       builtPersona <-
-        getPersonaByScope scope >>= liftIO . expectJust "a persona after the initial distillation"
+        getPersonaByScope testSpace scope >>= liftIO . expectJust "a persona after the initial distillation"
       personaRunsBefore <- liftIO (readIORef calls.personaCalls)
 
       lowered <-
@@ -231,9 +231,9 @@ testWorkerPropagatesConfidence = withDistillWorkspaceEnv \env workspace -> do
       void (drainTimers runtime)
 
       refreshedScene <-
-        getScenesByScope scope >>= liftIO . expectOneScene "after lowering the confidence"
+        getScenesByScope testSpace scope >>= liftIO . expectOneScene "after lowering the confidence"
       refreshedPersona <-
-        getPersonaByScope scope >>= liftIO . expectJust "a persona after lowering the confidence"
+        getPersonaByScope testSpace scope >>= liftIO . expectJust "a persona after lowering the confidence"
       personaRunsAfter <- liftIO (readIORef calls.personaCalls)
       mirror <- liftIO (TextIO.readFile (sceneMirrorPath workspace refreshedScene))
 
@@ -350,9 +350,9 @@ testEmptyScopeDeletesArtifacts = withDistillWorkspaceEnv \env workspace -> do
       recordForgetFixture alphaId scope alphaContent now
       recordForgetFixture betaId scope betaContent now
 
-      firstScene <- regenerateScene runtime scope
+      firstScene <- regenerateScene runtime testSpace scope
       sceneRow <- liftIO (expectJustRow "the first regeneration writes a scene" firstScene)
-      firstPersona <- regeneratePersona runtime scope
+      firstPersona <- regeneratePersona runtime testSpace scope
       personaRow <- liftIO (expectJustRow "the first regeneration writes a persona" firstPersona)
 
       -- Both mirrors have to be observed here, while they still exist: the whole
@@ -365,17 +365,17 @@ testEmptyScopeDeletesArtifacts = withDistillWorkspaceEnv \env workspace -> do
       -- Forget one of the two: the scene must rebuild from the survivor alone.
       archivedAlpha <- Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = alphaId, archivedAt = now}
       void (liftIO (expectRight "Memory.archiveWithContext testContext alpha" archivedAlpha))
-      afterOne <- regenerateScene runtime scope
+      afterOne <- regenerateScene runtime testSpace scope
       survivorScene <- liftIO (expectJustRow "the scene survives one forget" afterOne)
 
       -- Forget the last one: nothing may be left to regenerate from.
       archivedBeta <- Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = betaId, archivedAt = now}
       void (liftIO (expectRight "Memory.archiveWithContext testContext beta" archivedBeta))
-      emptyScene <- regenerateScene runtime scope
-      emptyPersona <- regeneratePersona runtime scope
+      emptyScene <- regenerateScene runtime testSpace scope
+      emptyPersona <- regeneratePersona runtime testSpace scope
 
-      scenes <- getScenesByScope scope
-      persona <- getPersonaByScope scope
+      scenes <- getScenesByScope testSpace scope
+      persona <- getPersonaByScope testSpace scope
       pure (mirrorsWritten, scenePath, personaPath, survivorScene, emptyScene, emptyPersona, scenes, persona)
   case result of
     Left storeErr -> assertFailure ("store error: " <> show storeErr)
@@ -476,9 +476,9 @@ testWorkerPropagatesArchive = withDistillWorkspaceEnv \env workspace -> do
       recordForgetFixture betaId scope betaContent now
       void (drainTimers runtime)
 
-      builtScene <- getScenesByScope scope >>= liftIO . expectOneScene "the initial distillation"
+      builtScene <- getScenesByScope testSpace scope >>= liftIO . expectOneScene "the initial distillation"
       builtPersona <-
-        getPersonaByScope scope >>= liftIO . expectJust "a persona after the initial distillation"
+        getPersonaByScope testSpace scope >>= liftIO . expectJust "a persona after the initial distillation"
       let scenePath = sceneMirrorPath workspace builtScene
           personaPath = personaMirrorPath workspace builtPersona
       builtMirrors <- liftIO ((&&) <$> doesFileExist scenePath <*> doesFileExist personaPath)
@@ -487,15 +487,15 @@ testWorkerPropagatesArchive = withDistillWorkspaceEnv \env workspace -> do
       archivedAlpha <- Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = alphaId, archivedAt = now}
       void (liftIO (expectRight "Memory.archiveWithContext testContext alpha" archivedAlpha))
       void (drainTimers runtime)
-      survivorScene <- getScenesByScope scope >>= liftIO . expectOneScene "after forgetting alpha"
+      survivorScene <- getScenesByScope testSpace scope >>= liftIO . expectOneScene "after forgetting alpha"
       survivorMirror <- liftIO (TextIO.readFile scenePath)
 
       -- Forget beta, the last one. Every artifact has to go with it.
       archivedBeta <- Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = betaId, archivedAt = now}
       void (liftIO (expectRight "Memory.archiveWithContext testContext beta" archivedBeta))
       void (drainTimers runtime)
-      emptyScenes <- getScenesByScope scope
-      emptyPersona <- getPersonaByScope scope
+      emptyScenes <- getScenesByScope testSpace scope
+      emptyPersona <- getPersonaByScope testSpace scope
       survivingMirrors <- liftIO ((||) <$> doesFileExist scenePath <*> doesFileExist personaPath)
 
       -- Timer firing is at-least-once, so another pass must change nothing.
@@ -565,7 +565,7 @@ testWorkerPropagatesSupersedeAndMerge = withDistillWorkspaceEnv \env workspace -
       void (liftIO (expectRight "Memory.supersedeWithContext" superseded))
       void (drainTimers supersedeRuntime)
       supersedeScene <-
-        getScenesByScope supersedeScope >>= liftIO . expectOneScene "after superseding"
+        getScenesByScope testSpace supersedeScope >>= liftIO . expectOneScene "after superseding"
 
       -- Merge, in a second scope.
       recordForgetFixture loserId mergeScope loserContent now
@@ -574,7 +574,7 @@ testWorkerPropagatesSupersedeAndMerge = withDistillWorkspaceEnv \env workspace -
       merged <- Memory.mergeWithContext testContext loserId winnerId
       void (liftIO (expectRight "Memory.mergeWithContext" merged))
       void (drainTimers mergeRuntime)
-      mergeScene <- getScenesByScope mergeScope >>= liftIO . expectOneScene "after merging"
+      mergeScene <- getScenesByScope testSpace mergeScope >>= liftIO . expectOneScene "after merging"
 
       pure (supersedeScene, mergeScene)
   case result of
@@ -793,14 +793,14 @@ testReplayDistillation = withDistillWorkspaceEnv \env workspace -> do
       writeFixtureSession sid scope now
       distillResult <- distillSessionL1 testContext RespectWatermark runtime (scopedScanCandidates 5) sid
       summary <- liftIO (expectDistilled "distillSessionL1 testContext" distillResult)
-      sceneResult <- regenerateScene runtime scope
+      sceneResult <- regenerateScene runtime testSpace scope
       _scene <- liftIO (expectRight "regenerateScene" sceneResult)
-      personaResult <- regeneratePersona runtime scope
+      personaResult <- regeneratePersona runtime testSpace scope
       _persona <- liftIO (expectRight "regeneratePersona" personaResult)
       memories <- loadMemoryStatuses scope
       mergeAuditCount <- loadMergeAuditCount scope
-      scenes <- getScenesByScope scope
-      persona <- getPersonaByScope scope
+      scenes <- getScenesByScope testSpace scope
+      persona <- getPersonaByScope testSpace scope
       loserEvents <- loadLoserEvents memories
       pure DistillResult {summary, memories, scenes, persona, mergeAuditCount, loserEvents}
   case result of

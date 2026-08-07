@@ -8,6 +8,7 @@ import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), mkName
 import Kioku.Distill.L2 (l2SceneTimerId, sceneRowId)
 import Kioku.Distill.L3 (l3PersonaTimerId, personaRowId)
 import Kioku.Distill.ScopeIdentity (escapeScopeComponent, scopeIdentity, scopeSlugFromColumns)
+import Kioku.SpaceFixtures (otherSpace, testSpace)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, testCase, (@?=))
 
@@ -19,8 +20,28 @@ tests =
       testCase "well-formed scopes keep their exact legacy ids" testLegacyStability,
       testCase "escaping is injective on adversarial components" testEscapeInjective,
       testCase "mirror slugs separate scopes the sanitiser cannot" testSlugCollision,
-      testCase "namespace and kind reject the reserved characters" testValidators
+      testCase "namespace and kind reject the reserved characters" testValidators,
+      testCase "one scope in two memory spaces derives different timer ids" testSpaceSeparatesTimers
     ]
+
+-- | The scene and persona timers are keyed by a scope, and two memory spaces are allowed to
+-- use the same one. Without the space in the id, keiro's @scheduleTimerTx@ upsert would treat
+-- one space's regeneration as a re-arming of the other's and only one payload would survive.
+testSpaceSeparatesTimers :: Assertion
+testSpaceSeparatesTimers = do
+  assertAllDistinct
+    "scene timer id across spaces"
+    [ show (l2SceneTimerId testSpace collidingEntity "src"),
+      show (l2SceneTimerId otherSpace collidingEntity "src")
+    ]
+  assertAllDistinct
+    "persona timer id across spaces"
+    [ show (l3PersonaTimerId testSpace collidingEntity fireAt),
+      show (l3PersonaTimerId otherSpace collidingEntity fireAt)
+    ]
+  where
+    fireAt :: UTCTime
+    fireAt = read "2026-07-11 00:00:00 UTC"
 
 -- | The canonical collision. Both of these used to render @a/b/c@, so they shared one scene
 -- row, one persona row, one timer id and one mirror file — and the upserts do not update the
@@ -38,10 +59,14 @@ testCollision = do
   assertAllDistinct "persona row id" [personaRowId collidingGlobal, personaRowId collidingEntity]
   assertAllDistinct
     "scene timer id"
-    [show (l2SceneTimerId collidingGlobal "src"), show (l2SceneTimerId collidingEntity "src")]
+    [ show (l2SceneTimerId testSpace collidingGlobal "src"),
+      show (l2SceneTimerId testSpace collidingEntity "src")
+    ]
   assertAllDistinct
     "persona timer id"
-    [show (l3PersonaTimerId collidingGlobal fireAt), show (l3PersonaTimerId collidingEntity fireAt)]
+    [ show (l3PersonaTimerId testSpace collidingGlobal fireAt),
+      show (l3PersonaTimerId testSpace collidingEntity fireAt)
+    ]
   assertAllDistinct
     "mirror slug"
     [ scopeSlugFromColumns "a/b/c" Nothing Nothing,

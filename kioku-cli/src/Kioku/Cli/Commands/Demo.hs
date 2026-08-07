@@ -68,7 +68,7 @@ runDemo DemoOptions = do
             }
     result <- runAppIO env do
       writeResult <- Memory.recordWithContext context payload
-      recallResult <- Recall.getActiveByScope scope
+      recallResult <- Recall.getActiveByScope (memoryContextSpace context) scope
       pure (writeResult, recallResult)
     case result of
       Left storeErr -> ioError (userError ("kioku demo store error: " <> show storeErr))

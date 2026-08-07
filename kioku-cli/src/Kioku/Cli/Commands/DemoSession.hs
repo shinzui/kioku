@@ -82,8 +82,8 @@ runDemoSession DemoSessionOptions = do
       startResult <- Session.startWithContext context startPayload
       turnResult <- Session.recordTurnWithContext context turnPayload
       completeResult <- Session.completeWithContext context completePayload
-      rowResult <- Session.getById sid
-      turnsResult <- Session.getTurns sid
+      rowResult <- Session.getById space sid
+      turnsResult <- Session.getTurns space sid
       pure (startResult, turnResult, completeResult, rowResult, turnsResult)
     case result of
       Left storeErr -> ioError (userError ("kioku session demo store error: " <> show storeErr))

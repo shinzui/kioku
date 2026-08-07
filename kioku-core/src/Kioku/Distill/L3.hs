@@ -5,8 +5,10 @@ module Kioku.Distill.L3
     PersonaRow (..),
     fireL3PersonaTimer,
     getPersonaByScope,
+    PersonaTimerPayload (..),
     l3PersonaProcessManagerName,
     l3PersonaTimerId,
+    partitionedCorrelationId,
     mirrorPersonaToCurrentWorkspace,
     mirrorPersonaToWorkspace,
     personaMirrorPath,
@@ -16,11 +18,11 @@ module Kioku.Distill.L3
   )
 where
 
-import Contravariant.Extras (contrazip3)
 import Control.Exception (IOException, try)
 import Crypto.Hash (Digest, SHA256)
 import Crypto.Hash qualified as Hash
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Types (withObject, (.:))
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Functor.Contravariant ((>$<))
@@ -39,11 +41,13 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
+import Kioku.Api.Access (MemoryContextProvider (..), MemorySpaceId, memoryContextSpace, memorySpaceIdText)
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..))
 import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runPersonaDistillation)
 import Kioku.Distill.ScopeIdentity (scopeIdentity, scopeSlugFromColumns)
 import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
+import Kioku.Partition (memorySpaceColumn, memorySpaceParam, parsePartitionSpace)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
@@ -57,7 +61,8 @@ data L3Error
   deriving stock (Generic, Show)
 
 data PersonaRow = PersonaRow
-  { personaId :: !Text,
+  { memorySpaceId :: !MemorySpaceId,
+    personaId :: !Text,
     namespace :: !Text,
     scopeKind :: !(Maybe Text),
     scopeRef :: !(Maybe Text),
@@ -77,11 +82,22 @@ data PersonaSceneRow = PersonaSceneRow
   }
   deriving stock (Generic, Eq, Show)
 
-newtype PersonaTimerPayload = PersonaTimerPayload
-  { scope :: MemoryScope
+-- | What a scheduled persona regeneration needs to know.
+--
+-- @memorySpaceId@ is what keeps two spaces that happen to share a namespace and scope from
+-- regenerating each other's persona. Timers scheduled before the field existed decode into
+-- 'Kioku.Api.Access.legacyMemorySpaceId', the same rule stored events follow.
+data PersonaTimerPayload = PersonaTimerPayload
+  { memorySpaceId :: !MemorySpaceId,
+    scope :: !MemoryScope
   }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (FromJSON, ToJSON)
+  deriving anyclass (ToJSON)
+
+instance FromJSON PersonaTimerPayload where
+  parseJSON =
+    withObject "PersonaTimerPayload" \o ->
+      PersonaTimerPayload <$> parsePartitionSpace o <*> o .: "scope"
 
 l3PersonaProcessManagerName :: Text
 l3PersonaProcessManagerName = "kioku-l3-persona"
@@ -89,21 +105,27 @@ l3PersonaProcessManagerName = "kioku-l3-persona"
 personaDebounceSeconds :: NominalDiffTime
 personaDebounceSeconds = 5
 
-scheduleL3PersonaTimerTx :: MemoryScope -> UTCTime -> Tx.Transaction ()
-scheduleL3PersonaTimerTx scope now =
+scheduleL3PersonaTimerTx :: MemorySpaceId -> MemoryScope -> UTCTime -> Tx.Transaction ()
+scheduleL3PersonaTimerTx memorySpaceId scope now =
   scheduleTimerTx $
     TimerRequest
-      { timerId = l3PersonaTimerId scope fireAt,
+      { timerId = l3PersonaTimerId memorySpaceId scope fireAt,
         processManagerName = l3PersonaProcessManagerName,
-        correlationId = scopeIdentity scope,
+        correlationId = partitionedCorrelationId memorySpaceId scope,
         fireAt,
-        payload = Aeson.toJSON (PersonaTimerPayload scope)
+        payload = Aeson.toJSON PersonaTimerPayload {memorySpaceId, scope}
       }
   where
     fireAt = addUTCTime personaDebounceSeconds now
 
-l3PersonaTimerId :: MemoryScope -> UTCTime -> TimerId
-l3PersonaTimerId scope fireAt =
+-- | The timer id and correlation id both carry the memory space.
+--
+-- Unlike the L1 timers, which are keyed by a globally unique session id, these are keyed by a
+-- scope — and two spaces are allowed to use the same one. Without the space in the id,
+-- keiro's @scheduleTimerTx@ upsert would treat one space's regeneration as a re-arming of the
+-- other's and only one payload would survive.
+l3PersonaTimerId :: MemorySpaceId -> MemoryScope -> UTCTime -> TimerId
+l3PersonaTimerId memorySpaceId scope fireAt =
   TimerId $
     UUIDv5.generateNamed
       l3PersonaTimerNamespace
@@ -112,34 +134,42 @@ l3PersonaTimerId scope fireAt =
     raw =
       l3PersonaProcessManagerName
         <> ":"
-        <> scopeIdentity scope
+        <> partitionedCorrelationId memorySpaceId scope
         <> ":"
         <> Text.pack (show fireAt)
+
+-- | A scope identity qualified by its memory space. 'memorySpaceIdText' cannot contain @:@,
+-- @\/@ or @%@ (see 'Kioku.Api.Access.mkMemorySpaceId') and 'scopeIdentity' escapes those same
+-- characters, so joining the two with @:@ is injective.
+partitionedCorrelationId :: MemorySpaceId -> MemoryScope -> Text
+partitionedCorrelationId memorySpaceId scope =
+  memorySpaceIdText memorySpaceId <> ":" <> scopeIdentity scope
 
 regeneratePersona ::
   (IOE :> es, Store :> es) =>
   DistillRuntime ->
+  MemorySpaceId ->
   MemoryScope ->
   Eff es (Either L3Error (Maybe PersonaRow))
-regeneratePersona rt scope = do
-  scenes <- getPersonaScenesByScope scope
+regeneratePersona rt memorySpaceId scope = do
+  scenes <- getPersonaScenesByScope memorySpaceId scope
   case scenes of
     -- Every scene in this scope is gone, so the persona distilled from them has
     -- no source left. Delete it and its mirror, symmetrically with the scene
     -- delete in "Kioku.Distill.L2", and without an LLM call: there is nothing
     -- to summarize. The persona is the top of the pyramid, so nothing chains on.
     [] -> do
-      existing <- getPersonaByScope scope
+      existing <- getPersonaByScope memorySpaceId scope
       case existing of
         Nothing -> pure (Right Nothing)
         Just row -> do
-          runTransaction (Tx.statement row.personaId deletePersonaStmt)
+          runTransaction (Tx.statement (PersonaKey memorySpaceId row.personaId) deletePersonaStmt)
           liftIO (bestEffortRemovePersonaMirror rt row)
           pure (Right Nothing)
     _ -> do
       let sourceHash = personaSourceHash scenes
           personaId = personaRowId scope
-      existing <- getPersonaByScope scope
+      existing <- getPersonaByScope memorySpaceId scope
       case existing of
         Just row
           | row.sourceHash == sourceHash -> do
@@ -160,7 +190,8 @@ regeneratePersona rt scope = do
               now <- liftIO getCurrentTime
               let row =
                     PersonaRow
-                      { personaId,
+                      { memorySpaceId,
+                        personaId,
                         namespace = scopeNamespaceText scope,
                         scopeKind = scopeKindText scope,
                         scopeRef = scopeRefText scope,
@@ -174,12 +205,18 @@ regeneratePersona rt scope = do
               liftIO (bestEffortMirrorPersona rt row)
               pure (Right (Just row))
 
+-- | Fire one L3 persona timer.
+--
+-- Like the L1 handler, a background pass cannot arrive holding an authorization context: it
+-- reads the memory space out of the payload and asks the provider for a decision about /that/
+-- space. A refusal is a configuration fact, so it dead-letters rather than retrying forever.
 fireL3PersonaTimer ::
   (IOE :> es, Store :> es) =>
+  MemoryContextProvider (Eff es) ->
   DistillRuntime ->
   TimerRow ->
   Eff es FireOutcome
-fireL3PersonaTimer rt row
+fireL3PersonaTimer contexts rt row
   | row.processManagerName /= l3PersonaProcessManagerName =
       pure FireNotMine
   | otherwise =
@@ -189,31 +226,64 @@ fireL3PersonaTimer rt row
         Aeson.Error err ->
           pure (FireFailedPermanently ("L3 persona timer payload is malformed: " <> Text.pack err))
         Aeson.Success payload -> do
-          result <- regeneratePersona rt payload.scope
-          pure $
-            case result of
-              Right _ -> FireCompleted (timerMarkerEventId row.timerId)
-              Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
+          decision <- contexts.contextForSpace payload.memorySpaceId
+          case decision of
+            Left denial ->
+              pure
+                ( FireFailedPermanently
+                    ("L3 persona timer is not authorized for its memory space: " <> Text.pack (show denial))
+                )
+            Right context -> do
+              result <- regeneratePersona rt (memoryContextSpace context) payload.scope
+              pure $
+                case result of
+                  Right _ -> FireCompleted (timerMarkerEventId row.timerId)
+                  Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
 
 getPersonaByScope ::
   (Store :> es) =>
+  MemorySpaceId ->
   MemoryScope ->
   Eff es (Maybe PersonaRow)
-getPersonaByScope scope =
+getPersonaByScope memorySpaceId scope =
   runTransaction $
-    Tx.statement
-      (scopeNamespaceText scope, scopeKindText scope, scopeRefText scope)
-      selectPersonaByScopeStmt
+    Tx.statement (scopeKey memorySpaceId scope) selectPersonaByScopeStmt
 
 getPersonaScenesByScope ::
   (Store :> es) =>
+  MemorySpaceId ->
   MemoryScope ->
   Eff es [PersonaSceneRow]
-getPersonaScenesByScope scope =
+getPersonaScenesByScope memorySpaceId scope =
   runTransaction $
-    Tx.statement
-      (scopeNamespaceText scope, scopeKindText scope, scopeRefText scope)
-      selectScenesForPersonaStmt
+    Tx.statement (scopeKey memorySpaceId scope) selectScenesForPersonaStmt
+
+-- | A scope lookup inside one memory space, as a record rather than a four-tuple so that the
+-- partition cannot be transposed with the namespace it sits beside.
+data PartitionedScope = PartitionedScope
+  { memorySpaceId :: !MemorySpaceId,
+    namespace :: !Text,
+    scopeKind :: !(Maybe Text),
+    scopeRef :: !(Maybe Text)
+  }
+
+data PersonaKey = PersonaKey !MemorySpaceId !Text
+
+scopeKey :: MemorySpaceId -> MemoryScope -> PartitionedScope
+scopeKey memorySpaceId scope =
+  PartitionedScope
+    { memorySpaceId,
+      namespace = scopeNamespaceText scope,
+      scopeKind = scopeKindText scope,
+      scopeRef = scopeRefText scope
+    }
+
+partitionedScopeEncoder :: E.Params PartitionedScope
+partitionedScopeEncoder =
+  ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+    <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
+    <> ((\q -> q.scopeKind) >$< E.param (E.nullable E.text))
+    <> ((\q -> q.scopeRef) >$< E.param (E.nullable E.text))
 
 mirrorPersonaToCurrentWorkspace :: PersonaRow -> IO FilePath
 mirrorPersonaToCurrentWorkspace row = do
@@ -293,7 +363,8 @@ l3PersonaTimerNamespace =
 personaRowDecoder :: D.Row PersonaRow
 personaRowDecoder =
   PersonaRow
-    <$> D.column (D.nonNullable D.text)
+    <$> memorySpaceColumn
+    <*> D.column (D.nonNullable D.text)
     <*> D.column (D.nonNullable D.text)
     <*> D.column (D.nullable D.text)
     <*> D.column (D.nullable D.text)
@@ -313,7 +384,8 @@ personaSceneRowDecoder =
 
 personaRowEncoder :: E.Params PersonaRow
 personaRowEncoder =
-  ((\row -> row.personaId) >$< E.param (E.nonNullable E.text))
+  ((\row -> row.memorySpaceId) >$< memorySpaceParam)
+    <> ((\row -> row.personaId) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.namespace) >$< E.param (E.nonNullable E.text))
     <> ((\row -> row.scopeKind) >$< E.param (E.nullable E.text))
     <> ((\row -> row.scopeRef) >$< E.param (E.nullable E.text))
@@ -323,49 +395,46 @@ personaRowEncoder =
     <> ((\row -> row.createdAt) >$< E.param (E.nonNullable E.timestamptz))
     <> ((\row -> row.updatedAt) >$< E.param (E.nonNullable E.timestamptz))
 
-selectPersonaByScopeStmt :: Statement (Text, Maybe Text, Maybe Text) (Maybe PersonaRow)
+selectPersonaByScopeStmt :: Statement PartitionedScope (Maybe PersonaRow)
 selectPersonaByScopeStmt =
   preparable
     """
-    SELECT persona_id, namespace, scope_kind, scope_ref, body_md, scene_count,
+    SELECT memory_space_id, persona_id, namespace, scope_kind, scope_ref, body_md, scene_count,
            source_hash, created_at, updated_at
     FROM kioku_personas
-    WHERE namespace = $1
-      AND ((scope_kind = $2 AND scope_ref = $3)
-           OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL))
+    WHERE memory_space_id = $1
+      AND namespace = $2
+      AND ((scope_kind = $3 AND scope_ref = $4)
+           OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
     """
-    ( contrazip3
-        (E.param (E.nonNullable E.text))
-        (E.param (E.nullable E.text))
-        (E.param (E.nullable E.text))
-    )
+    partitionedScopeEncoder
     (D.rowMaybe personaRowDecoder)
 
-selectScenesForPersonaStmt :: Statement (Text, Maybe Text, Maybe Text) [PersonaSceneRow]
+selectScenesForPersonaStmt :: Statement PartitionedScope [PersonaSceneRow]
 selectScenesForPersonaStmt =
   preparable
     """
     SELECT scene_id, title, body_md, updated_at
     FROM kioku_scenes
-    WHERE namespace = $1
-      AND ((scope_kind = $2 AND scope_ref = $3)
-           OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL))
+    WHERE memory_space_id = $1
+      AND namespace = $2
+      AND ((scope_kind = $3 AND scope_ref = $4)
+           OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
     ORDER BY scene_key ASC, updated_at DESC
     """
-    ( contrazip3
-        (E.param (E.nonNullable E.text))
-        (E.param (E.nullable E.text))
-        (E.param (E.nullable E.text))
-    )
+    partitionedScopeEncoder
     (D.rowList personaSceneRowDecoder)
 
--- | Delete by the row's own primary key, for the same reason 'deleteSceneStmt'
--- does: the scope-identity string format is not re-implemented here.
-deletePersonaStmt :: Statement Text ()
+-- | Delete by the row's own primary key, for the same reason 'deleteSceneStmt' does: the
+-- scope-identity string format is not re-implemented here. That key is now composite, because
+-- the persona id alone is derived from the scope and two spaces may share one.
+deletePersonaStmt :: Statement PersonaKey ()
 deletePersonaStmt =
   preparable
-    "DELETE FROM kioku_personas WHERE persona_id = $1"
-    (E.param (E.nonNullable E.text))
+    "DELETE FROM kioku_personas WHERE memory_space_id = $1 AND persona_id = $2"
+    ( ((\(PersonaKey space _) -> space) >$< memorySpaceParam)
+        <> ((\(PersonaKey _ personaId) -> personaId) >$< E.param (E.nonNullable E.text))
+    )
     D.noResult
 
 upsertPersonaStmt :: Statement PersonaRow ()
@@ -373,10 +442,10 @@ upsertPersonaStmt =
   preparable
     """
     INSERT INTO kioku_personas
-      (persona_id, namespace, scope_kind, scope_ref, body_md, scene_count,
+      (memory_space_id, persona_id, namespace, scope_kind, scope_ref, body_md, scene_count,
        source_hash, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    ON CONFLICT (persona_id) DO UPDATE SET
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    ON CONFLICT (memory_space_id, persona_id) DO UPDATE SET
       body_md = EXCLUDED.body_md,
       scene_count = EXCLUDED.scene_count,
       source_hash = EXCLUDED.source_hash,

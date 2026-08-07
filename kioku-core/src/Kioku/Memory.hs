@@ -22,10 +22,12 @@
 -- compatibility wrappers. They take no context and refuse any payload naming a space other than
 -- 'legacyMemorySpaceId', so they cannot reach data belonging to anybody else.
 --
--- Reads are /not/ partitioned yet. The read-model tables have no memory-space column until the
--- projection migration lands, so the query functions below still return rows from every space
--- and deliberately do not take a context: a query that accepted one would claim an isolation it
--- cannot perform. See @docs\/user\/upgrading-to-memory-spaces.md@.
+-- Every read takes a 'MemorySpaceId' first and returns nothing outside it. Pass
+-- 'Kioku.Api.Access.memoryContextSpace' of the context that authorized the read: the context is
+-- what decides which space may be named, and the space is what the schema enforces. A read
+-- takes the space rather than the whole context because these functions return
+-- @Either ReadModelError@, and a permission denial has already been decided — a context exists
+-- only for permissions 'Kioku.Api.Access.authorizeMemoryAccess' actually checked.
 module Kioku.Memory
   ( MemoryWriteError (..),
 
@@ -176,13 +178,13 @@ recordIn ::
   RecordMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
 recordIn cmdData = do
-  existing <- lookupMemory cmdData.memoryId
+  existing <- lookupMemory cmdData.memorySpaceId cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
     Right (Just row) -> pure (idempotentOr "record" recordMismatch row cmdData.memoryId)
     Right Nothing ->
       runMemoryCommand cmdData.memoryId (RecordMemory cmdData)
-        >>= acceptRejectedIfMatches cmdData.memoryId (isNothing . recordMismatch)
+        >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.memoryId (isNothing . recordMismatch)
   where
     recordMismatch = mismatchOf memoryRecordFields cmdData
 
@@ -209,7 +211,7 @@ supersedeIn ::
   SupersedeMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
 supersedeIn cmdData = do
-  existing <- lookupMemory cmdData.memoryId
+  existing <- lookupMemory cmdData.memorySpaceId cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
     Right Nothing -> pure (Left MemoryNotFound)
@@ -219,7 +221,7 @@ supersedeIn cmdData = do
       | row.status /= "active" -> pure (idempotentOr "supersede" supersedeMismatch row cmdData.memoryId)
       | otherwise ->
           runMemoryCommand cmdData.memoryId (SupersedeMemory cmdData)
-            >>= acceptRejectedIfMatches cmdData.memoryId (isNothing . supersedeMismatch)
+            >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.memoryId (isNothing . supersedeMismatch)
   where
     supersedeMismatch = mismatchOf memorySupersedeFields cmdData
 
@@ -246,7 +248,7 @@ archiveIn ::
   ArchiveMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
 archiveIn cmdData = do
-  existing <- lookupMemory cmdData.memoryId
+  existing <- lookupMemory cmdData.memorySpaceId cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
     Right Nothing -> pure (Left MemoryNotFound)
@@ -254,7 +256,7 @@ archiveIn cmdData = do
       | row.status /= "active" -> pure (idempotentOr "archive" archiveMismatch row cmdData.memoryId)
       | otherwise ->
           runMemoryCommand cmdData.memoryId (ArchiveMemory cmdData)
-            >>= acceptRejectedIfMatches cmdData.memoryId (isNothing . archiveMismatch)
+            >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.memoryId (isNothing . archiveMismatch)
   where
     archiveMismatch = mismatchOf memoryArchiveFields cmdData
 
@@ -281,7 +283,7 @@ updateTagsIn ::
   UpdateMemoryTagsData ->
   Eff es (Either MemoryWriteError MemoryId)
 updateTagsIn cmdData = do
-  existing <- lookupMemory cmdData.memoryId
+  existing <- lookupMemory cmdData.memorySpaceId cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
     Right Nothing -> pure (Left MemoryNotFound)
@@ -313,7 +315,7 @@ updateConfidenceIn ::
   UpdateMemoryConfidenceData ->
   Eff es (Either MemoryWriteError MemoryId)
 updateConfidenceIn cmdData = do
-  existing <- lookupMemory cmdData.memoryId
+  existing <- lookupMemory cmdData.memorySpaceId cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
     Right Nothing -> pure (Left MemoryNotFound)
@@ -365,7 +367,7 @@ mergeIn ::
   MemoryId ->
   Eff es (Either MemoryWriteError MemoryId)
 mergeIn memorySpaceId actorPrincipal loser winner = do
-  existing <- lookupMemory loser
+  existing <- lookupMemory memorySpaceId loser
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
     Right Nothing -> pure (Left MemoryNotFound)
@@ -384,7 +386,7 @@ mergeIn memorySpaceId actorPrincipal loser winner = do
                     mergedAt = now
                   }
             )
-            >>= acceptRejectedIfMatches loser (isNothing . mergeMismatch)
+            >>= acceptRejectedIfMatches memorySpaceId loser (isNothing . mergeMismatch)
   where
     mergeMismatch = mismatchOf memoryMergeFields winner
 
@@ -406,12 +408,12 @@ type FieldCheck cmd = (Text, cmd -> MemoryRow -> Bool)
 -- lineage, and the merge/supersession target — is compared, which is what the review
 -- actually asked for: a reused id with different /content/ must not report success.
 --
--- The memory space is deliberately absent from these comparisons, and that is a known gap
--- rather than an oversight: 'MemoryRow' has no space column until the read-model migration adds
--- one. Until then, a caller that presents the id of a memory in /another/ space can learn from
--- an idempotent answer that the id exists and whether it is still active. It cannot change
--- anything — the aggregate's own guard refuses every command naming the wrong space — and it
--- cannot read any content back. Closing the residual oracle needs the column.
+-- The memory space is absent from these comparisons because it can no longer differ. Every
+-- lookup that produces the row is now scoped to the command's own space, so a row from another
+-- space is simply not found and the write proceeds to the aggregate, which refuses it. That
+-- closes the residual this comment used to describe: presenting the id of a memory in another
+-- space no longer reveals, through an idempotent answer, that the id exists or that it is
+-- active.
 mismatchOf :: [FieldCheck cmd] -> cmd -> MemoryRow -> Maybe Text
 mismatchOf checks cmd row =
   fst <$> find (\(_, matches) -> not (matches cmd row)) checks
@@ -434,13 +436,14 @@ idempotentOr operation mismatch row mid =
 -- 'Kioku.Session.acceptRejectedIfMatches' — same contract, memory side.
 acceptRejectedIfMatches ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   MemoryId ->
   (MemoryRow -> Bool) ->
   Either MemoryWriteError MemoryId ->
   Eff es (Either MemoryWriteError MemoryId)
-acceptRejectedIfMatches mid matches = \case
+acceptRejectedIfMatches space mid matches = \case
   Left err@(MemoryCommandRejected CommandRejected) -> do
-    reread <- lookupMemory mid
+    reread <- lookupMemory space mid
     pure case reread of
       Right (Just row) | matches row -> Right mid
       _ -> Left err
@@ -479,15 +482,23 @@ memoryMergeFields =
     ("mergedInto", \winner row -> row.supersededBy == Just (idText winner))
   ]
 
+-- | Look a memory up inside one space. A memory that lives elsewhere is 'Nothing' here, which
+-- is what makes the write paths' idempotency prechecks unable to answer questions about it.
 lookupMemory ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   MemoryId ->
   Eff es (Either ReadModelError (Maybe MemoryRow))
-lookupMemory mid =
-  runQueryWith Nothing Eventual memoryByIdReadModel (MemoryByIdQuery (idText mid))
+lookupMemory space mid =
+  runQueryWith
+    Nothing
+    Eventual
+    memoryByIdReadModel
+    MemoryByIdQuery {memorySpaceId = space, memoryId = idText mid}
 
 getMemoryRowById ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   MemoryId ->
   Eff es (Either ReadModelError (Maybe MemoryRow))
 getMemoryRowById =
@@ -495,43 +506,73 @@ getMemoryRowById =
 
 getActiveRowsInNamespace ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   Namespace ->
   Eff es (Either ReadModelError [MemoryRow])
-getActiveRowsInNamespace (Namespace ns) =
-  runQueryWith Nothing Eventual memoriesByNamespaceRowsReadModel (MemoriesByNamespaceQuery ns)
+getActiveRowsInNamespace space (Namespace ns) =
+  runQueryWith
+    Nothing
+    Eventual
+    memoriesByNamespaceRowsReadModel
+    MemoriesByNamespaceQuery {memorySpaceId = space, namespace = ns}
 
 getActiveRowsByScope ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   MemoryScope ->
   Eff es (Either ReadModelError [MemoryRow])
-getActiveRowsByScope scope =
+getActiveRowsByScope space scope =
   runQueryWith
     Nothing
     Eventual
     memoriesByScopeRowsReadModel
-    (MemoriesByScopeQuery (scopeNamespaceText scope) (scopeKindText scope) (scopeRefText scope))
+    MemoriesByScopeQuery
+      { memorySpaceId = space,
+        namespace = scopeNamespaceText scope,
+        scopeKind = scopeKindText scope,
+        scopeRef = scopeRefText scope
+      }
 
 getRowsBySession ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   Eff es (Either ReadModelError [MemoryRow])
-getRowsBySession sid =
-  runQueryWith Nothing Eventual memoriesBySessionRowsReadModel (MemoriesBySessionQuery (idText sid))
+getRowsBySession space sid =
+  runQueryWith
+    Nothing
+    Eventual
+    memoriesBySessionRowsReadModel
+    MemoriesBySessionQuery {memorySpaceId = space, sessionId = idText sid}
 
 getActiveRowsByType ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   Namespace ->
   MemoryType ->
   Eff es (Either ReadModelError [MemoryRow])
-getActiveRowsByType (Namespace ns) memoryType =
-  runQueryWith Nothing Eventual memoriesByTypeRowsReadModel (MemoriesByTypeQuery ns (memoryTypeToText memoryType))
+getActiveRowsByType space (Namespace ns) memoryType =
+  runQueryWith
+    Nothing
+    Eventual
+    memoriesByTypeRowsReadModel
+    MemoriesByTypeQuery
+      { memorySpaceId = space,
+        namespace = ns,
+        memoryType = memoryTypeToText memoryType
+      }
 
 getSupersessionChain ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   MemoryId ->
   Eff es (Either ReadModelError [MemoryRow])
-getSupersessionChain mid =
-  runQueryWith Nothing Eventual memorySupersessionChainReadModel (MemorySupersessionChainQuery (idText mid))
+getSupersessionChain space mid =
+  runQueryWith
+    Nothing
+    Eventual
+    memorySupersessionChainReadModel
+    MemorySupersessionChainQuery {memorySpaceId = space, memoryId = idText mid}
 
 runMemoryCommand ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>

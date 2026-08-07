@@ -10,8 +10,9 @@
 -- correlation-key check is an operator override for a lost key, not for the isolation boundary.
 --
 -- The unsuffixed functions ('start', 'complete', …) remain for one release as deprecated
--- compatibility wrappers confined to 'legacyMemorySpaceId'. Reads are not partitioned yet; see
--- "Kioku.Memory" and @docs\/user\/upgrading-to-memory-spaces.md@.
+-- compatibility wrappers confined to 'legacyMemorySpaceId'. Every read takes a 'MemorySpaceId'
+-- first and returns nothing outside it; see "Kioku.Memory" for why it takes the space rather
+-- than the whole context, and @docs\/user\/upgrading-to-memory-spaces.md@ for the upgrade.
 module Kioku.Session
   ( SessionRow (..),
     SessionWriteError (..),
@@ -181,13 +182,13 @@ startIn cmdData =
   case validateLineage cmdData of
     Just reason -> pure (Left (SessionInvalidLineage reason))
     Nothing -> do
-      existing <- getById cmdData.sessionId
+      existing <- getById cmdData.memorySpaceId cmdData.sessionId
       case existing of
         Left err -> pure (Left (SessionReadFailed err))
         Right (Just row) -> pure (idempotentOr "start" startMismatch row cmdData.sessionId)
         Right Nothing ->
           runSessionCommand cmdData.sessionId (StartSession cmdData)
-            >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . startMismatch)
+            >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.sessionId (isNothing . startMismatch)
   where
     startMismatch = mismatchOf sessionStartFields cmdData
 
@@ -242,11 +243,12 @@ parseSessionStatus = \case
 -- | Look up the session and hand its row plus parsed status to the caller.
 withExistingSession ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   (SessionRow -> SessionStatus -> Eff es (Either SessionWriteError SessionId)) ->
   Eff es (Either SessionWriteError SessionId)
-withExistingSession sid k = do
-  existing <- getById sid
+withExistingSession space sid k = do
+  existing <- getById space sid
   case existing of
     Left err -> pure (Left (SessionReadFailed err))
     Right Nothing -> pure (Left SessionNotFound)
@@ -296,13 +298,14 @@ idempotentOr operation mismatch row sid =
 -- genuinely conflicting loser still gets its rejection.
 acceptRejectedIfMatches ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   (SessionRow -> Bool) ->
   Either SessionWriteError SessionId ->
   Eff es (Either SessionWriteError SessionId)
-acceptRejectedIfMatches sid matches = \case
+acceptRejectedIfMatches space sid matches = \case
   Left err@(SessionCommandRejected CommandRejected) -> do
-    reread <- getById sid
+    reread <- getById space sid
     pure case reread of
       Right (Just row) | matches row -> Right sid
       _ -> Left err
@@ -376,7 +379,7 @@ completeIn ::
   CompleteSessionData ->
   Eff es (Either SessionWriteError SessionId)
 completeIn cmdData =
-  withExistingSession cmdData.sessionId \row status ->
+  withExistingSession cmdData.memorySpaceId cmdData.sessionId \row status ->
     case status of
       StatusRunning -> runComplete
       StatusAwaiting -> runComplete
@@ -388,7 +391,7 @@ completeIn cmdData =
     completeMismatch = mismatchOf sessionCompleteFields cmdData
     runComplete =
       runSessionCommand cmdData.sessionId (CompleteSession cmdData)
-        >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . completeMismatch)
+        >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.sessionId (isNothing . completeMismatch)
 
 -- | Fail a session in the space the context authorizes.
 failSessionWithContext ::
@@ -413,7 +416,7 @@ failSessionIn ::
   FailSessionData ->
   Eff es (Either SessionWriteError SessionId)
 failSessionIn cmdData =
-  withExistingSession cmdData.sessionId \row status ->
+  withExistingSession cmdData.memorySpaceId cmdData.sessionId \row status ->
     case status of
       StatusRunning -> runFail
       StatusAwaiting -> runFail
@@ -426,7 +429,7 @@ failSessionIn cmdData =
     failMismatch = mismatchOf sessionFailFields cmdData
     runFail =
       runSessionCommand cmdData.sessionId (FailSession cmdData)
-        >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . failMismatch)
+        >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.sessionId (isNothing . failMismatch)
 
 -- | Park a session in the space the context authorizes.
 awaitInputWithContext ::
@@ -451,12 +454,12 @@ awaitInputIn ::
   AwaitInputData ->
   Eff es (Either SessionWriteError SessionId)
 awaitInputIn cmdData =
-  withExistingSession cmdData.sessionId \row status ->
+  withExistingSession cmdData.memorySpaceId cmdData.sessionId \row status ->
     case status of
       StatusAwaiting -> pure (idempotentOr "awaitInput" awaitMismatch row cmdData.sessionId)
       StatusRunning ->
         runSessionCommand cmdData.sessionId (AwaitInput cmdData)
-          >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . awaitMismatch)
+          >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.sessionId (isNothing . awaitMismatch)
       _ -> pure (Left SessionNotRunning)
   where
     awaitMismatch = mismatchOf sessionAwaitFields cmdData
@@ -492,7 +495,7 @@ resumeIn ::
   ResumeSessionData ->
   Eff es (Either SessionWriteError SessionId)
 resumeIn cmdData =
-  withExistingSession cmdData.sessionId \row status ->
+  withExistingSession cmdData.memorySpaceId cmdData.sessionId \row status ->
     case status of
       -- Already running: a re-delivery of *this* resume is a success; a different input
       -- means someone else answered the wait, which is a conflict, not an idempotent hit.
@@ -502,7 +505,7 @@ resumeIn cmdData =
             pure (Left SessionCorrelationMismatch)
         | otherwise ->
             runSessionCommand cmdData.sessionId (ResumeSession cmdData)
-              >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . resumeMismatch)
+              >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.sessionId (isNothing . resumeMismatch)
       _ -> pure (Left SessionNotAwaiting)
   where
     resumeMismatch = mismatchOf sessionResumeFields cmdData
@@ -574,13 +577,13 @@ recordInteractiveIn ::
   RecordInteractiveSessionData ->
   Eff es (Either SessionWriteError SessionId)
 recordInteractiveIn cmdData = do
-  existing <- getById cmdData.sessionId
+  existing <- getById cmdData.memorySpaceId cmdData.sessionId
   case existing of
     Left err -> pure (Left (SessionReadFailed err))
     Right (Just row) -> pure (idempotentOr "recordInteractive" interactiveMismatch row cmdData.sessionId)
     Right Nothing ->
       runSessionCommand cmdData.sessionId (RecordInteractiveSession cmdData)
-        >>= acceptRejectedIfMatches cmdData.sessionId (isNothing . interactiveMismatch)
+        >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.sessionId (isNothing . interactiveMismatch)
   where
     interactiveMismatch = mismatchOf sessionInteractiveFields cmdData
 
@@ -617,10 +620,10 @@ recordTurnIn ::
   RecordTurnData ->
   Eff es (Either SessionWriteError SessionId)
 recordTurnIn cmdData =
-  withExistingSession cmdData.sessionId \_row status ->
+  withExistingSession cmdData.memorySpaceId cmdData.sessionId \_row status ->
     case status of
       StatusRunning -> do
-        turns <- getTurns cmdData.sessionId
+        turns <- getTurns cmdData.memorySpaceId cmdData.sessionId
         case turns of
           Left err -> pure (Left (SessionReadFailed err))
           Right existingTurns ->
@@ -640,7 +643,7 @@ acceptRejectedTurnIfMatches ::
   Eff es (Either SessionWriteError SessionId)
 acceptRejectedTurnIfMatches d = \case
   Left err@(SessionCommandRejected CommandRejected) -> do
-    turns <- getTurns d.sessionId
+    turns <- getTurns d.memorySpaceId d.sessionId
     pure case turns of
       Right rows
         | Just row <- find (\row -> row.turnIndex == d.turnIndex) rows,
@@ -675,78 +678,133 @@ turnRowMatches d row =
 
 getById ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   Eff es (Either ReadModelError (Maybe SessionRow))
-getById sid =
-  runQueryWith Nothing Eventual sessionByIdReadModel (SessionByIdQuery (idText sid))
+getById space sid =
+  runQueryWith
+    Nothing
+    Eventual
+    sessionByIdReadModel
+    SessionByIdQuery {memorySpaceId = space, sessionId = idText sid}
 
 getRecentInNamespace ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   Namespace ->
   Int ->
   Eff es (Either ReadModelError [SessionRow])
-getRecentInNamespace ns limit =
-  runQueryWith Nothing Eventual sessionsByNamespaceReadModel (SessionsByNamespaceQuery (namespaceText ns) limit)
+getRecentInNamespace space ns limit =
+  runQueryWith
+    Nothing
+    Eventual
+    sessionsByNamespaceReadModel
+    SessionsByNamespaceQuery {memorySpaceId = space, namespace = namespaceText ns, limit}
 
 getByScope ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   MemoryScope ->
   Eff es (Either ReadModelError [SessionRow])
-getByScope scope =
+getByScope space scope =
   runQueryWith
     Nothing
     Eventual
     sessionsByScopeReadModel
-    (SessionsByScopeQuery (scopeNamespaceText scope) (scopeKindText scope) (scopeRefText scope))
+    SessionsByScopeQuery
+      { memorySpaceId = space,
+        namespace = scopeNamespaceText scope,
+        scopeKind = scopeKindText scope,
+        scopeRef = scopeRefText scope
+      }
 
 getByFocus ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   Namespace ->
   Text ->
   Eff es (Either ReadModelError [SessionRow])
-getByFocus ns focus =
-  runQueryWith Nothing Eventual sessionsByFocusReadModel (SessionsByFocusQuery (namespaceText ns) focus)
+getByFocus space ns focus =
+  runQueryWith
+    Nothing
+    Eventual
+    sessionsByFocusReadModel
+    SessionsByFocusQuery {memorySpaceId = space, namespace = namespaceText ns, focus}
 
 getByStartedRange ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   Namespace ->
   UTCTime ->
   UTCTime ->
   Eff es (Either ReadModelError [SessionRow])
-getByStartedRange ns startedAfter startedBefore =
-  runQueryWith Nothing Eventual sessionsByStartedRangeReadModel (SessionsByStartedRangeQuery (namespaceText ns) startedAfter startedBefore)
+getByStartedRange space ns startedAfter startedBefore =
+  runQueryWith
+    Nothing
+    Eventual
+    sessionsByStartedRangeReadModel
+    SessionsByStartedRangeQuery
+      { memorySpaceId = space,
+        namespace = namespaceText ns,
+        startedAfter,
+        startedBefore
+      }
 
 getChain ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   Eff es (Either ReadModelError [SessionRow])
-getChain sid =
-  runQueryWith Nothing Eventual sessionChainReadModel (SessionChainQuery (idText sid))
+getChain space sid =
+  runQueryWith
+    Nothing
+    Eventual
+    sessionChainReadModel
+    SessionChainQuery {memorySpaceId = space, sessionId = idText sid}
 
 getDelegationChildren ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   Eff es (Either ReadModelError [SessionRow])
-getDelegationChildren sid =
-  runQueryWith Nothing Eventual sessionDelegationChildrenReadModel (SessionDelegationChildrenQuery (idText sid))
+getDelegationChildren space sid =
+  runQueryWith
+    Nothing
+    Eventual
+    sessionDelegationChildrenReadModel
+    SessionDelegationChildrenQuery {memorySpaceId = space, parentSessionId = idText sid}
 
 getAwaitingByCorrelationKey ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   Namespace ->
   Text ->
   Eff es (Either ReadModelError [SessionRow])
-getAwaitingByCorrelationKey ns correlationKey =
-  runQueryWith Nothing Eventual awaitingSessionsByCorrelationKeyReadModel (AwaitingSessionsByCorrelationKeyQuery (namespaceText ns) correlationKey)
+getAwaitingByCorrelationKey space ns correlationKey =
+  runQueryWith
+    Nothing
+    Eventual
+    awaitingSessionsByCorrelationKeyReadModel
+    AwaitingSessionsByCorrelationKeyQuery
+      { memorySpaceId = space,
+        namespace = namespaceText ns,
+        correlationKey
+      }
 
 namespaceText :: Namespace -> Text
 namespaceText (Namespace ns) = ns
 
 getTurns ::
   (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
   SessionId ->
   Eff es (Either ReadModelError [TurnRow])
-getTurns sid =
-  runQueryWith Nothing Eventual turnsBySessionReadModel (TurnsBySessionQuery (idText sid))
+getTurns space sid =
+  runQueryWith
+    Nothing
+    Eventual
+    turnsBySessionReadModel
+    TurnsBySessionQuery {memorySpaceId = space, sessionId = idText sid}
 
 runSessionCommand ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>

@@ -339,7 +339,7 @@ testTurnReRecordIsDuplicate =
         "the duplicate appended no second TurnRecorded"
         1
         (length [() | TurnRecorded _ <- events])
-    turns <- liftEither "getTurns" =<< Session.getTurns sid
+    turns <- liftEither "getTurns" =<< Session.getTurns testSpace sid
     liftIO $ assertEqual "exactly one turn row" 1 (length turns)
 
 testTurnSameIndexConflict :: Assertion
@@ -552,7 +552,7 @@ getExisting ::
   SessionId ->
   Eff es SessionRow
 getExisting sid = do
-  result <- Session.getById sid >>= liftEither "Session.getById"
+  result <- Session.getById testSpace sid >>= liftEither "Session.getById"
   case result of
     Nothing -> liftIO (assertFailure ("missing session row " <> show (idText sid)))
     Just row -> pure row

@@ -196,7 +196,7 @@ testRecordRetriedWithNewClock =
     laterAt <- liftIO getCurrentTime
     void (expectRightM "retry with a fresh clock" =<< Memory.recordWithContext testContext (recordData mid laterAt content))
     assertMemoryEvents mid 1
-    lookedUp <- Memory.getMemoryRowById mid
+    lookedUp <- Memory.getMemoryRowById testSpace mid
     liftIO case lookedUp of
       Left err -> assertFailure ("lookup: " <> show err)
       Right Nothing -> assertFailure "the memory row vanished"

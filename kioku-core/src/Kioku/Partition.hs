@@ -17,15 +17,24 @@
 --   one would put a fabricated identity into an audit trail.
 --
 -- Encoding always writes the new form. There is no path that emits a payload without a space.
+--
+-- The same module owns how a memory space is written down in PostgreSQL, for the same reason:
+-- @memory_space_id@ is a plain @text@ column, and exactly one pair of functions turns a
+-- 'MemorySpaceId' into it and back.
 module Kioku.Partition
   ( parsePartitionSpace,
     parseRecordedActor,
     parseRecordedActorFromAgent,
     parseRecordedOwner,
+    memorySpaceColumn,
+    memorySpaceParam,
   )
 where
 
 import Data.Aeson.Types (Object, Parser, (.!=), (.:), (.:?))
+import Data.Functor.Contravariant ((>$<))
+import Hasql.Decoders qualified as D
+import Hasql.Encoders qualified as E
 import Kioku.Api.Access
   ( LegacyPrincipalRef,
     MemorySpaceId,
@@ -33,6 +42,8 @@ import Kioku.Api.Access
     RecordedPrincipal (..),
     legacyMemorySpaceId,
     legacyPrincipalRef,
+    memorySpaceIdText,
+    mkMemorySpaceId,
   )
 import Kioku.Prelude
 
@@ -65,3 +76,17 @@ parseRecordedActorFromAgent o = do
 -- field did, so an older payload has no owner rather than an implied one.
 parseRecordedOwner :: Object -> Parser (Maybe PrincipalRef)
 parseRecordedOwner o = o .:? "ownerPrincipal"
+
+-- | Decode a non-null @memory_space_id@ column.
+--
+-- It goes through 'mkMemorySpaceId' rather than being taken as raw text, so a row that somehow
+-- holds a value no caller could have constructed — an empty string, something with a @:@ in it —
+-- fails the read loudly instead of becoming a space id that compares equal to nothing.
+memorySpaceColumn :: D.Row MemorySpaceId
+memorySpaceColumn =
+  D.column (D.nonNullable (D.refine mkMemorySpaceId D.text))
+
+-- | Encode one @memory_space_id@ query parameter.
+memorySpaceParam :: E.Params MemorySpaceId
+memorySpaceParam =
+  memorySpaceIdText >$< E.param (E.nonNullable E.text)
