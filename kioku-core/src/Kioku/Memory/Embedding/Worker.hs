@@ -1,3 +1,19 @@
+-- | The embedding worker: it computes a vector for each memory's content and writes it back onto
+-- the same row.
+--
+-- __Its three statements deliberately span every memory space, and that is not an oversight.__
+-- Every other statement in Kioku that touches a partitioned table names @memory_space_id@; these
+-- do not, because what they do is not a read. They select a row's own content in order to enrich
+-- that same row in place: nothing crosses from one space to another, no content is returned to a
+-- caller, and a memory's embedding is a property of the memory rather than of who is asking.
+-- A worker holding the database credentials may already act in any space in that database, which
+-- is what @Kioku.Api.Access.assumeAuthorizedContextProvider@ says out loud.
+--
+-- What is still missing is the ability to run this pass /for one space/ — a per-space backfill,
+-- and a claim that carries the partition so a retry cannot enrich the wrong tenant's rows on a
+-- shared worker. That belongs with the rest of the worker-claim work in
+-- @docs\/plans\/27-isolate-workers-timers-and-workspace-artifacts-by-memory-space.md@; adding a
+-- predicate here without it would only move the question.
 module Kioku.Memory.Embedding.Worker
   ( EmbeddingWorkerEnv (..),
     EmbedOutcome (..),

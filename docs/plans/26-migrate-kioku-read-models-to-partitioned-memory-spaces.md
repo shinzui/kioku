@@ -254,6 +254,14 @@ keyed by scope alone, so two spaces sharing a scope still collide on one filenam
 their rows do not. Worker claims, dead-letter handling, and metrics attributes are plan 27's.
 Recall targets are still a `MemoryScope` with two meanings, which is MasterPlan 6's.
 
+Three statements deliberately keep no space predicate, and an audit of every SQL string in
+`kioku-core/src` found no others: `selectEmbeddingCandidatesStmt`, `selectEmbeddingStateStmt`, and
+`upsertEmbeddingStmt` in `Kioku.Memory.Embedding.Worker`. They select a row's own content in order
+to write that row's own embedding back, so nothing crosses between spaces and no content reaches a
+caller; an embedding is a property of the memory, not of who is asking. What is missing is the
+ability to run the pass *for one space*, which needs a partitioned worker claim and therefore
+belongs with plan 27. The module says so at the top rather than leaving it to be re-derived.
+
 **Lessons.** Two are worth carrying. The recall harness's hand-copy of the vector statement had
 drifted the moment the partition landed, and its own Haddock had predicted precisely that failure
 — a copy of a query is a copy that will be wrong, and the only defence that works is a guard
