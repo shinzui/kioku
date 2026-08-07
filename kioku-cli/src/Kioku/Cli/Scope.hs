@@ -1,11 +1,13 @@
 module Kioku.Cli.Scope
   ( parseScope,
     scopeGrammarError,
+    parseNamespaceOnly,
+    namespaceGrammarError,
   )
 where
 
 import Data.Text qualified as Text
-import Kioku.Api.Scope (MemoryScope (..), mkNamespace, mkScopeKind)
+import Kioku.Api.Scope (MemoryScope (..), Namespace, mkNamespace, mkScopeKind)
 
 -- | @NAMESPACE@ or @NAMESPACE:KIND:REF@.
 --
@@ -41,3 +43,20 @@ parseScope raw =
 scopeGrammarError :: String
 scopeGrammarError =
   "expected NAMESPACE or NAMESPACE:KIND:REF (REF may contain ':'; NAMESPACE and KIND may not)"
+
+-- | A bare @NAMESPACE@, with no scope attached.
+--
+-- Recall's @--global-bucket@ and @--namespace-wide@ take a namespace rather than a scope, because
+-- the scope part is what the flag itself is saying. A colon is therefore rejected with its own
+-- message rather than left to 'mkNamespace': someone typing @--namespace-wide mori:repo:web@ is
+-- reaching for @--scope@, and saying so is more use than reporting a reserved character.
+parseNamespaceOnly :: String -> Either String Namespace
+parseNamespaceOnly raw
+  | Text.isInfixOf ":" text = Left namespaceGrammarError
+  | otherwise = either (Left . Text.unpack) Right (mkNamespace text)
+  where
+    text = Text.pack raw
+
+namespaceGrammarError :: String
+namespaceGrammarError =
+  "expected a bare NAMESPACE with no scope attached; use --scope NAMESPACE:KIND:REF for one entity"

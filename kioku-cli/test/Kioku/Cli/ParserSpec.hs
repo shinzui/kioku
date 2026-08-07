@@ -11,12 +11,13 @@ import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Cli.Commands.Demo (DemoOptions (..), demoOptionsParser, demoScope)
 import Kioku.Cli.Commands.DemoSession (DemoSessionOptions (..), demoSessionOptionsParser)
 import Kioku.Cli.Commands.Distill (DistillOptions (..), distillOptionsParser)
-import Kioku.Cli.Commands.Recall (RecallOptions (..), recallOptionsParser)
+import Kioku.Cli.Commands.Recall (RecallOptions (..), describeTarget, recallOptionsParser)
 import Kioku.Cli.Commands.Worker (WorkerOptions (..), workerOptionsParser)
 import Kioku.Cli.Options (redactConnectionString)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Id (genMemoryId, genSessionId, idText)
 import Kioku.Memory.Embedding.Worker (EmbeddingBackfillScope (..))
+import Kioku.Recall (RecallTarget (..))
 import Options.Applicative
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
@@ -27,6 +28,7 @@ tests =
     "Kioku.Cli parsers"
     [ sessionIdTests,
       scopeTests,
+      recallTargetTests,
       limitTests,
       demoGuardTests,
       redactionTests,
@@ -104,6 +106,77 @@ scopeTests =
       Left _ -> pure ()
       Right scope -> assertBool (label <> " should not parse, got: " <> show scope) False
 
+-- | Recall is the only command that can be asked to widen what it searches, so each of the three
+-- things it can search has exactly one spelling and none of them is a bare namespace.
+--
+-- @--scope mori@ used to mean /the whole mori namespace/, which is the opposite of what
+-- @kioku scenes --scope mori@ means by the same text. It is now a parse error rather than a
+-- silently narrower search: an operator's script would otherwise keep exiting zero while
+-- returning a fraction of its rows.
+recallTargetTests :: TestTree
+recallTargetTests =
+  testGroup
+    "recall spells each target exactly once"
+    [ testCase "--scope takes an entity scope" do
+        target ["--scope", "mori:repo:web"]
+          @?= Right (ExactScope (ScopeEntity (Namespace "mori") (ScopeKind "repo") "web")),
+      testCase "--global-bucket takes a namespace and means the rows with no entity scope" do
+        target ["--global-bucket", "mori"] @?= Right (ExactScope (ScopeGlobal (Namespace "mori"))),
+      testCase "--namespace-wide takes a namespace and means every scope under it" do
+        target ["--namespace-wide", "mori"] @?= Right (NamespaceWide (Namespace "mori")),
+      -- The distinction the whole initiative exists for: two flags naming the same namespace
+      -- must not produce the same target.
+      testCase "the global bucket and the namespace are different targets" do
+        assertBool
+          "--global-bucket and --namespace-wide must not agree"
+          (target ["--global-bucket", "mori"] /= target ["--namespace-wide", "mori"]),
+      testCase "--scope keeps the shared colon rules" do
+        target ["--scope", "ops:host:db.internal:5432"]
+          @?= Right (ExactScope (ScopeEntity (Namespace "ops") (ScopeKind "host") "db.internal:5432")),
+      testCase "a bare namespace is refused, naming both replacements" do
+        case target ["--scope", "mori"] of
+          Right parsed -> assertBool ("--scope mori should not parse, got: " <> show parsed) False
+          Left err -> do
+            assertBool ("error should offer --global-bucket: " <> err) ("--global-bucket mori" `isInfixOf` err)
+            assertBool ("error should offer --namespace-wide: " <> err) ("--namespace-wide mori" `isInfixOf` err)
+            assertBool
+              ("error should say which one preserves the old behavior: " <> err)
+              ("returned before" `isInfixOf` err),
+      testCase "no target at all lists the three forms" do
+        case parseWith recallOptionsParser ["query"] of
+          Right parsed -> assertBool ("a targetless recall should not parse, got: " <> show parsed) False
+          Left err -> do
+            assertBool ("failure should say what is missing: " <> err) ("Missing:" `isInfixOf` err)
+            mapM_
+              (\flag -> assertBool ("failure should list " <> flag <> ": " <> err) (flag `isInfixOf` err))
+              ["--scope", "--global-bucket", "--namespace-wide"],
+      testCase "two targets is a parse error naming the second" do
+        assertConflict "--namespace-wide" (target ["--scope", "a:b:c", "--namespace-wide", "mori"]),
+      testCase "two targets in the other order is also a parse error" do
+        assertConflict "--global-bucket" (target ["--namespace-wide", "mori", "--global-bucket", "mori"]),
+      -- A scope handed to a namespace flag is someone reaching for --scope, and saying so beats
+      -- reporting a reserved character.
+      testCase "a scope passed to --namespace-wide points at --scope" do
+        case target ["--namespace-wide", "mori:repo:web"] of
+          Right parsed -> assertBool ("should not parse, got: " <> show parsed) False
+          Left err -> assertBool ("error should point at --scope: " <> err) ("--scope" `isInfixOf` err),
+      -- The stderr banner is the only place a run says which of the three it did.
+      testCase "each target describes itself distinctly" do
+        describeTarget (ExactScope (ScopeGlobal (Namespace "mori"))) @?= "the global bucket of mori"
+        describeTarget (NamespaceWide (Namespace "mori")) @?= "every scope in mori"
+        describeTarget (ExactScope (ScopeEntity (Namespace "mori") (ScopeKind "repo") "web"))
+          @?= "scope mori:repo:web"
+    ]
+  where
+    target extra = fmap (.target) (parseWith recallOptionsParser (["query"] <> extra))
+
+    assertConflict rejected = \case
+      Right parsed -> assertBool ("expected a conflict error, got: " <> show parsed) False
+      Left err ->
+        assertBool
+          ("failure should name the conflicting flag " <> rejected <> ": " <> err)
+          (rejected `isInfixOf` err)
+
 -- | Out-of-range limits are a parse error, not a Postgres error (@--limit -1@ used to reach
 -- SQL and come back as @LIMIT must not be negative@).
 limitTests :: TestTree
@@ -133,7 +206,7 @@ limitTests =
     ]
   where
     recallWith extra =
-      parseWith recallOptionsParser (["query", "--scope", "mori"] <> extra)
+      parseWith recallOptionsParser (["query", "--namespace-wide", "mori"] <> extra)
 
     distillWith sid extra =
       parseWith distillOptionsParser (["session", Text.unpack (idText sid)] <> extra)
