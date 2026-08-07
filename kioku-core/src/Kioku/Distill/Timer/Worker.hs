@@ -11,13 +11,19 @@ module Kioku.Distill.Timer.Worker
 where
 
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Types qualified as Aeson
+import Data.HashMap.Strict (HashMap)
+import Data.HashMap.Strict qualified as HashMap
+import Data.Int (Int64)
 import Data.Text qualified as Text
 import Data.Time (NominalDiffTime, addUTCTime)
+import Data.UUID qualified as UUID
 import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Telemetry (KeiroMetrics)
 import Keiro.Timer
-  ( TimerRequest (..),
+  ( TimerId (..),
+    TimerRequest (..),
     TimerRow (..),
     TimerWorkerOptions (..),
     deadLetterTimer,
@@ -25,7 +31,7 @@ import Keiro.Timer
     runTimerWorkerWith,
     scheduleTimerTx,
   )
-import Kioku.Api.Access (MemoryContextProvider (..))
+import Kioku.Api.Access (MemoryContextProvider (..), MemorySpaceId, memorySpaceIdText)
 import Kioku.Distill.L1 (FindMergeCandidates, L1Error (..), L1RunMode (..), distillSessionL1)
 import Kioku.Distill.L2 (fireL2SceneTimer)
 import Kioku.Distill.L3 (fireL3PersonaTimer)
@@ -38,12 +44,15 @@ import Kioku.Distill.Timer.Outcome
     unknownTimerRetryDelay,
   )
 import Kioku.Id (parseIdLenient)
+import Kioku.Partition (parsePartitionSpace)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Kiroku.Store.Types (EventId (..))
+import OpenTelemetry.Attributes qualified as Attr
+import Shibuya.Telemetry.Effect (Tracing, addAttributes, defaultSpanArguments, withSpan')
 import System.IO qualified as IO
 
 -- | kioku's timer policy.
@@ -139,6 +148,11 @@ fireKiokuTimer contexts rt finder row = do
 -- Returning 'Nothing' to keiro means "do not mark this row fired"; every such
 -- branch has already moved the row itself, so the timer never sits in @firing@
 -- waiting on the 300-second stale requeue.
+--
+-- Every diagnostic this writes names the memory space, including the @last_error@ that lands in
+-- the dead-letter row. That column is what an operator actually reads at three in the morning,
+-- and a dead-lettered distillation that does not say which tenant it belongs to is a page
+-- somebody has to answer with a query.
 applyFireOutcome ::
   (IOE :> es, Store :> es) =>
   TimerRow ->
@@ -151,13 +165,72 @@ applyFireOutcome row = \case
     rescheduleClaimedTimer row delay
     pure Nothing
   FireFailedPermanently reason -> do
-    logTimer row ("dead-lettering: " <> reason)
-    void (deadLetterTimer row.timerId reason)
+    let annotated = spaceQualified row reason
+    logTimer row ("dead-lettering: " <> annotated)
+    void (deadLetterTimer row.timerId annotated)
     pure Nothing
   FireNotMine -> do
     logTimer row "no handler owns this process manager; requeueing"
     rescheduleClaimedTimer row unknownTimerRetryDelay
     pure Nothing
+
+-- | Prefix a diagnostic with the memory space the timer's payload names.
+--
+-- @unknown@ covers the payloads that have no space to name: a malformed payload, or one from a
+-- process manager that is not Kioku's. Those are exactly the cases where the timer is about to
+-- be dead-lettered, so saying "unknown" is more useful than silently claiming the legacy space.
+spaceQualified :: TimerRow -> Text -> Text
+spaceQualified row reason =
+  "[memory space "
+    <> maybe "unknown" memorySpaceIdText (timerPayloadSpace row.payload)
+    <> "] "
+    <> reason
+
+-- | The memory space a timer payload names, for diagnostics only.
+--
+-- Every one of the three payload types carries the space, and each decodes it through
+-- 'parsePartitionSpace' — the same function this uses — so this cannot disagree with the handler
+-- that actually acts on the payload. It is read here rather than returned by the handlers so
+-- that a span and a dead-letter row can name the space even when no handler claimed the timer.
+timerPayloadSpace :: Aeson.Value -> Maybe MemorySpaceId
+timerPayloadSpace = \case
+  Aeson.Object o -> Aeson.parseMaybe parsePartitionSpace o
+  _ -> Nothing
+
+-- | Span attributes for one fire attempt.
+--
+-- The space is here, on the trace, and deliberately not on a metric: a memory space is
+-- caller-supplied text with no bound on how many distinct values exist, and a counter labelled
+-- by it is an unbounded time series per tenant. Traces are sampled and per-incident; that is the
+-- right place for an identifier a caller chose.
+timerSpanAttributes :: TimerRow -> HashMap Text Attr.Attribute
+timerSpanAttributes row =
+  HashMap.fromList
+    ( [ ("kioku.timer.process_manager", Attr.toAttribute row.processManagerName),
+        ("kioku.timer.id", Attr.toAttribute (timerIdText row.timerId)),
+        ("kioku.timer.attempts", Attr.toAttribute (fromIntegral @Int @Int64 row.attempts))
+      ]
+        <> foldMap
+          (\space -> [("kioku.memory_space_id", Attr.toAttribute (memorySpaceIdText space))])
+          (timerPayloadSpace row.payload)
+    )
+
+-- | What the fire decided, as a bounded outcome plus an unbounded reason.
+--
+-- The outcome is one of four constants, so it is safe anywhere including a metric label. The
+-- reason is free text — an LLM provider message, a codec error — and stays on the span.
+fireOutcomeAttributes :: FireOutcome -> HashMap Text Attr.Attribute
+fireOutcomeAttributes = \case
+  FireCompleted _ -> HashMap.fromList [outcomeAttr "completed"]
+  FireRetryLater _ note -> HashMap.fromList [outcomeAttr "retry", reasonAttr note]
+  FireFailedPermanently reason -> HashMap.fromList [outcomeAttr "dead_letter", reasonAttr reason]
+  FireNotMine -> HashMap.fromList [outcomeAttr "not_mine"]
+  where
+    outcomeAttr value = ("kioku.timer.outcome", Attr.toAttribute (value :: Text))
+    reasonAttr value = ("kioku.timer.reason", Attr.toAttribute value)
+
+timerIdText :: TimerId -> Text
+timerIdText (TimerId uuid) = UUID.toText uuid
 
 -- | Push a claimed timer back out into the future.
 --
@@ -186,8 +259,12 @@ rescheduleClaimedTimer row delay = do
             payload = row.payload
           }
 
+-- | Claim and fire at most one due timer, inside a span that names the memory space.
+--
+-- keiro's own timer metrics stay exactly as they are: they carry no space and no principal, and
+-- this deliberately adds neither. See 'timerSpanAttributes'.
 runKiokuTimerWorkerOnce ::
-  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es, Tracing :> es) =>
   Maybe KeiroMetrics ->
   MemoryContextProvider (Eff es) ->
   DistillRuntime ->
@@ -196,7 +273,11 @@ runKiokuTimerWorkerOnce ::
   Eff es (Maybe TimerRow)
 runKiokuTimerWorkerOnce metrics contexts rt finder now =
   runTimerWorkerWith metrics kiokuTimerWorkerOptions now \row ->
-    fireKiokuTimer contexts rt finder row >>= applyFireOutcome row
+    withSpan' "kioku.timer.fire" defaultSpanArguments \fireSpan -> do
+      addAttributes fireSpan (timerSpanAttributes row)
+      outcome <- fireKiokuTimer contexts rt finder row
+      addAttributes fireSpan (fireOutcomeAttributes outcome)
+      applyFireOutcome row outcome
 
 -- | Claim and fire due timers until none remain, returning how many were
 -- processed.
@@ -207,7 +288,7 @@ runKiokuTimerWorkerOnce metrics contexts rt finder now =
 -- terminal state, so a timer processed in this pass is not claimable again
 -- within it.
 drainKiokuTimers ::
-  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es, Tracing :> es) =>
   Maybe KeiroMetrics ->
   MemoryContextProvider (Eff es) ->
   DistillRuntime ->

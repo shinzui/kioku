@@ -19,11 +19,21 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), scheduleTimerTx)
-import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId, legacyMemorySpaceId, memoryContextRecordedActor)
+import Kioku.Api.Access
+  ( MemoryAccessContext,
+    MemoryAccessDenial (..),
+    MemoryContextProvider (..),
+    MemoryPermission (..),
+    MemorySpaceId,
+    legacyMemorySpaceId,
+    memoryContextRecordedActor,
+    memorySpaceIdText,
+  )
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L1 (scopedScanCandidates)
-import Kioku.Distill.L2 (l2SceneProcessManagerName)
+import Kioku.Distill.L2 (SceneTimerPayload (..), l2SceneProcessManagerName, l2SceneTimerId)
+import Kioku.Distill.L3 (partitionedCorrelationId)
 import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
 import Kioku.Distill.Timer (L1TimerPayload (..), l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
@@ -32,12 +42,13 @@ import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
-import Kioku.SpaceFixtures (legacyContext, testContext, testContextProvider, testSpace)
+import Kioku.SpaceFixtures (legacyContext, otherSpace, testContext, testContextProvider, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
+import Shibuya.Telemetry.Effect (Tracing)
 import Shikumi.Error (ShikumiError (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
@@ -54,7 +65,10 @@ tests =
       testCase "unknown process manager requeues with a long delay" testUnknownProcessManagerRequeues,
       testCase "the attempt ceiling dead-letters" testAttemptCeilingDeadLetters,
       testCase "success marks the timer fired" testSuccessMarksFired,
-      testCase "drain processes every due timer in one pass" testDrainProcessesAllDueTimers
+      testCase "drain processes every due timer in one pass" testDrainProcessesAllDueTimers,
+      testCase "two spaces sharing a scope schedule two timers, and both fire" testTwoSpacesTwoTimers,
+      testCase "a refused memory space dead-letters" testRefusedSpaceDeadLetters,
+      testCase "every dead-letter row names the memory space" testDeadLetterNamesTheSpace
     ]
 
 -- | A correlation id that is not a session id can never become one. It used to
@@ -228,13 +242,103 @@ testDrainProcessesAllDueTimers =
     processed @?= 3
     fmap (.status) rows @?= ["dead", "dead", "dead"]
 
+-- | Two L2 scene timers for the same namespace and scope, one per memory space.
+--
+-- The timer id is a UUIDv5 over the process manager, the correlation id, and a source id, and
+-- the correlation id is @\<space\>:\<scope identity\>@. Without the space in there both spaces
+-- derive one id, and keiro's scheduling upsert would treat the second schedule as a re-arming of
+-- the first — one timer, one payload, one space's scene regenerated and the other's silently
+-- dropped. Two distinct ids, two rows, and both fired is the whole invariant.
+testTwoSpacesTwoTimers :: Assertion
+testTwoSpacesTwoTimers =
+  withTimerEnv \env rt -> do
+    let mineTimer = l2SceneTimerId testSpace emptyScope "shared-source"
+        theirsTimer = l2SceneTimerId otherSpace emptyScope "shared-source"
+    assertBool "two spaces derived one scene timer id" (mineTimer /= theirsTimer)
+    rows <- runOrFail env do
+      scheduleTestTimer
+        mineTimer
+        l2SceneProcessManagerName
+        (partitionedCorrelationId testSpace emptyScope)
+        (sceneTimerPayload testSpace)
+        (-1)
+      scheduleTestTimer
+        theirsTimer
+        l2SceneProcessManagerName
+        (partitionedCorrelationId otherSpace emptyScope)
+        (sceneTimerPayload otherSpace)
+        (-1)
+      void (drainKiokuTimers Nothing testContextProvider rt (scopedScanCandidates 5))
+      traverse fetchTimer [mineTimer, theirsTimer]
+    fmap (.status) rows @?= ["fired", "fired"]
+
+-- | A worker that may not act in a space must say so where an operator can see it.
+--
+-- Dead-letter rather than retry, for the same reason the embedding worker does: a refusal is a
+-- configuration fact, and retrying it every thirty seconds for an hour before giving up would
+-- spend an hour hiding it.
+testRefusedSpaceDeadLetters :: Assertion
+testRefusedSpaceDeadLetters =
+  withTimerEnv \env rt -> do
+    timerId <- freshTimerId
+    row <- runOrFail env do
+      scheduleTestTimer
+        timerId
+        l2SceneProcessManagerName
+        (partitionedCorrelationId testSpace emptyScope)
+        (sceneTimerPayload testSpace)
+        (-1)
+      fireOnceWith refusingContextProvider rt
+      fetchTimer timerId
+    row.status @?= "dead"
+    assertBool
+      ("last_error should name the refusal, got: " <> show row.lastError)
+      (maybe False (Text.isInfixOf "not authorized") row.lastError)
+
+-- | @last_error@ is the column an operator reads when a distillation stops happening, and a
+-- dead-lettered timer that does not say which tenant it belongs to is a question, not an answer.
+testDeadLetterNamesTheSpace :: Assertion
+testDeadLetterNamesTheSpace =
+  withTimerEnv \env rt -> do
+    timerId <- freshTimerId
+    sid <- genSessionId
+    row <- runOrFail env do
+      startFixtureSession sid
+      -- A correlation id that is not a session id: a permanent failure whose own message has no
+      -- reason to mention a space, so what shows up can only have come from the annotation.
+      scheduleTestTimer timerId l1ExtractProcessManagerName "not-a-session-id" (l1Payload testSpace) (-1)
+      fireOnce rt
+      fetchTimer timerId
+    row.status @?= "dead"
+    assertBool
+      ("last_error should name the memory space, got: " <> show row.lastError)
+      (maybe False (Text.isInfixOf (memorySpaceIdText testSpace)) row.lastError)
+
+-- | An L2 scene timer payload as the projection writes one.
+sceneTimerPayload :: MemorySpaceId -> Aeson.Value
+sceneTimerPayload space =
+  Aeson.toJSON SceneTimerPayload {memorySpaceId = space, scope = emptyScope}
+
+-- | A provider that refuses every space, as a host with a real authorization engine would when
+-- this worker is not allowed to touch this tenant.
+refusingContextProvider :: (Applicative m) => MemoryContextProvider m
+refusingContextProvider =
+  MemoryContextProvider \space -> pure (Left (MemoryPermissionDenied space MemoryDistill))
+
 fireOnce ::
-  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es, Tracing :> es) =>
   DistillRuntime ->
   Eff es ()
-fireOnce rt = do
+fireOnce = fireOnceWith testContextProvider
+
+fireOnceWith ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es, Tracing :> es) =>
+  MemoryContextProvider (Eff es) ->
+  DistillRuntime ->
+  Eff es ()
+fireOnceWith provider rt = do
   now <- liftIO getCurrentTime
-  void (runKiokuTimerWorkerOnce Nothing testContextProvider rt (scopedScanCandidates 5) now)
+  void (runKiokuTimerWorkerOnce Nothing provider rt (scopedScanCandidates 5) now)
 
 -- | Schedule a timer @offset@ seconds from now (negative means already due).
 scheduleTestTimer ::

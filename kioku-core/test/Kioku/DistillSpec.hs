@@ -30,6 +30,7 @@ import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Stream qualified as Stream
 import Keiro.Timer (countDueTimers)
+import Kioku.Api.Access (MemoryAccessContext, memoryContextRecordedActor, memoryContextSpace)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (AppEnv, runAppIO, withNoopAppEnv)
@@ -59,7 +60,14 @@ import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..))
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), StartSessionData (..))
-import Kioku.SpaceFixtures (testActorPrincipal, testContext, testContextProvider, testSpace)
+import Kioku.SpaceFixtures
+  ( otherContext,
+    otherSpace,
+    testActorPrincipal,
+    testContext,
+    testContextProvider,
+    testSpace,
+  )
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -67,6 +75,7 @@ import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Read (readStreamForward)
 import Kiroku.Store.Transaction (runTransaction)
 import Kiroku.Store.Types (EventType (..), RecordedEvent (..), StreamVersion (..))
+import Shibuya.Telemetry.Effect (Tracing)
 import Shikumi.Effect.Time (runTime)
 import Shikumi.Error (ShikumiError (..))
 import Shikumi.LLM (LLM (..))
@@ -106,7 +115,8 @@ forgetPropagationTests =
     [ testCase "forget operations schedule scene timers" testForgetSchedulesSceneTimers,
       testCase "an emptied scope deletes its scene, persona, and mirrors" testEmptyScopeDeletesArtifacts,
       testCase "the timer worker propagates an archive to every artifact" testWorkerPropagatesArchive,
-      testCase "supersede and merge propagate like archive" testWorkerPropagatesSupersedeAndMerge
+      testCase "supersede and merge propagate like archive" testWorkerPropagatesSupersedeAndMerge,
+      testCase "one worker serving two spaces keeps their artifacts disjoint" testWorkerKeepsSpacesApart
     ]
 
 -- | A memory's confidence is part of what its scope's scene is built from: it is
@@ -536,6 +546,125 @@ testWorkerPropagatesArchive = withDistillWorkspaceEnv \env workspace -> do
 
       refired @?= 0
 
+-- | What one two-space drain produced, so the assertions can be read without a nine-tuple.
+data TwoSpaceRun = TwoSpaceRun
+  { mineScenePath :: !FilePath,
+    theirsScenePath :: !FilePath,
+    mineMirror :: !Text,
+    theirsMirror :: !Text,
+    mineScenesAfter :: ![SceneRow],
+    theirsScenesAfter :: ![SceneRow],
+    minePersonaAfter :: !(Maybe PersonaRow),
+    theirsPersonaAfter :: !(Maybe PersonaRow),
+    mineFilesSurvived :: !Bool,
+    theirsFilesSurvived :: !Bool,
+    theirsMirrorAfter :: !Text,
+    refired :: !Int
+  }
+
+-- | One worker, two memory spaces, one namespace and one scope shared between them.
+--
+-- This is the shape the whole partition exists for and the one every layer can get wrong
+-- independently: the timer ids are derived from a scope both spaces hold, the scene and persona
+-- row ids are derived from that same scope, and the mirror filename is a slug of it. If any of
+-- those three still ignored the space, one tenant's regeneration would land on the other's
+-- artifact — and because the scene body here echoes the atoms it was built from, that shows up
+-- as the wrong tenant's content in the file rather than as a metadata mismatch.
+--
+-- The second half is the harder half. Forgetting my space's only memory empties my scope, which
+-- deletes my scene, my persona, and both my mirrors. Their space must come through untouched:
+-- rows, files, and content. A final drain asserts the at-least-once contract — nothing left to
+-- fire, so nothing to redo.
+testWorkerKeepsSpacesApart :: Assertion
+testWorkerKeepsSpacesApart = withDistillWorkspaceEnv \env workspace -> do
+  calls <- newDistillCalls
+  runtime <- echoingRuntime calls <$> replayRuntimeIn workspace
+  mineId <- genMemoryId
+  theirsId <- genMemoryId
+  now <- getCurrentTime
+  let scope = forgetScope "intention_two_space_worker"
+  result <-
+    runAppIO env do
+      recordFixtureIn testContext mineId scope alphaContent now
+      recordFixtureIn otherContext theirsId scope betaContent now
+      void (drainTimers runtime)
+
+      mineScene <- getScenesByScope testSpace scope >>= liftIO . expectOneScene "my space's scene"
+      theirsScene <- getScenesByScope otherSpace scope >>= liftIO . expectOneScene "their space's scene"
+      minePersona <- getPersonaByScope testSpace scope >>= liftIO . expectJust "my space's persona"
+      theirsPersona <- getPersonaByScope otherSpace scope >>= liftIO . expectJust "their space's persona"
+
+      let mineScenePath = sceneMirrorPath workspace mineScene
+          theirsScenePath = sceneMirrorPath workspace theirsScene
+          minePersonaPath = personaMirrorPath workspace minePersona
+          theirsPersonaPath = personaMirrorPath workspace theirsPersona
+      mineMirror <- liftIO (TextIO.readFile mineScenePath)
+      theirsMirror <- liftIO (TextIO.readFile theirsScenePath)
+
+      archived <-
+        Memory.archiveWithContext
+          testContext
+          ArchiveMemoryData
+            { memorySpaceId = testSpace,
+              actorPrincipal = testActorPrincipal,
+              memoryId = mineId,
+              archivedAt = now
+            }
+      void (liftIO (expectRight "Memory.archiveWithContext testContext mine" archived))
+      void (drainTimers runtime)
+
+      mineScenesAfter <- getScenesByScope testSpace scope
+      theirsScenesAfter <- getScenesByScope otherSpace scope
+      minePersonaAfter <- getPersonaByScope testSpace scope
+      theirsPersonaAfter <- getPersonaByScope otherSpace scope
+      mineFilesSurvived <- liftIO ((||) <$> doesFileExist mineScenePath <*> doesFileExist minePersonaPath)
+      theirsFilesSurvived <- liftIO ((&&) <$> doesFileExist theirsScenePath <*> doesFileExist theirsPersonaPath)
+      theirsMirrorAfter <- liftIO (TextIO.readFile theirsScenePath)
+
+      refired <- drainTimers runtime
+      pure
+        TwoSpaceRun
+          { mineScenePath,
+            theirsScenePath,
+            mineMirror,
+            theirsMirror,
+            mineScenesAfter,
+            theirsScenesAfter,
+            minePersonaAfter,
+            theirsPersonaAfter,
+            mineFilesSurvived,
+            theirsFilesSurvived,
+            theirsMirrorAfter,
+            refired
+          }
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right run -> do
+      assertBool
+        ("both spaces wrote the same scene mirror: " <> run.mineScenePath)
+        (run.mineScenePath /= run.theirsScenePath)
+      assertBool
+        ("their content is in my mirror: " <> Text.unpack run.mineMirror)
+        (alphaNeedle `Text.isInfixOf` run.mineMirror && not (betaNeedle `Text.isInfixOf` run.mineMirror))
+      assertBool
+        ("my content is in their mirror: " <> Text.unpack run.theirsMirror)
+        (betaNeedle `Text.isInfixOf` run.theirsMirror && not (alphaNeedle `Text.isInfixOf` run.theirsMirror))
+
+      run.mineScenesAfter @?= []
+      run.minePersonaAfter @?= Nothing
+      assertBool "a mirror survived my emptied scope" (not run.mineFilesSurvived)
+
+      assertBool
+        "forgetting in my space deleted their scene"
+        (length run.theirsScenesAfter == 1)
+      assertBool "forgetting in my space deleted their persona" (isJust run.theirsPersonaAfter)
+      assertBool "forgetting in my space deleted their mirrors" run.theirsFilesSurvived
+      assertBool
+        ("their mirror changed when I forgot: " <> Text.unpack run.theirsMirrorAfter)
+        (run.theirsMirrorAfter == run.theirsMirror)
+
+      run.refired @?= 0
+
 -- | Archive is not a special case: superseding and merging retire a memory the
 -- same way, and must reach the scene the same way.
 testWorkerPropagatesSupersedeAndMerge :: Assertion
@@ -600,7 +729,7 @@ testWorkerPropagatesSupersedeAndMerge = withDistillWorkspaceEnv \env workspace -
 -- due. Bounded on purpose: a timer that rescheduled itself would otherwise spin
 -- here forever, and a hung test is worse than a failed one.
 drainTimers ::
-  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es, Tracing :> es) =>
   DistillRuntime ->
   Eff es Int
 drainTimers rt = go (50 :: Int) 0
@@ -640,13 +769,24 @@ recordForgetFixture ::
   Text ->
   UTCTime ->
   Eff es ()
-recordForgetFixture memoryId scope content now = do
+recordForgetFixture = recordFixtureIn testContext
+
+-- | The same fixture in a named space, for the two-space cases.
+recordFixtureIn ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
+  MemoryId ->
+  MemoryScope ->
+  Text ->
+  UTCTime ->
+  Eff es ()
+recordFixtureIn context memoryId scope content now = do
   recorded <-
     Memory.recordWithContext
-      testContext
+      context
       RecordMemoryData
-        { memorySpaceId = testSpace,
-          actorPrincipal = testActorPrincipal,
+        { memorySpaceId = memoryContextSpace context,
+          actorPrincipal = memoryContextRecordedActor context,
           ownerPrincipal = Nothing,
           memoryId,
           agentId = "test-agent",
