@@ -60,7 +60,7 @@ records the removal conditions and the alternatives rejected. The chief one was 
 |---|-------|------|-----------|-----------|--------|
 | EP-1 | Make recall targets explicit in the Kioku API | docs/plans/28-make-recall-targets-explicit-in-the-kioku-api.md | MasterPlan 5 EP-2 | None | Complete |
 | EP-2 | Enforce exact and namespace-wide recall in PostgreSQL | docs/plans/29-enforce-exact-and-namespace-wide-recall-in-postgresql.md | EP-1, MasterPlan 5 EP-3 | None | Complete |
-| EP-3 | Migrate recall consumers to explicit targets | docs/plans/30-migrate-recall-consumers-to-explicit-targets.md | EP-1, EP-2 | None | In Progress |
+| EP-3 | Migrate recall consumers to explicit targets | docs/plans/30-migrate-recall-consumers-to-explicit-targets.md | EP-1, EP-2 | None | Complete |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3).
@@ -150,10 +150,22 @@ and the milestone. This section provides an at-a-glance view of the entire initi
       case asserts the three bounds are three partition-led plans.
       `Kioku.RecallHarness.exactEntityStarvationCorpus` keeps plan 19's fallback proven on the
       exact-scope family too.)
-- [ ] EP-3: give the command line one spelling per target, and refuse the ambiguous one.
-- [ ] EP-3: settle L1's merge-candidate breadth deliberately rather than by inheritance.
-- [ ] EP-3: migrate documentation, changelogs, and the HTTP/SDK contracts to the target vocabulary.
-- [ ] EP-3: retire the legacy overload only after the declared compatibility window.
+- [x] EP-3: give the command line one spelling per target, and refuse the ambiguous one.
+      (2026-08-07: `--scope NAMESPACE:KIND:REF`, `--global-bucket NAMESPACE` and
+      `--namespace-wide NAMESPACE`, exactly one required; a bare-namespace `--scope` is a parse
+      error naming both replacements. `Kioku.Cli.RecallEndToEndSpec` runs the real binary against
+      two seeded spaces to prove each flag reaches the database as its own target.)
+- [x] EP-3: settle L1's merge-candidate breadth deliberately rather than by inheritance.
+      (2026-08-07: `recallCandidates` targets `ExactScope`, so it agrees with
+      `scopedScanCandidates`; a globally-scoped session can no longer rewrite a sibling entity
+      scope's memory. Proven with its own control in `Kioku.DistillSpec`.)
+- [x] EP-3: migrate documentation, changelogs, and the HTTP/SDK contracts to the target vocabulary.
+      (2026-08-07: seven user documents, three changelogs, ADR-2's quoted example, ADR-8's
+      Consequences, and three improvement requests now pinned to the three shipped tags.)
+- [x] EP-3: retire the legacy overload only after the declared compatibility window.
+      (2026-08-07: verified **not open** and therefore not retired. One of ADR-8's three conditions
+      is met — no in-repository caller constructs a `RecallRequest`; the other two await a released
+      version carrying `RecallTarget` and Shikigami's migration.)
 
 
 ## Surprises & Discoveries
@@ -206,6 +218,19 @@ interactions between child plans. Provide concise evidence.
   compiled, run, and quietly returned fewer rows". Letting `--scope mori` start meaning the global
   bucket is exactly that unsafe direction on the command line, so EP-3 refuses the ambiguous
   invocation instead of silently re-reading it. See the Decision Log.
+
+- **The deprecation window this MasterPlan planned around has not opened, and EP-3's completion
+  did not open it.** `RecallTarget` is still Unreleased; 0.3.0.0 predates it. Of ADR-8's three
+  removal conditions only "the CLI no longer constructs a `RecallRequest`" is met. EP-3's final
+  milestone therefore produced a verification rather than a schedule, which is the answer it asked
+  for — the MasterPlan's Vision promised a "deliberate compatibility path and deprecation period",
+  and a period that has not started is not one that can be skipped (2026-08-07).
+
+- **The two surviving call sites needed opposite treatments, for the same reason.** The CLI's
+  ambiguity was resolved by *refusing* the ambiguous input, because an operator can be told; L1's
+  was resolved by *changing* the behavior, because a finder has no one to tell and its caller
+  cannot express a preference. Both follow from asking who sees the change and whether anything can
+  warn them, which is a more useful rule than "never narrow" (2026-08-07).
 
 
 ## Decision Log
@@ -277,12 +302,38 @@ vector predicates, `memory_space_id` mandatory in both") is
 Exact global recall executes for the first time, and the filtered-ANN invariant this MasterPlan
 declared untouchable is now proven per statement family rather than once.
 
-EP-3 started 2026-08-07, with two of its inputs changed. The library work it was to build on is
-finished and measured, so what remains is genuinely CLI grammar and the merge-candidate breadth
-decision; and the CLI is now the only surface where the exact global bucket cannot be asked for.
-Both of the choices EP-1 and EP-2 deferred to it were settled before implementation began and are
-in the Decision Log above: each target gets its own flag with the ambiguous one refused, and L1's
-two merge-candidate finders are brought into agreement at the exact scope.
+EP-3 completed 2026-08-07, and with it the MasterPlan.
+
+**Against the Vision.** "Recall callers choose an explicit target: one exact memory scope or all
+scopes in one namespace, always inside one authorized memory space" now holds at every layer the
+Vision named. The type system has `RecallTarget`; the SQL has three scope clauses across nine
+`memory_space_id`-led statements; the CLI has three flags; and the user docs, the changelogs, and
+the HTTP/SDK improvement requests all use the same three names. `ScopeGlobal` can no longer mean
+an exact global bucket in one API and namespace-wide search in another, and it can no longer mean
+one thing to `kioku recall` and the opposite to `kioku scenes`.
+
+The Vision's second promise — "a deliberate compatibility path and deprecation period rather than
+a silent semantic change" — is kept in the sense that matters and is *not yet discharged*. The
+path exists, is measured against a real database, and is deprecated at compile time; the period has
+not begun, because no released version carries `RecallTarget`. Removing the wrapper is a later
+release action gated on [ADR-8](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md)'s
+three conditions, one of which is met.
+
+**What the decomposition got right, and where it was wrong.** The ordering — API, then SQL, then
+consumers — is what let EP-3 choose a grammar for operators instead of reverse-engineering one
+from whatever the statements allowed, and it is why EP-3's tests assert that a flag reaches the
+intended target rather than re-deriving what that target means. Where the decomposition was wrong
+is that it sized EP-3 as a migration. It was not: EP-1's signature change forced the mechanical
+call-site work early, and what was left was two judgement calls, both data-visible, both invisible
+until `RecallTarget` existed to state them in.
+
+**The lesson worth carrying past this initiative** is in ADR-8's Consequences rather than here,
+because it will apply again: a representation defect does not stay in the layer you found it in,
+and it does not stop at the layers you have types for. This one was removed from the API, then
+from the SQL, then from a flag and from a candidate finder — four layers, each found only after
+the one above it had a name for the distinction. When the HTTP service and the SDKs land, they are
+the fifth and sixth, which is why their improvement requests are pinned to the three tags now
+rather than reviewed later.
 
 
 ## Revision Notes
@@ -304,3 +355,18 @@ Decision Log records both deferred choices with their rationale. Neither decisio
 decomposition, so no child plan was split, merged, or reordered;
 `docs/plans/30-migrate-recall-consumers-to-explicit-targets.md` is revised in the same change to
 carry them.
+
+**2026-08-07 — EP-3 closing.** EP-3 is Complete and the MasterPlan with it. Its four Progress
+entries carry their evidence; Surprises & Discoveries records that the deprecation window has not
+opened and that EP-3's two call sites needed opposite treatments for the same reason; Outcomes &
+Retrospective compares the result against the Vision, including the half of the Vision that is
+deliberately not yet discharged.
+
+The ADR distillation pass moved two durable rules out of the plans and into
+[ADR-8](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md), whose Consequences now
+close both intermediate states it was carrying: when a compatibility mapping's meaning changes on a
+surface that cannot warn, refuse the ambiguous input rather than re-reading it; and a candidate
+finder chooses how to rank and bound a population, not which memories exist.
+[ADR-2](../adr/namespace-is-not-a-security-boundary.md) had its recall example restated in the
+vocabulary that now exists. No new ADR was needed: both rules are consequences of ADR-8's decision
+rather than decisions of their own, and `docs/adr/log.md` records them as updates.

@@ -35,15 +35,30 @@ This section must always reflect the actual current state of the work.
       `Kioku.Distill.L1.recallCandidates` had to compile against it. Both went through
       `legacyRecallTarget` and behave exactly as before, which is why the two entries below exist:
       they are the deliberate changes that mechanical migration deliberately did not make.)
-- [ ] Give the command line one flag per target, and refuse the ambiguous bare-namespace `--scope`.
-- [ ] Settle L1's merge-candidate breadth: `recallCandidates` becomes exact, matching
-      `scopedScanCandidates`.
-- [ ] Add CLI parsing, error, and end-to-end PostgreSQL tests.
-- [ ] Inventory Mori dependents and publish a downstream migration recipe.
-- [ ] Update recall, CLI reference, concepts, integrations, troubleshooting, getting-started, and
-      upgrade documentation, plus the changelogs.
-- [ ] Pin HTTP/SDK improvement requests to the explicit target schema.
-- [ ] Verify the deprecation window before scheduling legacy removal.
+- [x] Give the command line one flag per target, and refuse the ambiguous bare-namespace `--scope`.
+      (2026-08-07: `recallTargetParser` in `kioku-cli/src/Kioku/Cli/Commands/Recall.hs` offers
+      `--scope NAMESPACE:KIND:REF`, `--global-bucket NAMESPACE` and `--namespace-wide NAMESPACE`;
+      exactly one is required and a second is a parse error naming it. `--scope` still parses
+      through `Kioku.Cli.Scope.parseScope`, then refuses a `ScopeGlobal` result.)
+- [x] Settle L1's merge-candidate breadth: `recallCandidates` becomes exact, matching
+      `scopedScanCandidates`. (2026-08-07: one line in `Kioku.Distill.L1`, plus the Haddock that
+      says what it cost and why.)
+- [x] Add CLI parsing, error, and end-to-end PostgreSQL tests. (2026-08-07:
+      `Kioku.Cli.ParserSpec`'s "recall spells each target exactly once" — 11 cases — and
+      `Kioku.Cli.RecallEndToEndSpec`, which runs the real binary as a subprocess against two
+      seeded memory spaces. `Kioku.DistillSpec`'s "recall candidates stay inside the session's own
+      scope" covers the breadth change.)
+- [x] Inventory Mori dependents and publish a downstream migration recipe. (2026-08-07:
+      `docs/user/recall.md#known-dependents`. Two dependents; Shikigami's target migration is
+      mechanical and it has no namespace-wide recall to preserve.)
+- [x] Update recall, CLI reference, concepts, integrations, troubleshooting, getting-started, and
+      upgrade documentation, plus the changelogs. (2026-08-07: also `library-api.md`, ADR-2's
+      quoted example, and ADR-8's Consequences.)
+- [x] Pin HTTP/SDK improvement requests to the explicit target schema. (2026-08-07: both now name
+      the three shipped tags rather than a two-way exact/namespace-wide split.)
+- [x] Verify the deprecation window before scheduling legacy removal. (2026-08-07: verified **not
+      met**, and removal is therefore not scheduled — see Outcomes & Retrospective. One of ADR-8's
+      three conditions holds; the other two cannot yet.)
 
 
 ## Surprises & Discoveries
@@ -141,8 +156,86 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-Implementation began 2026-08-07. Completion means all in-repo callers and known dependents have a
-tested migration path; deletion of the compatibility API remains a later release action.
+Completed 2026-08-07.
+
+**What was achieved.** The overloaded scope is gone from the last two places it survived. On the
+command line each target has one spelling, the exact global bucket is askable for the first time,
+and the one invocation whose meaning would otherwise have changed — `--scope NAMESPACE` — is a
+parse error naming both replacements. In distillation, the recall-backed merge-candidate finder
+searches the session's own scope, so it and `scopedScanCandidates` agree about which memories a
+session's atoms may merge into; a globally-scoped session can no longer rewrite a sibling entity
+scope's memory. No in-repository code constructs a `RecallRequest` or calls `legacyRecallTarget`
+any more; the only remaining mention is a Haddock sentence in `Kioku.Distill.L1` recording what
+that line used to say.
+
+**The deprecation window is verified and has not opened.**
+[ADR-8](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md) sets three conditions
+for deleting `RecallRequest`/`legacyRecall`:
+
+| Condition                                            | Status                                       |
+|------------------------------------------------------|----------------------------------------------|
+| The CLI no longer constructs a `RecallRequest`        | **Met** as of this plan                      |
+| At least one released version carries `RecallTarget`  | **Not met** — it is Unreleased; 0.3.0.0 predates it |
+| Every known dependent compiles against `RecallTarget` | **Not met** — `mori://shinzui/shikigami` has not migrated |
+
+So removal is not scheduled, and this plan does not authorize it. That is the answer the milestone
+asked for, not a gap in it.
+
+**What it cost, stated plainly.** Two behavior changes ship here, and both narrow. `kioku recall
+--scope mori` stops working rather than returning fewer rows, which is the trade this plan chose
+deliberately — an operator pays one edit, once, instead of losing rows they never learn are
+missing. And a globally-scoped L1 session will report more `stored` and fewer `merged`; nothing is
+lost, but a deployment that relied on cross-scope consolidation will notice.
+
+**Evidence.** Each suite on its own, per plan 28's note about `cabal test all` under concurrency:
+
+```text
+kioku-api-test:        All 119 tests passed
+kioku-cli-test:        All 50 tests passed
+kioku-migrations-test: All 10 tests passed
+kioku-test:            All 209 tests passed
+```
+
+The two new groups:
+
+```text
+recall spells each target exactly once
+  --scope takes an entity scope:                                   OK
+  --global-bucket takes a namespace and means the rows with no entity scope: OK
+  --namespace-wide takes a namespace and means every scope under it: OK
+  the global bucket and the namespace are different targets:       OK
+  --scope keeps the shared colon rules:                            OK
+  a bare namespace is refused, naming both replacements:           OK
+  no target at all lists the three forms:                          OK
+  two targets is a parse error naming the second:                  OK
+  two targets in the other order is also a parse error:            OK
+  a scope passed to --namespace-wide points at --scope:            OK
+  each target describes itself distinctly:                         OK
+
+kioku recall end to end
+  each flag reaches the database as its own target, inside one space: OK (4.21s)
+
+Distillation pyramid
+  recall candidates stay inside the session's own scope:           OK (1.11s)
+```
+
+The breadth case was checked against its own regression: reverting the one line in
+`Kioku.Distill.L1` fails it on `stored: expected 1, got 0`, because the pass merges into the
+sibling scope instead.
+
+**Two lessons.**
+
+The first is that a defect removed from a type does not leave the system. This initiative deleted
+the overloaded `ScopeGlobal` from the API in plan 28 and from the SQL in plan 29, and it was still
+alive in two places that predate both — a flag, and a finder — where no compiler could point at
+it. What made them findable was having the vocabulary to state them in; neither is a bug you can
+report before `RecallTarget` exists.
+
+The second is that ADR-8's lesson about safe and unsafe directions has a corollary on a
+human-facing surface. In a library the unsafe direction is caught by nothing at runtime but at
+least a deprecation can warn. On a command line there is no compiler and the exit status stays
+zero, so the honest move is to refuse the ambiguous input rather than to re-read it. That is now
+recorded in ADR-8 rather than only here, because the next surface Kioku grows will face it again.
 
 
 ## Context and Orientation
@@ -255,6 +348,31 @@ Acceptance requires:
 - HTTP/SDK IR acceptance refers to the tagged target union.
 - Legacy deletion is not performed until the ADR's release/dependent conditions are met.
 
+All met, 2026-08-07, with the evidence for each:
+
+- The first three are `Kioku.Cli.RecallEndToEndSpec`, which runs the real binary against two seeded
+  spaces: each flag's rows are asserted present and the other target's rows absent, and no target —
+  including the widest — reaches the second space. The same widest target under that space's
+  context returns that space's rows.
+- The refusal is asserted twice: purely, in `Kioku.Cli.ParserSpec` ("a bare namespace is refused,
+  naming both replacements", which checks for both flags and for the phrase saying which one
+  reproduces the old behavior), and end to end, where it exits nonzero with nothing on stdout.
+- Two flags and no flags are `ParserSpec`'s three conflict/missing cases. Both fail in the parser,
+  before the environment is read and before any connection is opened.
+- `rg legacyRecallTarget\|legacyRecall\|RecallRequest` over `kioku-cli/`, `kioku-core/src` and
+  `kioku-api/src` returns exactly one hit outside the two modules that define the compatibility
+  layer, and it is a Haddock sentence in `Kioku.Distill.L1` recording what the line used to say.
+- The finders' agreement is `Kioku.DistillSpec`'s "recall candidates stay inside the session's own
+  scope", which proves the control as well as the assertion — the sibling is reachable by a
+  namespace-wide recall over the same text, so the target is what excludes it.
+- Shikigami's path is `docs/user/recall.md#known-dependents`: `agentScope` is a `ScopeEntity`, so
+  `legacyRecallTarget` maps it to `ExactScope` unchanged, and `sharedScope` — its one `ScopeGlobal`
+  value — is never recalled against. It is behind on `MemoryAccessContext` and `memorySpaceId` as
+  well, which is said where a reader meets it.
+- Both improvement requests now name the three shipped tags rather than a two-way union.
+- Deletion is not performed, and the window is verified as not open — see Outcomes & Retrospective
+  for the condition-by-condition table.
+
 
 ## Idempotence and Recovery
 
@@ -314,3 +432,24 @@ imply the other commands cannot be retargeted. Milestone 1 assumed the second; `
 plain text only, so "keep scriptable output stable" is met by leaving stdout untouched and
 announcing the space and target on stderr. Both are recorded in Surprises & Discoveries and the
 Decision Log.
+
+**2026-08-07 — implementation.** Three things differ from the opening revision, each recorded where
+a reader meets it rather than only here.
+
+*The grammar grew a third flag during design, not during coding.* The opening revision already
+records why `--global-bucket` exists; what the implementation added is the shape of the mutual
+exclusion. Three `option` parsers combined with `<|>` give all three properties for free: exactly
+one required (optparse prints `Missing:` with the three forms), a second one left unconsumed and
+reported by name, and a usage line that lists the alternation. It is the construction
+`kioku worker` already uses for its one-shot modes, so the failure text an operator sees is the
+same shape they have seen before.
+
+*The end-to-end test runs the binary rather than `runRecall`.* `stdout`, `stderr` and the
+environment are process-wide and tasty runs cases concurrently, so redirecting them in process
+would race the rest of the suite — the same hazard `withDistillWorkspaceEnv` records about `chdir`.
+The suite gained `build-tool-depends: kioku-cli:kioku`, a dependency on
+`kioku-migrations:test-support`, and `process`; it is the first CLI test that needs a database.
+
+*The deprecation-window milestone produced a verification, not a schedule.* One of ADR-8's three
+conditions is met and the other two cannot be until a version carrying `RecallTarget` ships and
+Shikigami migrates. Outcomes & Retrospective has the table.
