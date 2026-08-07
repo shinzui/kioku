@@ -60,14 +60,13 @@ module Kioku.Recall
     selectFtsCandidates,
     selectVectorCandidates,
     vectorLiteral,
-    selectVectorCandidatesStmt,
-    selectVectorCandidatesExactStmt,
     selectVectorCandidatesDiagnosed,
     VectorChannelOutcome (..),
     vectorChannelStarved,
-    VectorCandidateQuery,
-    vectorCandidateQuery,
-    memoryRecordColumns,
+    VectorCandidateSql,
+    vectorCandidateSql,
+    runVectorAnnCandidates,
+    explainVectorAnnCandidates,
     candidatePoolSize,
   )
 where
@@ -138,19 +137,25 @@ import Kiroku.Store.Transaction (runTransaction)
 
 -- $testSeams
 -- Exported so the candidate SQL can be exercised directly against a real database
--- (@Kioku.RecallSqlSpec@) rather than only through 'recall', which would drag in an
--- embedding endpoint. They are not part of the intended public API.
+-- (@Kioku.RecallSqlSpec@, @Kioku.RecallTargetSpec@) rather than only through 'recall', which
+-- would drag in an embedding endpoint. They are not part of the intended public API.
 --
--- 'selectVectorCandidatesStmt', 'vectorCandidateQuery', 'memoryRecordColumns' and
--- 'candidatePoolSize' are exported for @Kioku.RecallHarness@, the recall-quality instrument. It
--- needs the statement itself (rather than 'selectVectorCandidates', which wraps it in its own
--- transaction) so that it can run it under a @SET LOCAL@, and it needs the projection and the
--- pool size so that its @EXPLAIN@ describes the query that actually runs. That last one is not a
--- nicety: the projection's row width sets the cost of the top-N sort the /exact/ plan needs, and
--- that cost is what the planner weighs against the HNSW scan — so an @EXPLAIN@ carrying a
--- different select list can silently choose a different plan and report a different answer.
--- Restating them in the harness rather than exporting them is how the harness got that wrong
--- once.
+-- 'vectorCandidateSql', 'runVectorAnnCandidates' and 'explainVectorAnnCandidates' are exported
+-- for @Kioku.RecallHarness@, the recall-quality instrument. It needs the approximate pass on its
+-- own — 'selectVectorCandidates' runs the fallback too, and wraps both in its own transaction —
+-- so that it can run it under a @SET LOCAL@ and measure the approximate pass in isolation. And
+-- it needs an @EXPLAIN@ of /that/ statement, which is why 'explainVectorAnnCandidates' lives
+-- here beside the statement it describes rather than in the harness.
+--
+-- __The harness used to restate the SQL and it went wrong twice.__ An @EXPLAIN@ whose SQL differs
+-- from the shipping statement in any way the planner cares about can choose a different plan and
+-- report a different answer, silently and flatteringly. Once the copy selected @memory_id@ alone:
+-- the narrow row made the top-N sort look cheap, the planner took the exact plan, and the
+-- @EXPLAIN@ reported fifty happy rows while the real query took the HNSW plan and returned zero.
+-- Once it omitted the @memory_space_id@ predicate, which is the leading column of every
+-- partition-first index, and reported an access path no live query can produce. There is now no
+-- copy to drift: the @EXPLAIN@ is built from the same SQL text and the same parameters as the
+-- statement it explains.
 
 -- | The pre-'RecallTarget' recall request.
 --
@@ -178,23 +183,16 @@ data RecallRequest = RecallRequest
 -- Keeping those apart is the whole point of returning an 'Either' here. A caller cannot tell
 -- \"this could not be asked\" from \"there is nothing here\" if both arrive as an empty list, and
 -- only one of them is worth acting on.
+-- Every 'RecallTarget' is now executable, so the only way to reach this channel is the legacy
+-- request's own memory space disagreeing with the context that authorized it. The channel stays
+-- on 'recall' rather than collapsing to a total function: removing it is a public signature
+-- change for every call site, which belongs with the consumer migration in
+-- @docs\/plans\/30-migrate-recall-consumers-to-explicit-targets.md@ rather than here.
 data RecallError
   = -- | A 'RecallRequest' named a memory space that is not the one its context authorizes:
     -- @RecallSpaceMismatch requested authorized@. Only 'legacyRecall' can produce this, because
     -- only the legacy request carries a space of its own.
     RecallSpaceMismatch !MemorySpaceId !MemorySpaceId
-  | -- | The exact global bucket of a namespace was requested, and the candidate SQL cannot yet
-    -- express it.
-    --
-    -- This is a deliberate refusal rather than a wrong answer. Both candidate statements spell
-    -- the scope filter @(($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))@,
-    -- in which NULL scope columns mean /no scope filter at all/ — so the only rows an exact
-    -- global request could produce through them are the namespace-wide ones, silently. Splitting
-    -- those statements is
-    -- @docs\/plans\/29-enforce-exact-and-namespace-wide-recall-in-postgresql.md@; until it lands,
-    -- 'ExactScope' over a 'ScopeGlobal' is representable, round-trips on the wire, and refuses to
-    -- execute. Use 'getGlobal' for an unranked exact global read in the meantime.
-    RecallExactGlobalUnsupported !Namespace
   deriving stock (Generic, Eq, Show)
 
 data RecallHit = RecallHit
@@ -212,75 +210,117 @@ data RecallExecutionPlan = RecallExecutionPlan
   }
   deriving stock (Generic, Eq, Show)
 
+-- | Which rows inside one namespace a resolved target admits.
+--
+-- Three targets, three predicates, and — this is the whole point — no value that means two of
+-- them. The representation this replaces spelled all three with a nullable @scope_kind@ and
+-- @scope_ref@ pair, in which NULL meant /omit the scope filter/; the exact global bucket, whose
+-- rows are exactly the ones whose scope columns /are/ NULL, therefore had no way to say so and
+-- was refused rather than answered wrongly. See
+-- @docs\/adr\/each-recall-target-gets-its-own-statement.md@.
+data ScopeBound
+  = -- | Only the rows recorded with no entity scope: @scope_kind IS NULL AND scope_ref IS NULL@.
+    GlobalBucketOnly
+  | -- | Only the rows carrying exactly this kind and ref: @scope_kind = $4 AND scope_ref = $5@.
+    EntityScopeOnly !Text !Text
+  | -- | Every scope in the namespace: no scope comparison at all. The memory-space and namespace
+    -- predicates still apply, which is why this widens breadth without widening tenancy.
+    EveryScopeInNamespace
+  deriving stock (Generic, Eq, Show)
+
 -- | A recall request bound to the memory space that authorized it, with its target already
--- compiled to the scope columns the candidate SQL takes.
+-- compiled to the scope predicate the candidate SQL will carry.
 --
 -- 'resolveRecall' is the only way to build one, which is what makes the binding trustworthy: the
--- space comes from a 'MemoryAccessContext' and the columns come from a 'RecallTarget', and
--- neither can be supplied independently of the other. Everything downstream of this type — both
--- candidate statements, the fusion, the budgets — sees a request that has already had its
+-- space comes from a 'MemoryAccessContext' and the bound comes from a 'RecallTarget', and neither
+-- can be supplied independently of the other. Everything downstream of this type — all three
+-- candidate statement families, the fusion, the budgets — sees a request that has already had its
 -- authority and its breadth decided.
 data ResolvedRecall = ResolvedRecall
   { memorySpaceId :: !MemorySpaceId,
     namespace :: !Text,
-    scopeKind :: !(Maybe Text),
-    scopeRef :: !(Maybe Text),
+    scopeBound :: !ScopeBound,
     query :: !Text,
     strategy :: !RecallStrategy,
     maxResults :: !Int
   }
   deriving stock (Generic, Eq, Show)
 
--- | Bind a request to one authorized memory space and compile its target to scope columns.
+-- | Bind a request to one authorized memory space and compile its target to a scope bound.
 --
 -- This is the single mapping from what a caller asked for to what the SQL is given, and it is
 -- deliberately the only one:
 --
 -- @
--- 'NamespaceWide' ns                    -> namespace = ns, scope columns NULL (no scope filter)
--- 'ExactScope' ('ScopeEntity' ns k r)     -> namespace = ns, scope_kind = k, scope_ref = r
--- 'ExactScope' ('ScopeGlobal' ns)         -> refused; see 'RecallExactGlobalUnsupported'
+-- 'ExactScope' ('ScopeGlobal' ns)       -> namespace = ns, 'GlobalBucketOnly'
+-- 'ExactScope' ('ScopeEntity' ns k r)   -> namespace = ns, 'EntityScopeOnly' k r
+-- 'NamespaceWide' ns                  -> namespace = ns, 'EveryScopeInNamespace'
 -- @
 --
--- The space is an argument rather than a field of the request, so no call site can widen a
--- target and a tenancy in the same edit.
-resolveRecall :: MemorySpaceId -> RecallQuery -> Either RecallError ResolvedRecall
+-- It is total. Every target has a predicate, the limit was validated into a 'RecallLimit' before
+-- the request was built, and the space is an argument rather than a field of the request — so no
+-- call site can widen a target and a tenancy in the same edit, and none of the three meanings can
+-- fail to be expressible.
+resolveRecall :: MemorySpaceId -> RecallQuery -> ResolvedRecall
 resolveRecall space request =
   case request.target of
-    NamespaceWide (Namespace ns) -> Right (bind ns Nothing Nothing)
+    ExactScope (ScopeGlobal (Namespace ns)) -> bind ns GlobalBucketOnly
     ExactScope (ScopeEntity (Namespace ns) (ScopeKind kind) ref) ->
-      Right (bind ns (Just kind) (Just ref))
-    ExactScope (ScopeGlobal ns) -> Left (RecallExactGlobalUnsupported ns)
+      bind ns (EntityScopeOnly kind ref)
+    NamespaceWide (Namespace ns) -> bind ns EveryScopeInNamespace
   where
-    bind ns kind ref =
+    bind ns bound =
       ResolvedRecall
         { memorySpaceId = space,
           namespace = ns,
-          scopeKind = kind,
-          scopeRef = ref,
+          scopeBound = bound,
           query = request.query,
           strategy = request.strategy,
           maxResults = recallLimitInt request.maxResults
         }
 
-data RecallCandidateQuery = RecallCandidateQuery
-  { query :: !Text,
+-- | The parameters a candidate query takes when its scope predicate needs none of its own:
+-- @$1@ the match text, @$2@ the memory space, @$3@ the namespace, @$4@ the row limit.
+--
+-- Both bounds that use this record — 'GlobalBucketOnly' and 'EveryScopeInNamespace' — carry no
+-- scope /values/, and that is precisely why they must not share a statement: they differ by the
+-- SQL they compile to, not by a parameter, so which one ran is visible in the statement's name
+-- and in its query plan rather than hidden in a NULL.
+data BoundedCandidateParams = BoundedCandidateParams
+  { match :: !Text,
     memorySpaceId :: !MemorySpaceId,
     namespace :: !Text,
-    scopeKind :: !(Maybe Text),
-    scopeRef :: !(Maybe Text),
     limit :: !Int32
   }
   deriving stock (Generic, Eq, Show)
 
-data VectorCandidateQuery = VectorCandidateQuery
-  { queryVector :: !Text,
+-- | 'BoundedCandidateParams' plus the two scope comparisons an entity bound makes: @$4@ the
+-- scope kind and @$5@ the scope ref, which moves the row limit to @$6@. Both are non-nullable,
+-- so this record cannot express \"no scope filter\" even by accident.
+data EntityCandidateParams = EntityCandidateParams
+  { match :: !Text,
     memorySpaceId :: !MemorySpaceId,
     namespace :: !Text,
-    scopeKind :: !(Maybe Text),
-    scopeRef :: !(Maybe Text),
+    scopeKind :: !Text,
+    scopeRef :: !Text,
     limit :: !Int32
   }
+  deriving stock (Generic, Eq, Show)
+
+-- | A full-text candidate query, already committed to one of the three statement families.
+data FtsCandidateSql
+  = FtsInGlobalBucket !BoundedCandidateParams
+  | FtsInEntityScope !EntityCandidateParams
+  | FtsAcrossNamespace !BoundedCandidateParams
+  deriving stock (Generic, Eq, Show)
+
+-- | A vector candidate query, already committed to one of the three statement families. The same
+-- value drives the approximate pass, the exact fallback, and the @EXPLAIN@ of the approximate
+-- pass, so those three can never describe different queries.
+data VectorCandidateSql
+  = VectorInGlobalBucket !BoundedCandidateParams
+  | VectorInEntityScope !EntityCandidateParams
+  | VectorAcrossNamespace !BoundedCandidateParams
   deriving stock (Generic, Eq, Show)
 
 data FusedCandidate = FusedCandidate
@@ -309,9 +349,7 @@ recall ::
   RecallQuery ->
   Eff es (Either RecallError [RecallHit])
 recall model capability context request =
-  case resolveRecall (memoryContextSpace context) request of
-    Left err -> pure (Left err)
-    Right resolved -> Right <$> runResolvedRecall model capability resolved
+  Right <$> runResolvedRecall model capability (resolveRecall (memoryContextSpace context) request)
 
 {-# DEPRECATED legacyRecall "Use recall with a RecallQuery. ScopeGlobal in a RecallRequest means namespace-wide, which is legacyRecallTarget's mapping; the exact global bucket is ExactScope (ScopeGlobal ns)." #-}
 
@@ -448,10 +486,7 @@ selectFtsCandidates ::
   ResolvedRecall ->
   Eff es [MemoryRecord]
 selectFtsCandidates req =
-  runTransaction $
-    Tx.statement
-      (candidateQuery req)
-      selectFtsCandidatesStmt
+  runTransaction (runFtsCandidates (ftsCandidateSql req))
 
 -- | What the vector channel did, so that a degraded semantic half stops being invisible.
 --
@@ -541,7 +576,7 @@ selectVectorCandidatesDiagnosed req queryVector =
     -- remedy a previous plan prescribed — /does/ move the planner, onto an ANN scan that then
     -- starves, which is how this defect was originally mis-diagnosed.
     Tx.sql efSearchSetting
-    annRows <- Tx.statement query selectVectorCandidatesStmt
+    annRows <- runVectorAnnCandidates candidates
     if length annRows >= fromIntegral candidatePoolSize
       then
         pure
@@ -553,7 +588,7 @@ selectVectorCandidatesDiagnosed req queryVector =
             annRows
           )
       else do
-        exactRows <- Tx.statement query selectVectorCandidatesExactStmt
+        exactRows <- runVectorExactCandidates candidates
         pure
           ( VectorChannelOutcome
               { annRows = length annRows,
@@ -563,7 +598,7 @@ selectVectorCandidatesDiagnosed req queryVector =
             exactRows
           )
   where
-    query = vectorCandidateQuery req queryVector
+    candidates = vectorCandidateSql req queryVector
 
 -- | @SET LOCAL@, so it lives exactly as long as the transaction the query runs in and cannot
 -- leak into the rest of the connection.
@@ -571,25 +606,43 @@ efSearchSetting :: ByteString
 efSearchSetting =
   TE.encodeUtf8 ("SET LOCAL hnsw.ef_search = " <> Text.pack (show candidatePoolSize))
 
-candidateQuery :: ResolvedRecall -> RecallCandidateQuery
-candidateQuery req =
-  RecallCandidateQuery
-    { query = req.query,
+-- | Compile a resolved request into a full-text candidate query. The match text is the caller's
+-- query, which @websearch_to_tsquery@ reads twice: once to filter and once to rank.
+ftsCandidateSql :: ResolvedRecall -> FtsCandidateSql
+ftsCandidateSql req =
+  case req.scopeBound of
+    GlobalBucketOnly -> FtsInGlobalBucket (boundedParams req req.query)
+    EntityScopeOnly kind ref -> FtsInEntityScope (entityParams req req.query kind ref)
+    EveryScopeInNamespace -> FtsAcrossNamespace (boundedParams req req.query)
+
+-- | Compile a resolved request and an embedded query into a vector candidate query. The match
+-- text is the vector literal the @$1::vector@ cast reads.
+vectorCandidateSql :: ResolvedRecall -> Vector Double -> VectorCandidateSql
+vectorCandidateSql req queryVector =
+  case req.scopeBound of
+    GlobalBucketOnly -> VectorInGlobalBucket (boundedParams req literal)
+    EntityScopeOnly kind ref -> VectorInEntityScope (entityParams req literal kind ref)
+    EveryScopeInNamespace -> VectorAcrossNamespace (boundedParams req literal)
+  where
+    literal = vectorLiteral queryVector
+
+boundedParams :: ResolvedRecall -> Text -> BoundedCandidateParams
+boundedParams req match =
+  BoundedCandidateParams
+    { match,
       memorySpaceId = req.memorySpaceId,
       namespace = req.namespace,
-      scopeKind = req.scopeKind,
-      scopeRef = req.scopeRef,
       limit = candidatePoolSize
     }
 
-vectorCandidateQuery :: ResolvedRecall -> Vector Double -> VectorCandidateQuery
-vectorCandidateQuery req queryVector =
-  VectorCandidateQuery
-    { queryVector = vectorLiteral queryVector,
+entityParams :: ResolvedRecall -> Text -> Text -> Text -> EntityCandidateParams
+entityParams req match scopeKind scopeRef =
+  EntityCandidateParams
+    { match,
       memorySpaceId = req.memorySpaceId,
       namespace = req.namespace,
-      scopeKind = req.scopeKind,
-      scopeRef = req.scopeRef,
+      scopeKind,
+      scopeRef,
       limit = candidatePoolSize
     }
 
@@ -722,32 +775,62 @@ truncateText cap content
 clamp01 :: Double -> Double
 clamp01 = max 0 . min 1
 
+-- * The three statement families
+
+-- $
+-- Every candidate statement is one of nine: three channels (full text, the approximate vector
+-- pass, the exact vector pass) times three bounds ('GlobalBucketOnly', 'EntityScopeOnly',
+-- 'EveryScopeInNamespace'). They are generated from one SQL template per channel and one scope
+-- clause per bound, so the three bounds can only ever differ in the scope clause — the memory
+-- space, the namespace and the @status@ filter are written once and cannot drift apart between
+-- families.
+--
+-- The nine exist instead of three parameterised statements because the widening is the security
+-- property. A single statement with a nullable scope pair has to spell the predicate
+-- @(($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))@, in which passing NULL
+-- silently drops the scope filter — so a caller that meant \"the global bucket\" and a caller
+-- that meant \"the whole namespace\" issue the identical query with the identical parameters, and
+-- neither a reviewer nor a query plan can tell them apart. Splitting them puts the difference in
+-- the statement name and in the @Index Cond@.
+
+-- | How a bound is spelled in SQL, and which positional parameter the row limit therefore lands
+-- on. An entity bound consumes @$4@ and @$5@ for its comparisons, which pushes its limit to @$6@.
+data ScopeClause = ScopeClause
+  { predicate :: !Text,
+    limitParam :: !Text
+  }
+
+globalBucketClause, entityScopeClause, namespaceWideClause :: ScopeClause
+globalBucketClause = ScopeClause "AND scope_kind IS NULL AND scope_ref IS NULL" "$4"
+entityScopeClause = ScopeClause "AND scope_kind = $4 AND scope_ref = $5" "$6"
+namespaceWideClause = ScopeClause "" "$4"
+
+-- | The predicates every candidate query carries before its scope clause: one authorized memory
+-- space, one namespace, active rows only. @$1@ is the match text, @$2@ the space, @$3@ the
+-- namespace.
+--
+-- The memory space is first and mandatory in all nine statements. Namespace-wide means every
+-- scope in one space, never every space — see
+-- @docs\/adr\/namespace-is-not-a-security-boundary.md@.
+partitionPredicates :: Text
+partitionPredicates =
+  "WHERE status = 'active' AND memory_space_id = $2 AND namespace = $3 "
+
 -- | Full-text candidates.
 --
--- The scope predicate @(($3 IS NULL AND $4 IS NULL) OR (scope_kind = $3 AND scope_ref = $4))@
--- is why recall searches namespace-wide for a global scope; scoped reads are exact-scope. For
--- a global scope both parameters are NULL, the first disjunct is always true, and the filter
--- vanishes. 'Kioku.Memory.ReadModel.selectActiveByScopeStmt' requires the columns to be NULL
--- instead. The @ORDER BY@ here is free to carry a recency tiebreak: a GIN index provides no
--- ordering, so there is no pathkey to preserve.
-selectFtsCandidatesStmt :: Statement RecallCandidateQuery [MemoryRecord]
-selectFtsCandidatesStmt =
-  preparable
-    ( "SELECT "
-        <> memoryRecordColumns
-        <> """
-            FROM kiroku.kioku_memories
-           WHERE status = 'active'
-             AND memory_space_id = $2
-             AND namespace = $3
-             AND (($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))
-             AND content_tsv @@ websearch_to_tsquery('english', $1)
-           ORDER BY ts_rank(content_tsv, websearch_to_tsquery('english', $1)) DESC, created_at DESC
-           LIMIT $6
-           """
-    )
-    recallCandidateQueryEncoder
-    (D.rowList memoryRecordDecoder)
+-- The @ORDER BY@ is free to carry a recency tiebreak: a GIN index provides no ordering, so
+-- there is no pathkey to preserve.
+ftsCandidateQuerySql :: ScopeClause -> Text
+ftsCandidateQuerySql scope =
+  "SELECT "
+    <> memoryRecordColumns
+    <> "FROM kiroku.kioku_memories "
+    <> partitionPredicates
+    <> scope.predicate
+    <> " AND content_tsv @@ websearch_to_tsquery('english', $1) "
+    <> "ORDER BY ts_rank(content_tsv, websearch_to_tsquery('english', $1)) DESC, created_at DESC "
+    <> "LIMIT "
+    <> scope.limitParam
 
 -- | Vector candidates, ordered by cosine distance and nothing else.
 --
@@ -760,84 +843,112 @@ selectFtsCandidatesStmt =
 -- so a caller could not re-break ties anyway, and exact ties between 1536-dimension float
 -- vectors essentially do not occur.
 --
--- Recall that this is a *post-filtered* ANN scan: the namespace, scope and status predicates
--- are applied to rows the index has already chosen by distance. See 'candidatePoolSize' for
--- what that costs.
---
--- The scope predicate is the same one 'selectFtsCandidatesStmt' carries: recall searches
--- namespace-wide for a global scope; scoped reads are exact-scope.
-selectVectorCandidatesStmt :: Statement VectorCandidateQuery [MemoryRecord]
-selectVectorCandidatesStmt =
-  preparable
-    ( "SELECT "
-        <> memoryRecordColumns
-        <> """
-            FROM kiroku.kioku_memories
-           WHERE status = 'active'
-             AND memory_space_id = $2
-             AND namespace = $3
-             AND (($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))
-             AND embedding IS NOT NULL
-           ORDER BY embedding <=> $1::vector
-           LIMIT $6
-           """
-    )
-    vectorCandidateQueryEncoder
-    (D.rowList memoryRecordDecoder)
+-- Recall that this is a *post-filtered* ANN scan: the space, namespace, scope and status
+-- predicates are applied to rows the index has already chosen by distance. See
+-- 'candidatePoolSize' for what that costs and 'selectVectorCandidatesDiagnosed' for the pass
+-- that rescues it.
+vectorAnnCandidateQuerySql :: ScopeClause -> Text
+vectorAnnCandidateQuerySql scope =
+  "SELECT "
+    <> memoryRecordColumns
+    <> "FROM kiroku.kioku_memories "
+    <> partitionPredicates
+    <> scope.predicate
+    <> " AND embedding IS NOT NULL "
+    <> "ORDER BY embedding <=> $1::vector "
+    <> "LIMIT "
+    <> scope.limitParam
 
--- | The exact vector scan: every embedded row in the caller's scope, ranked by distance, top-N.
+-- | The exact vector scan: every embedded row inside the bound, ranked by distance, top-N.
 -- It cannot starve, because the filter is applied /before/ the ranking rather than after it.
 --
 -- The @OFFSET 0@ is the whole mechanism and must not be "tidied away". It is an optimisation
 -- fence: it stops Postgres from pulling the subquery up into the outer query, which in turn stops
 -- the outer @ORDER BY embedding <=> …@ from reaching the HNSW index. Without it the planner
--- flattens the two levels back into 'selectVectorCandidatesStmt' and we are measuring — and
+-- flattens the two levels back into 'vectorAnnCandidateQuerySql' and we are measuring — and
 -- shipping — the very query we are trying to avoid.
 --
--- A @MATERIALIZED@ CTE would also fence it, and was rejected: materialising forces every in-scope
+-- A @MATERIALIZED@ CTE would also fence it, and was rejected: materialising forces every in-bound
 -- row's 1536-dimension embedding into memory (about 6KB each, so ~120MB for a 20000-row scope),
 -- whereas the fence streams and the top-N sort holds only 50 rows.
 --
--- The predicates are identical to 'selectVectorCandidatesStmt''s, including @embedding IS NOT
--- NULL@ — here it is a correctness filter rather than an index-matching one, but it must stay
--- either way, since a NULL embedding has no distance to anything.
-selectVectorCandidatesExactStmt :: Statement VectorCandidateQuery [MemoryRecord]
-selectVectorCandidatesExactStmt =
-  preparable
-    ( "SELECT "
-        <> memoryRecordColumns
-        <> """
-            FROM (SELECT *
-                    FROM kiroku.kioku_memories
-                   WHERE status = 'active'
-                     AND memory_space_id = $2
-                     AND namespace = $3
-                     AND (($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))
-                     AND embedding IS NOT NULL
-                  OFFSET 0) AS scoped
-           ORDER BY embedding <=> $1::vector
-           LIMIT $6
-           """
-    )
-    vectorCandidateQueryEncoder
-    (D.rowList memoryRecordDecoder)
+-- The predicates are identical to the approximate pass's, including @embedding IS NOT NULL@ —
+-- here it is a correctness filter rather than an index-matching one, but it must stay either way,
+-- since a NULL embedding has no distance to anything.
+vectorExactCandidateQuerySql :: ScopeClause -> Text
+vectorExactCandidateQuerySql scope =
+  "SELECT "
+    <> memoryRecordColumns
+    <> "FROM (SELECT * FROM kiroku.kioku_memories "
+    <> partitionPredicates
+    <> scope.predicate
+    <> " AND embedding IS NOT NULL OFFSET 0) AS scoped "
+    <> "ORDER BY embedding <=> $1::vector "
+    <> "LIMIT "
+    <> scope.limitParam
 
-recallCandidateQueryEncoder :: E.Params RecallCandidateQuery
-recallCandidateQueryEncoder =
-  ((\q -> q.query) >$< E.param (E.nonNullable E.text))
+-- | Run the full-text channel against whichever family the target chose.
+--
+-- The @case@ is total over 'FtsCandidateSql', so a fourth bound cannot be added without deciding
+-- what SQL it compiles to.
+runFtsCandidates :: FtsCandidateSql -> Tx.Transaction [MemoryRecord]
+runFtsCandidates = \case
+  FtsInGlobalBucket params -> Tx.statement params (boundedRows ftsCandidateQuerySql globalBucketClause)
+  FtsInEntityScope params -> Tx.statement params (entityRows ftsCandidateQuerySql)
+  FtsAcrossNamespace params -> Tx.statement params (boundedRows ftsCandidateQuerySql namespaceWideClause)
+
+-- | Run the approximate vector pass against whichever family the target chose.
+runVectorAnnCandidates :: VectorCandidateSql -> Tx.Transaction [MemoryRecord]
+runVectorAnnCandidates = \case
+  VectorInGlobalBucket params -> Tx.statement params (boundedRows vectorAnnCandidateQuerySql globalBucketClause)
+  VectorInEntityScope params -> Tx.statement params (entityRows vectorAnnCandidateQuerySql)
+  VectorAcrossNamespace params -> Tx.statement params (boundedRows vectorAnnCandidateQuerySql namespaceWideClause)
+
+-- | Run the exact vector pass against whichever family the target chose.
+runVectorExactCandidates :: VectorCandidateSql -> Tx.Transaction [MemoryRecord]
+runVectorExactCandidates = \case
+  VectorInGlobalBucket params -> Tx.statement params (boundedRows vectorExactCandidateQuerySql globalBucketClause)
+  VectorInEntityScope params -> Tx.statement params (entityRows vectorExactCandidateQuerySql)
+  VectorAcrossNamespace params -> Tx.statement params (boundedRows vectorExactCandidateQuerySql namespaceWideClause)
+
+-- | @EXPLAIN (ANALYZE, BUFFERS)@ over the approximate vector pass, built from the same SQL text
+-- and given the same parameters as 'runVectorAnnCandidates'. See the test-seam note at the top of
+-- this module for why it lives here rather than in the harness that uses it.
+explainVectorAnnCandidates :: VectorCandidateSql -> Tx.Transaction [Text]
+explainVectorAnnCandidates = \case
+  VectorInGlobalBucket params -> Tx.statement params (boundedPlan globalBucketClause)
+  VectorInEntityScope params -> Tx.statement params entityPlan
+  VectorAcrossNamespace params -> Tx.statement params (boundedPlan namespaceWideClause)
+  where
+    boundedPlan scope =
+      preparable (explained (vectorAnnCandidateQuerySql scope)) boundedCandidateEncoder planDecoder
+    entityPlan =
+      preparable (explained (vectorAnnCandidateQuerySql entityScopeClause)) entityCandidateEncoder planDecoder
+    explained sql = "EXPLAIN (ANALYZE, BUFFERS) " <> sql
+    planDecoder = D.rowList (D.column (D.nonNullable D.text))
+
+boundedRows :: (ScopeClause -> Text) -> ScopeClause -> Statement BoundedCandidateParams [MemoryRecord]
+boundedRows sqlFor scope =
+  preparable (sqlFor scope) boundedCandidateEncoder (D.rowList memoryRecordDecoder)
+
+entityRows :: (ScopeClause -> Text) -> Statement EntityCandidateParams [MemoryRecord]
+entityRows sqlFor =
+  preparable (sqlFor entityScopeClause) entityCandidateEncoder (D.rowList memoryRecordDecoder)
+
+boundedCandidateEncoder :: E.Params BoundedCandidateParams
+boundedCandidateEncoder =
+  ((\q -> q.match) >$< E.param (E.nonNullable E.text))
     <> ((\q -> q.memorySpaceId) >$< memorySpaceParam)
     <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
-    <> ((\q -> q.scopeKind) >$< E.param (E.nullable E.text))
-    <> ((\q -> q.scopeRef) >$< E.param (E.nullable E.text))
     <> ((\q -> q.limit) >$< E.param (E.nonNullable E.int4))
 
-vectorCandidateQueryEncoder :: E.Params VectorCandidateQuery
-vectorCandidateQueryEncoder =
-  ((\q -> q.queryVector) >$< E.param (E.nonNullable E.text))
+entityCandidateEncoder :: E.Params EntityCandidateParams
+entityCandidateEncoder =
+  ((\q -> q.match) >$< E.param (E.nonNullable E.text))
     <> ((\q -> q.memorySpaceId) >$< memorySpaceParam)
     <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
-    <> ((\q -> q.scopeKind) >$< E.param (E.nullable E.text))
-    <> ((\q -> q.scopeRef) >$< E.param (E.nullable E.text))
+    <> ((\q -> q.scopeKind) >$< E.param (E.nonNullable E.text))
+    <> ((\q -> q.scopeRef) >$< E.param (E.nonNullable E.text))
     <> ((\q -> q.limit) >$< E.param (E.nonNullable E.int4))
 
 memoryRecordColumns :: Text

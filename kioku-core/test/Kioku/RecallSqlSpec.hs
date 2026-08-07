@@ -21,8 +21,7 @@ import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Recall
-  ( RecallError (..),
-    RecallQuery (..),
+  ( RecallQuery (..),
     RecallStrategy (..),
     RecallTarget (..),
     ResolvedRecall,
@@ -57,8 +56,7 @@ tests :: TestTree
 tests =
   testGroup
     "Recall.Sql"
-    [ testCase "a namespace-wide target searches the whole namespace; an exact target does not" testScopePredicate,
-      testCase "the exact global bucket is refused rather than answered wrongly" testExactGlobalIsRefused,
+    [ testCase "each target compiles to the rows it names and no others" testScopePredicate,
       testCase "archived memories are never candidates" testStatusFilter,
       testGroup
         "websearch_to_tsquery survives whatever the user typed"
@@ -341,13 +339,15 @@ testDimensionDetection =
         assertEqual "a 512-dimension config against a vector(1536) column is a mismatch" (VectorDimensionMismatch 512 1536) mismatched
         assertEqual "the configured width matching the column is simply available" VectorAvailable matched
 
--- | Recall's scope predicate is @(($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND
--- scope_ref = $5))@: for a namespace-wide target both parameters are NULL, the first disjunct is
--- always true, and the query searches the entire namespace -- entity-scoped rows included. An
--- exact entity target compares both columns.
+-- | The three targets, the three statement families they compile to, and the rows each one is
+-- supposed to admit.
 --
--- The third meaning -- the exact global bucket -- has no parameter assignment in this predicate,
--- which is what 'testExactGlobalIsRefused' is about. See docs/user/recall.md.
+-- Each family spells its own scope clause: the exact global bucket asks for
+-- @scope_kind IS NULL AND scope_ref IS NULL@, an exact entity compares both columns, and a
+-- namespace-wide target carries no scope comparison at all. The representation this replaced
+-- spelled all three with one nullable pair, in which NULL meant /omit the scope filter/ — so the
+-- exact global bucket could not be asked for and was refused rather than answered wrongly. This
+-- case is what proves it can now be asked for and answered correctly. See docs/user/recall.md.
 testScopePredicate :: IO ()
 testScopePredicate =
   withRecallFixture \runEff -> do
@@ -358,11 +358,12 @@ testScopePredicate =
           ("m_other_ns", ns2Global, "the deployment pipeline runs on nix flakes", "active")
         ]
       wide <- selectFtsCandidates (request ns1Wide "deployment pipeline")
-      exact <- selectFtsCandidates (request ns1Exact "deployment pipeline")
-      pure (memoryIds wide, memoryIds exact)
+      exactEntity <- selectFtsCandidates (request ns1Exact "deployment pipeline")
+      exactGlobal <- selectFtsCandidates (request ns1ExactGlobal "deployment pipeline")
+      pure (memoryIds wide, memoryIds exactEntity, memoryIds exactGlobal)
     case result of
       Left err -> assertFailure ("store error: " <> show err)
-      Right (wide, exact) -> do
+      Right (wide, exactEntity, exactGlobal) -> do
         assertEqual
           "a namespace-wide target recalls every active row in the namespace, entity-scoped rows included"
           ["m_entity", "m_global"]
@@ -370,38 +371,14 @@ testScopePredicate =
         assertEqual
           "an exact entity target recalls only rows carrying exactly that scope"
           ["m_entity"]
-          exact
+          exactEntity
+        assertEqual
+          "an exact global target recalls the global bucket only, not the whole namespace"
+          ["m_global"]
+          exactGlobal
         assertBool
           "no query ever crosses a namespace boundary"
-          ("m_other_ns" `notElem` (wide <> exact))
-
--- | The exact global bucket is expressible in the API and refused by the resolver, rather than
--- silently executed as a namespace-wide search.
---
--- This is the case that would otherwise be a wrong answer instead of an error: both candidate
--- statements read NULL scope columns as "no scope filter", so the only rows an exact global
--- request could reach through them are every row in the namespace -- which is the ambiguity the
--- whole target vocabulary exists to remove. Splitting the statements is
--- docs/plans/29-enforce-exact-and-namespace-wide-recall-in-postgresql.md; until then the refusal
--- is the honest answer, and this test fails the day it stops being refused /or/ starts being
--- answered wrongly.
-testExactGlobalIsRefused :: IO ()
-testExactGlobalIsRefused =
-  case resolveRecall testSpace exactGlobalQuery of
-    Left (RecallExactGlobalUnsupported ns) -> assertEqual "names the namespace" (Namespace "ns1") ns
-    Left other -> assertFailure ("expected an exact-global refusal, got " <> show other)
-    Right _ ->
-      assertFailure
-        "exact global recall resolved to scope columns; with the current predicate that is a \
-        \namespace-wide search wearing an exact target's name"
-  where
-    exactGlobalQuery =
-      RecallQuery
-        { target = ExactScope ns1Global,
-          query = "deployment pipeline",
-          strategy = Keyword,
-          maxResults = either (error . Text.unpack) id (mkRecallLimit 10)
-        }
+          ("m_other_ns" `notElem` (wide <> exactEntity <> exactGlobal))
 
 testStatusFilter :: IO ()
 testStatusFilter =
@@ -466,24 +443,24 @@ ns1Global = ScopeGlobal (Namespace "ns1")
 ns1Entity = ScopeEntity (Namespace "ns1") (ScopeKind "repo") "web"
 ns2Global = ScopeGlobal (Namespace "ns2")
 
-ns1Wide, ns1Exact :: RecallTarget
+ns1Wide, ns1Exact, ns1ExactGlobal :: RecallTarget
 ns1Wide = NamespaceWide (Namespace "ns1")
 ns1Exact = ExactScope ns1Entity
+ns1ExactGlobal = ExactScope ns1Global
 
 -- | A request resolved against the test space, the way 'Kioku.Recall.recall' resolves one. The
 -- candidate statements are reached only through 'resolveRecall', so a test cannot hand the SQL a
--- column combination that the target mapping would never produce.
+-- statement family that the target mapping would never choose.
 request :: RecallTarget -> Text -> ResolvedRecall
 request target query =
-  either (error . ("unresolvable request: " <>) . show) id $
-    resolveRecall
-      testSpace
-      RecallQuery
-        { target,
-          query,
-          strategy = Keyword,
-          maxResults = either (error . Text.unpack) id (mkRecallLimit 10)
-        }
+  resolveRecall
+    testSpace
+    RecallQuery
+      { target,
+        query,
+        strategy = Keyword,
+        maxResults = either (error . Text.unpack) id (mkRecallLimit 10)
+      }
 
 memoryIds :: [MemoryRecord] -> [Text]
 memoryIds = sort . fmap (\row -> row.memoryId)

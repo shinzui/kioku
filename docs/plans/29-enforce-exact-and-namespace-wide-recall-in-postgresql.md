@@ -30,10 +30,23 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Define one target-to-predicate mapping used by FTS and vector planning.
-- [ ] Split or strongly type exact-scope and namespace-wide Hasql statements.
-- [ ] Add partition-leading indexes for each bounded query shape.
-- [ ] Preserve vector candidate expansion and exact FTS fallback behavior.
+- [x] Define one target-to-predicate mapping used by FTS and vector planning. (2026-08-07:
+      `ScopeBound` in `kioku-core/src/Kioku/Recall.hs` has one constructor per target;
+      `resolveRecall` is now total and is the only mapping.)
+- [x] Split or strongly type exact-scope and namespace-wide Hasql statements. (2026-08-07: nine
+      statements — three channels x three bounds — generated from one template per channel and one
+      `ScopeClause` per bound. `BoundedCandidateParams` carries no scope columns at all and
+      `EntityCandidateParams` carries two non-nullable ones, so no parameter assignment can widen
+      a bound.)
+- [x] Preserve vector candidate expansion and exact FTS fallback behavior. (2026-08-07: the two
+      passes are unchanged and now dispatch per family; `Recall.Sql` starvation and
+      healthy-scope cases still pass.)
+- [x] Delete `RecallExactGlobalUnsupported`. (2026-08-07: exact global executes; `RecallError` is
+      down to the legacy space mismatch.)
+- [x] Remove the harness's copy of the vector SQL. (2026-08-07:
+      `Kioku.Recall.explainVectorAnnCandidates` explains the shipping statement itself.)
+- [ ] Add partition-leading indexes for each bounded query shape (measure first — the existing
+      `kioku_memories_space_scope_idx` may already serve all three bounds).
 - [ ] Extend the recall harness with two-space and exact-global fixtures.
 - [ ] Add query-plan/limit tests and run the full PostgreSQL suite.
 - [ ] Document SQL semantics and operational verification.
@@ -49,6 +62,19 @@ implementation. Provide concise evidence.
 - The existing recall harness and plan 19 fix already protect against filtered ANN starvation.
   A query rewrite that removes candidate expansion could reintroduce that bug while passing
   simple semantic tests.
+
+- **The harness was carrying its own copy of the vector SQL, and the split would have made that
+  copy wrong a third time.** `Kioku.RecallHarness.explainVectorStmt` restated the statement
+  verbatim so it could `EXPLAIN` it; with three statement families it would have had to restate
+  three, and its own Haddock records two occasions when the copy silently drifted and reported a
+  plan no live query can produce. The copy is gone: `Kioku.Recall.explainVectorAnnCandidates`
+  builds the `EXPLAIN` from the same SQL text and the same parameters as the statement it
+  describes, and the harness calls it. Net effect on the module's exports is a reduction — five
+  seams became four.
+
+- **`resolveRecall` became total, which means `recall` can no longer fail.** Once every target has
+  a predicate, the only inhabitant of `RecallError` is `RecallSpaceMismatch`, which only
+  `legacyRecall` can produce. `recall` keeps its `Either` anyway; see the Decision Log.
 
 
 ## Decision Log
@@ -69,6 +95,34 @@ Record every decision made while working on the plan.
   change.
   Rationale: This initiative clarifies boundaries, not ranking quality.
   Date: 2026-08-06
+
+- Decision: Realize "separate exact and namespace-wide statements" as three SQL shapes, not two.
+  Rationale: The plan's Interfaces sketch proposed `ExactRecallSql` carrying a `MemoryScope`, but
+  a Hasql encoder for a `MemoryScope` needs nullable scope parameters again for the global case —
+  which reintroduces the very representation this plan removes, one layer down. Three shapes
+  (`scope_kind IS NULL AND scope_ref IS NULL`, `scope_kind = $4 AND scope_ref = $5`, and no scope
+  clause at all) each have a non-nullable parameter record, and the choice between them is a total
+  `case` over `ScopeBound`.
+  Date: 2026-08-07
+
+- Decision: Keep `recall :: ... -> Eff es (Either RecallError [RecallHit])` even though it can no
+  longer return `Left`.
+  Rationale: Collapsing it to a total function is a public signature change at every call site,
+  including `Kioku.Distill.L1`'s `L1RecallRefused` channel that ADR-8 records. That is consumer
+  migration work and belongs with `docs/plans/30-migrate-recall-consumers-to-explicit-targets.md`,
+  not with the SQL split. `resolveRecall` itself did become total, because it is an internal seam
+  and an `Either` it can never inhabit is a lie a test has to pattern-match on.
+  Date: 2026-08-07
+
+- Decision: Prove the strategy dimension of the semantic matrix at the channel level (FTS, vector,
+  and their fusion) rather than by calling `recall` with an embedding model.
+  Rationale: `Baikai.Embedding.EmbeddingModel` is an HTTP endpoint — `embedWithRetry` makes a
+  network call — so an `embedding` or `hybrid` recall cannot run in this suite without either a
+  live embedding service or a stub HTTP server. The channels are where the target predicate lives;
+  hybrid adds only `fuseRecallCandidates`, which is pure and cannot reintroduce a row that neither
+  channel returned. The keyword row of the matrix additionally goes through the public `recall`,
+  which needs no embedding, so the full entry point is still proven for all three targets.
+  Date: 2026-08-07
 
 
 ## Outcomes & Retrospective

@@ -35,11 +35,15 @@
 --    committed transaction ('runTransaction' commits). Do not "optimise" 'seedCorpus' by
 --    wrapping the whole corpus in one transaction — the rows would be invisible to the index
 --    and every number downstream would be fiction.
--- 2. __A partial index needs its predicate restated in the query__, or the planner cannot prove
---    the index applies and falls back to a sequential scan. The @embedding IS NOT NULL@ in
---    'explainVectorStmt' is load-bearing, not decoration.
+-- 2. __An @EXPLAIN@ that restates the query is not measuring the query.__ This module used to
+--    keep its own copy of the vector SQL, and the copy was wrong twice — once by selecting one
+--    column instead of thirteen, once by omitting the memory-space predicate — each time
+--    reporting a plan no live query could produce. There is no copy now:
+--    'Kioku.Recall.explainVectorAnnCandidates' explains the shipping statement itself, from the
+--    same SQL text and the same parameters.
 --
--- See docs/plans/18-build-a-recall-quality-harness-that-reproduces-filtered-ann-starvation.md.
+-- See docs/plans/18-build-a-recall-quality-harness-that-reproduces-filtered-ann-starvation.md
+-- and docs/plans/29-enforce-exact-and-namespace-wide-recall-in-postgresql.md.
 module Kioku.RecallHarness
   ( -- * Geometry
     vectorAtAngle,
@@ -50,6 +54,8 @@ module Kioku.RecallHarness
     -- * Seeding
     CorpusConfig (..),
     defaultStarvationCorpus,
+    exactEntityStarvationCorpus,
+    inScopeScopeFor,
     SeededCorpus (..),
     seedCorpus,
 
@@ -68,8 +74,6 @@ where
 
 import Data.Char (isDigit)
 import Data.Foldable (traverse_)
-import Data.Functor.Contravariant ((>$<))
-import Data.Int (Int32)
 import Data.List (isInfixOf, sortOn)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -78,27 +82,24 @@ import Data.Text.Encoding (encodeUtf8)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import Effectful (Eff, (:>))
-import Hasql.Decoders qualified as D
-import Hasql.Encoders qualified as E
-import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Kioku.Api.Access (memorySpaceIdText)
-import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Recall
   ( RecallLimit,
     RecallQuery (..),
     RecallStrategy (..),
+    RecallTarget (..),
     ResolvedRecall,
+    VectorCandidateSql,
     VectorChannelOutcome (..),
-    candidatePoolSize,
-    legacyRecallTarget,
-    memoryRecordColumns,
+    explainVectorAnnCandidates,
     mkRecallLimit,
     resolveRecall,
+    runVectorAnnCandidates,
     selectVectorCandidatesDiagnosed,
-    selectVectorCandidatesStmt,
-    vectorCandidateQuery,
+    vectorCandidateSql,
   )
 import Kioku.SpaceFixtures (testSpace)
 import Kiroku.Store.Effect (Store)
@@ -138,21 +139,37 @@ cosineDistanceAtAngle t = 1 - cos t
 
 -- | The knobs that make a corpus starve.
 --
--- Starvation needs the filter to /correlate with distance/: the rows the scope filter throws
--- away must be the ones the index reaches for first. So the decoys live in a different
--- namespace and sit /nearer/ the query than any in-scope row.
+-- Starvation needs the filter to /correlate with distance/: the rows the query's bound throws
+-- away must be the ones the index reaches for first. So the decoys sit /nearer/ the query than
+-- any in-scope row, in a scope the target excludes.
 data CorpusConfig = CorpusConfig
-  { -- | Memories in the namespace and scope the query asks for. These are the true answers.
+  { -- | Memories inside the target's bound. These are the true answers.
     inScopeCount :: !Int,
-    -- | Memories in a /different/ namespace, which the query must never return.
+    -- | Memories outside it, which the query must never return.
     decoyCount :: !Int,
     -- | The angular band (radians) the in-scope rows are spread evenly across.
     inScopeAngles :: !(Double, Double),
     -- | The angular band the decoys occupy. Make it strictly nearer the query than
     -- 'inScopeAngles' — that is, smaller angles — or nothing starves.
-    decoyAngles :: !(Double, Double)
+    decoyAngles :: !(Double, Double),
+    -- | The target the measurement aims at the corpus, which decides both the statement family
+    -- under test and the scope the in-scope rows are seeded with ('inScopeScopeFor').
+    target :: !RecallTarget,
+    -- | The scope the decoys carry. The target must exclude it, or the \"decoys\" are answers
+    -- and nothing is being measured.
+    decoyScope :: !MemoryScope
   }
   deriving stock (Eq, Show)
+
+-- | The scope the in-scope rows carry, given the target aimed at them.
+--
+-- An exact target admits exactly one scope, so there is no choice. A namespace-wide target
+-- admits every scope in its namespace; the global bucket is the simplest of them and is what the
+-- corpus uses.
+inScopeScopeFor :: RecallTarget -> MemoryScope
+inScopeScopeFor = \case
+  ExactScope scope -> scope
+  NamespaceWide ns -> ScopeGlobal ns
 
 -- | The probe the previous initiative recorded as "1648 rows removed by filter, zero returned":
 -- in-scope memories in one namespace, nearer decoys in another.
@@ -179,27 +196,48 @@ defaultStarvationCorpus =
     { inScopeCount = 4000,
       decoyCount = 2000,
       inScopeAngles = (0.8, 1.2),
-      decoyAngles = (0.05, 0.5)
+      decoyAngles = (0.05, 0.5),
+      target = NamespaceWide targetNamespace,
+      decoyScope = ScopeGlobal decoyNamespace
     }
+
+-- | The same starvation, aimed at an /exact entity scope/ rather than a whole namespace.
+--
+-- This is the shape the filtered-ANN work was really about: a small scope inside a large
+-- namespace, where the nearest rows belong to a sibling scope. Both scopes live in the same
+-- namespace here, so the memory-space and namespace predicates match every row in the table and
+-- only the scope comparison separates the answers from the decoys — which is the narrowest the
+-- exact-entity statement family can be pushed.
+--
+-- It exists because the split into three statement families means the fallback is now dispatched
+-- per family: a regression that dropped the @OFFSET 0@ fence from the exact family alone would
+-- leave the namespace-wide case above passing.
+exactEntityStarvationCorpus :: CorpusConfig
+exactEntityStarvationCorpus =
+  defaultStarvationCorpus
+    { target = ExactScope (ScopeEntity targetNamespace repoKind "in-scope"),
+      decoyScope = ScopeEntity targetNamespace repoKind "decoy"
+    }
+
+repoKind :: ScopeKind
+repoKind = ScopeKind "repo"
 
 -- | What was seeded, including the ground truth.
 data SeededCorpus = SeededCorpus
   { config :: !CorpusConfig,
-    -- | The scope the query asks for. Its namespace holds only the in-scope rows.
-    targetScope :: !MemoryScope,
     -- | The in-scope memory ids ordered by true cosine distance, nearest first. Computed from
     -- the seed angles, never read back from the database.
     trueNearestInScope :: ![Text]
   }
   deriving stock (Eq, Show)
 
--- | The namespace the query asks for. Only in-scope rows live here.
-targetNamespace :: Text
-targetNamespace = "harness_target"
+-- | The namespace the query asks for.
+targetNamespace :: Namespace
+targetNamespace = Namespace "harness_target"
 
--- | The namespace the decoys live in. The query must never return one of these.
-decoyNamespace :: Text
-decoyNamespace = "harness_decoy"
+-- | The namespace the default corpus's decoys live in. The query must never return one of these.
+decoyNamespace :: Namespace
+decoyNamespace = Namespace "harness_decoy"
 
 -- | Spread @n@ points evenly across @[lo, hi]@, inclusive at both ends.
 anglesAcross :: Int -> (Double, Double) -> [Double]
@@ -220,11 +258,11 @@ anglesAcross n (lo, hi)
 seedCorpus :: (Store :> es) => CorpusConfig -> Eff es SeededCorpus
 seedCorpus cfg = do
   let inScope =
-        [ (inScopeId i, targetNamespace, t)
+        [ (inScopeId i, inScopeScopeFor cfg.target, t)
         | (i, t) <- zip [0 :: Int ..] (anglesAcross cfg.inScopeCount cfg.inScopeAngles)
         ]
       decoys =
-        [ (decoyId i, decoyNamespace, t)
+        [ (decoyId i, cfg.decoyScope, t)
         | (i, t) <- zip [0 :: Int ..] (anglesAcross cfg.decoyCount cfg.decoyAngles)
         ]
   traverse_ insertBatch (chunksOf seedBatchSize (inScope <> decoys))
@@ -232,7 +270,6 @@ seedCorpus cfg = do
   pure
     SeededCorpus
       { config = cfg,
-        targetScope = ScopeGlobal (Namespace targetNamespace),
         -- Distance is @1 - cos t@, which increases monotonically with @t@ on @[0, pi]@, so
         -- ordering by angle *is* ordering by distance. 'anglesAcross' already emits ascending
         -- angles; sorting explicitly keeps that from being a silent assumption.
@@ -247,7 +284,7 @@ seedCorpus cfg = do
 seedBatchSize :: Int
 seedBatchSize = 500
 
-insertBatch :: (Store :> es) => [(Text, Text, Double)] -> Eff es ()
+insertBatch :: (Store :> es) => [(Text, MemoryScope, Double)] -> Eff es ()
 insertBatch [] = pure ()
 insertBatch rows =
   runTransaction . Tx.sql . encodeUtf8 $
@@ -255,18 +292,40 @@ insertBatch rows =
     \(memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at, embedding) VALUES "
       <> Text.intercalate ", " (row <$> rows)
   where
-    row (memoryId, namespace, t) =
+    row (memoryId, scope, t) =
       "('"
         <> memorySpaceIdText testSpace
         <> "', '"
         <> memoryId
         <> "', 'agent', '"
-        <> namespace
-        <> "', NULL, NULL, 'fact', 'seeded corpus row "
+        <> namespaceTextOf scope
+        <> "', "
+        <> sqlText (kindTextOf scope)
+        <> ", "
+        <> sqlText (refTextOf scope)
+        <> ", 'fact', 'seeded corpus row "
         <> memoryId
         <> "', 'active', now(), now(), "
         <> sparseVectorSql t
         <> ")"
+
+namespaceTextOf :: MemoryScope -> Text
+namespaceTextOf = \case
+  ScopeGlobal (Namespace ns) -> ns
+  ScopeEntity (Namespace ns) _ _ -> ns
+
+kindTextOf :: MemoryScope -> Maybe Text
+kindTextOf = \case
+  ScopeGlobal _ -> Nothing
+  ScopeEntity _ (ScopeKind kind) _ -> Just kind
+
+refTextOf :: MemoryScope -> Maybe Text
+refTextOf = \case
+  ScopeGlobal _ -> Nothing
+  ScopeEntity _ _ ref -> Just ref
+
+sqlText :: Maybe Text -> Text
+sqlText = maybe "NULL" (\value -> "'" <> value <> "'")
 
 -- | The seeded vector, built as SQL rather than as a 1536-element text literal.
 --
@@ -371,6 +430,8 @@ planActualTopRows plan = do
 measureRecallQuality :: (Store :> es) => SeededCorpus -> Int -> Eff es RecallQuality
 measureRecallQuality corpus k = do
   (outcome, rows) <- selectVectorCandidatesDiagnosed (vectorRequest corpus) queryVector
+  -- Both passes and the plan below run against the same statement family, because they are all
+  -- compiled from the corpus's own target.
   plan <- explainVectorQuery corpus
   pure (scoreRecallQuality corpus k rows plan outcome.annRows outcome.exactFallbackFired)
 
@@ -398,7 +459,7 @@ measureRecallQualityWith ::
 measureRecallQualityWith settings corpus k = do
   rows <- runTransaction do
     traverse_ (Tx.sql . encodeUtf8) settings
-    Tx.statement (vectorCandidateQuery (vectorRequest corpus) queryVector) selectVectorCandidatesStmt
+    runVectorAnnCandidates (vectorCandidates corpus)
   plan <- explainVectorQueryWith settings corpus
   -- This drives the raw ANN statement, with no fallback, so the ANN pass *is* the whole channel.
   pure (scoreRecallQuality corpus k rows plan (length rows) False)
@@ -427,28 +488,29 @@ scoreRecallQuality corpus k rows plan annPassRows fallbackFired =
 -- | The request the vector channel is driven with. The query /text/ is irrelevant — the vector
 -- statement never reads it — but a 'RecallQuery' requires one.
 --
--- The corpus targets a whole namespace ('SeededCorpus' seeds one namespace holding only the
--- in-scope rows), so this is a 'NamespaceWide' target. It goes through 'resolveRecall' rather
--- than being assembled by hand, so the harness measures the same target-to-columns mapping recall
--- itself uses.
+-- It goes through 'resolveRecall' rather than being assembled by hand, so the harness measures
+-- the same target-to-statement mapping recall itself uses, whichever of the three families the
+-- corpus's target selects.
 vectorRequest :: SeededCorpus -> ResolvedRecall
 vectorRequest corpus =
-  either (error . ("harness request: " <>) . show) id $
-    resolveRecall testSpace query
-  where
-    query =
-      RecallQuery
-        { target = legacyRecallTarget corpus.targetScope,
-          query = "seeded corpus row",
-          strategy = Embedding,
-          maxResults = expectValidLimit 10
-        }
+  resolveRecall
+    testSpace
+    RecallQuery
+      { target = corpus.config.target,
+        query = "seeded corpus row",
+        strategy = Embedding,
+        maxResults = expectValidLimit 10
+      }
+
+-- | The compiled vector query the measurement, the plan capture, and recall itself all share.
+vectorCandidates :: SeededCorpus -> VectorCandidateSql
+vectorCandidates corpus = vectorCandidateSql (vectorRequest corpus) queryVector
 
 expectValidLimit :: Int -> RecallLimit
 expectValidLimit = either (error . Text.unpack) id . mkRecallLimit
 
--- | @EXPLAIN (ANALYZE, BUFFERS)@ for the vector candidate query, run with the same five
--- parameters recall passes, so Postgres plans it the way it plans the real one.
+-- | @EXPLAIN (ANALYZE, BUFFERS)@ for the vector candidate query, over exactly the statement and
+-- parameters recall issues, so Postgres plans it the way it plans the real one.
 explainVectorQuery :: (Store :> es) => SeededCorpus -> Eff es Text
 explainVectorQuery = explainVectorQueryWith []
 
@@ -459,64 +521,7 @@ explainVectorQueryWith :: (Store :> es) => [Text] -> SeededCorpus -> Eff es Text
 explainVectorQueryWith settings corpus =
   Text.unlines <$> runTransaction do
     traverse_ (Tx.sql . encodeUtf8) settings
-    Tx.statement
-      ( Text.pack (show (Vector.toList queryVector)),
-        memorySpaceIdText testSpace,
-        scopeNamespaceText corpus.targetScope,
-        scopeKindText corpus.targetScope,
-        scopeRefText corpus.targetScope,
-        candidatePoolSize
-      )
-      explainVectorStmt
-
--- | Everything here is copied verbatim from 'Kioku.Recall.selectVectorCandidatesStmt' — the
--- select list, the predicates, the @ORDER BY@, and the @LIMIT@ — and every part of it earns
--- its place.
---
--- @embedding IS NOT NULL@ is not decoration: the HNSW index is partial on exactly that
--- predicate, and without it restated here the planner cannot prove the index applies and falls
--- back to a sequential scan — which would look like "the index is broken" and be entirely an
--- artifact of the measurement.
---
--- __The select list is load-bearing too, which is not obvious and was learned the hard way.__
--- An earlier version of this function selected @memory_id@ alone, on the theory that Postgres
--- chooses the plan from the @WHERE@, the @ORDER BY@ and the @LIMIT@, and that the projection
--- could not turn an HNSW scan into anything else. That is false. The projection sets the row
--- width, the width sets the cost of the top-N sort that the /exact/ plan needs, and that cost
--- is exactly what the planner weighs against the HNSW scan. On the 2000-in-scope, 2000-decoy
--- corpus the narrow projection made the sort look cheap, the planner took the exact plan, and
--- the EXPLAIN reported 50 happy rows — while the real query, with its 13 real columns, took
--- the HNSW plan and returned zero. The instrument was describing a query nobody runs.
--- __The memory-space predicate is load-bearing for the same reason the select list is.__ It is
--- the leading column of every partition-first index the schema installs, so an @EXPLAIN@ that
--- omits it cannot use any of them and describes a plan the real query would never take. That is
--- not hypothetical: when the partition landed, this copy still said @WHERE namespace = $2@, and
--- it reported an index scan whose @Index Cond@ named the namespace alone — a plan no live query
--- can produce.
-explainVectorStmt :: Statement (Text, Text, Text, Maybe Text, Maybe Text, Int32) [Text]
-explainVectorStmt =
-  preparable
-    ( "EXPLAIN (ANALYZE, BUFFERS) SELECT "
-        <> memoryRecordColumns
-        <> " FROM kiroku.kioku_memories \
-           \ WHERE status = 'active' \
-           \   AND memory_space_id = $2 \
-           \   AND namespace = $3 \
-           \   AND (($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5)) \
-           \   AND embedding IS NOT NULL \
-           \ ORDER BY embedding <=> $1::vector \
-           \ LIMIT $6"
-    )
-    encoder
-    (D.rowList (D.column (D.nonNullable D.text)))
-  where
-    encoder =
-      ((\(v, _, _, _, _, _) -> v) >$< E.param (E.nonNullable E.text))
-        <> ((\(_, space, _, _, _, _) -> space) >$< E.param (E.nonNullable E.text))
-        <> ((\(_, _, n, _, _, _) -> n) >$< E.param (E.nonNullable E.text))
-        <> ((\(_, _, _, sk, _, _) -> sk) >$< E.param (E.nullable E.text))
-        <> ((\(_, _, _, _, sr, _) -> sr) >$< E.param (E.nullable E.text))
-        <> ((\(_, _, _, _, _, l) -> l) >$< E.param (E.nonNullable E.int4))
+    explainVectorAnnCandidates (vectorCandidates corpus)
 
 -- | A failure message that reads as a diagnosis rather than an assertion.
 --
@@ -548,7 +553,7 @@ describeRecallQuality q =
     ]
 
 -- | Whether a captured plan used the HNSW index — the approximate path — as opposed to the
--- exact plan over @kioku_memories_scope_idx@. Which one Postgres picked is the load-bearing
+-- exact plan over @kioku_memories_space_scope_idx@. Which one Postgres picked is the load-bearing
 -- observation: the previous initiative found it returning 50 correct rows on the exact plan and
 -- zero on the HNSW one, and a measurement that does not record the plan has not measured the
 -- thing that matters.
