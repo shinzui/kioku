@@ -45,11 +45,18 @@ This section must always reflect the actual current state of the work.
       down to the legacy space mismatch.)
 - [x] Remove the harness's copy of the vector SQL. (2026-08-07:
       `Kioku.Recall.explainVectorAnnCandidates` explains the shipping statement itself.)
-- [ ] Add partition-leading indexes for each bounded query shape (measure first — the existing
-      `kioku_memories_space_scope_idx` may already serve all three bounds).
-- [ ] Extend the recall harness with two-space and exact-global fixtures.
-- [ ] Add query-plan/limit tests and run the full PostgreSQL suite.
+- [x] Add partition-leading indexes for each bounded query shape. (2026-08-07: measured — no new
+      index is needed. `kioku_memories_space_scope_idx` already serves all three bounds; see
+      Surprises & Discoveries for the captured `Index Cond` lines, and the Decision Log for why a
+      redundant partial index was rejected. No migration was written.)
+- [x] Extend the recall harness with two-space and exact-global fixtures. (2026-08-07:
+      `Kioku.RecallTargetSpec` seeds two spaces holding byte-identical rows;
+      `Kioku.RecallHarness` gained `exactEntityStarvationCorpus`.)
+- [x] Add query-plan tests. (2026-08-07: `Recall.Target`'s third case asserts every bound's plan
+      is partition-led and that the three bounds are three distinguishable plans.)
+- [ ] Run the full PostgreSQL suite.
 - [ ] Document SQL semantics and operational verification.
+- [ ] Distill into ADRs and update the MasterPlan.
 
 
 ## Surprises & Discoveries
@@ -75,6 +82,26 @@ implementation. Provide concise evidence.
 - **`resolveRecall` became total, which means `recall` can no longer fail.** Once every target has
   a predicate, the only inhabitant of `RecallError` is `RecallSpaceMismatch`, which only
   `legacyRecall` can produce. `recall` keeps its `Either` anyway; see the Decision Log.
+
+- **The milestone asking for new indexes turned out to need none.** All three bounds are already
+  served by `kioku_memories_space_scope_idx` — the partition-first index migration 0011 installed
+  — because a btree index answers `IS NULL` as an index condition rather than as a filter. With
+  `enable_seqscan = off` on the two-space fixture, the three exact-vector plans are:
+
+  ```text
+  Index Scan using kioku_memories_space_scope_idx on kioku_memories
+    Index Cond: ((memory_space_id = 'space_test') AND (namespace = 'mori')
+                 AND (scope_kind IS NULL) AND (scope_ref IS NULL))
+  Index Scan using kioku_memories_space_scope_idx on kioku_memories
+    Index Cond: ((memory_space_id = 'space_test') AND (namespace = 'mori')
+                 AND (scope_kind = 'repo') AND (scope_ref = 'web'))
+  Index Scan using kioku_memories_space_scope_idx on kioku_memories
+    Index Cond: ((memory_space_id = 'space_test') AND (namespace = 'mori'))
+  ```
+
+  Exact global is a full four-column match, exact entity is a full four-column match, and
+  namespace-wide is a two-column prefix. Every one of them leads with `memory_space_id`. The
+  keyword channel produces the same three access paths.
 
 
 ## Decision Log
@@ -112,6 +139,29 @@ Record every decision made while working on the plan.
   migration work and belongs with `docs/plans/30-migrate-recall-consumers-to-explicit-targets.md`,
   not with the SQL split. `resolveRecall` itself did become total, because it is an internal seam
   and an `Either` it can never inhabit is a lie a test has to pattern-match on.
+  Date: 2026-08-07
+
+- Decision: Ship no index migration. `kioku_memories_space_scope_idx` already serves all three
+  bounds.
+  Rationale: A dedicated partial index for the global bucket — `(memory_space_id, namespace)
+  WHERE status = 'active' AND scope_kind IS NULL AND scope_ref IS NULL` — would be smaller but no
+  more selective as an access path, because the existing index already answers `scope_kind IS
+  NULL` as an index condition rather than as a filter (measured; see Surprises & Discoveries).
+  Adding it would buy nothing and cost a write on every insert, which is exactly the redundancy
+  migrations 0008 and 0011 removed twice (`kioku_turns_session_idx`, `kioku_scenes_scope_idx`) and
+  that `Kioku.SchemaSpec` asserts stays removed. The plan asked for "add or replace indexes"; the
+  honest answer to a measured question was "neither".
+  Date: 2026-08-07
+
+- Decision: Prove the exact-scope family's filtered-ANN fallback with one new heavy corpus, not
+  three.
+  Rationale: The two-pass mechanism is shared code dispatched per statement family, so the
+  realistic family-local regression is a dropped `OFFSET 0` fence. `exactEntityStarvationCorpus`
+  puts 4000 answers and 2000 nearer decoys under sibling entity scopes in one namespace, which is
+  both the shape plan 19 was found in and the narrowest the exact family can be pushed. Each such
+  corpus costs ~8s of suite time on its own ephemeral cluster; the exact-global family's two
+  passes are covered by the target matrix's small fixture, where the fallback fires by
+  construction and must return exactly the bucket.
   Date: 2026-08-07
 
 - Decision: Prove the strategy dimension of the semantic matrix at the channel level (FTS, vector,

@@ -11,6 +11,7 @@ import Kioku.ReadModelReconcileSpec qualified as ReadModelReconcileSpec
 import Kioku.RecallCompatSpec qualified as RecallCompatSpec
 import Kioku.RecallSpec qualified as RecallSpec
 import Kioku.RecallSqlSpec qualified as RecallSqlSpec
+import Kioku.RecallTargetSpec qualified as RecallTargetSpec
 import Kioku.ReiCompatSpec qualified as ReiCompatSpec
 import Kioku.SchemaSpec qualified as SchemaSpec
 import Kioku.ScopeIdentitySpec qualified as ScopeIdentitySpec
@@ -36,6 +37,7 @@ main =
         RecallSpec.tests,
         RecallCompatSpec.tests,
         RecallSqlSpec.tests,
+        RecallTargetSpec.tests,
         SchemaSpec.tests,
         ScopeIdentitySpec.tests,
         SessionInvariantsSpec.tests,

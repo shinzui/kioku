@@ -63,10 +63,14 @@ module Kioku.Recall
     selectVectorCandidatesDiagnosed,
     VectorChannelOutcome (..),
     vectorChannelStarved,
+    FtsCandidateSql,
+    ftsCandidateSql,
+    explainFtsCandidates,
     VectorCandidateSql,
     vectorCandidateSql,
     runVectorAnnCandidates,
     explainVectorAnnCandidates,
+    explainVectorExactCandidates,
     candidatePoolSize,
   )
 where
@@ -911,21 +915,45 @@ runVectorExactCandidates = \case
   VectorInEntityScope params -> Tx.statement params (entityRows vectorExactCandidateQuerySql)
   VectorAcrossNamespace params -> Tx.statement params (boundedRows vectorExactCandidateQuerySql namespaceWideClause)
 
+-- | @EXPLAIN (ANALYZE, BUFFERS)@ over the full-text channel, built from the same SQL text and
+-- given the same parameters as 'runFtsCandidates'.
+explainFtsCandidates :: FtsCandidateSql -> Tx.Transaction [Text]
+explainFtsCandidates = \case
+  FtsInGlobalBucket params -> Tx.statement params (boundedPlan ftsCandidateQuerySql globalBucketClause)
+  FtsInEntityScope params -> Tx.statement params (entityPlan ftsCandidateQuerySql)
+  FtsAcrossNamespace params -> Tx.statement params (boundedPlan ftsCandidateQuerySql namespaceWideClause)
+
 -- | @EXPLAIN (ANALYZE, BUFFERS)@ over the approximate vector pass, built from the same SQL text
 -- and given the same parameters as 'runVectorAnnCandidates'. See the test-seam note at the top of
--- this module for why it lives here rather than in the harness that uses it.
+-- this module for why these live here rather than in the harness that uses them.
 explainVectorAnnCandidates :: VectorCandidateSql -> Tx.Transaction [Text]
-explainVectorAnnCandidates = \case
-  VectorInGlobalBucket params -> Tx.statement params (boundedPlan globalBucketClause)
-  VectorInEntityScope params -> Tx.statement params entityPlan
-  VectorAcrossNamespace params -> Tx.statement params (boundedPlan namespaceWideClause)
-  where
-    boundedPlan scope =
-      preparable (explained (vectorAnnCandidateQuerySql scope)) boundedCandidateEncoder planDecoder
-    entityPlan =
-      preparable (explained (vectorAnnCandidateQuerySql entityScopeClause)) entityCandidateEncoder planDecoder
-    explained sql = "EXPLAIN (ANALYZE, BUFFERS) " <> sql
-    planDecoder = D.rowList (D.column (D.nonNullable D.text))
+explainVectorAnnCandidates = explainVector vectorAnnCandidateQuerySql
+
+-- | @EXPLAIN (ANALYZE, BUFFERS)@ over the exact vector pass — the one whose access path is a
+-- scan of the bound rather than of the embedding index, and therefore the one where a
+-- partition-leading index earns its keep.
+explainVectorExactCandidates :: VectorCandidateSql -> Tx.Transaction [Text]
+explainVectorExactCandidates = explainVector vectorExactCandidateQuerySql
+
+explainVector :: (ScopeClause -> Text) -> VectorCandidateSql -> Tx.Transaction [Text]
+explainVector sqlFor = \case
+  VectorInGlobalBucket params -> Tx.statement params (boundedPlan sqlFor globalBucketClause)
+  VectorInEntityScope params -> Tx.statement params (entityPlan sqlFor)
+  VectorAcrossNamespace params -> Tx.statement params (boundedPlan sqlFor namespaceWideClause)
+
+boundedPlan :: (ScopeClause -> Text) -> ScopeClause -> Statement BoundedCandidateParams [Text]
+boundedPlan sqlFor scope =
+  preparable (explained (sqlFor scope)) boundedCandidateEncoder planDecoder
+
+entityPlan :: (ScopeClause -> Text) -> Statement EntityCandidateParams [Text]
+entityPlan sqlFor =
+  preparable (explained (sqlFor entityScopeClause)) entityCandidateEncoder planDecoder
+
+explained :: Text -> Text
+explained sql = "EXPLAIN (ANALYZE, BUFFERS) " <> sql
+
+planDecoder :: D.Result [Text]
+planDecoder = D.rowList (D.column (D.nonNullable D.text))
 
 boundedRows :: (ScopeClause -> Text) -> ScopeClause -> Statement BoundedCandidateParams [MemoryRecord]
 boundedRows sqlFor scope =

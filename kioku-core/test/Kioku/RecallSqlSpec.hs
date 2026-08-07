@@ -39,6 +39,7 @@ import Kioku.RecallHarness
     cosineDistanceAtAngle,
     defaultStarvationCorpus,
     describeRecallQuality,
+    exactEntityStarvationCorpus,
     measureRecallQuality,
     planAgreesWithQuery,
     queryVector,
@@ -69,6 +70,7 @@ tests =
       testCase "the harness seeds the geometry it claims" testHarnessGeometry,
       testCase "the captured plan describes the query that was measured" testPlanCaptureIsFaithful,
       testCase "the vector channel does not starve on a selective scope" testVectorChannelDoesNotStarve,
+      testCase "nor on an exact entity scope inside a busy namespace" testExactScopeChannelDoesNotStarve,
       testCase "a healthy scope never pays for the exact fallback" testHealthyScopeSkipsFallback
     ]
 
@@ -113,6 +115,50 @@ testVectorChannelDoesNotStarve =
       assertBool
         "the exact fallback did not fire, so recall survived this corpus by luck rather than by mechanism"
         q.exactFallbackFired
+
+-- | The same defect, on the statement family that answers an exact entity scope.
+--
+-- The two passes are now dispatched per statement family, so a regression can be family-local: a
+-- rewrite that dropped the @OFFSET 0@ optimisation fence from the exact-scope statement alone
+-- would leave 'testVectorChannelDoesNotStarve' above passing, because that case drives the
+-- namespace-wide family. This corpus puts the answers and the decoys in the /same/ namespace
+-- under sibling entity scopes, so the memory-space and namespace predicates match every row in
+-- the table and the scope comparison is the only thing separating them — which is both the
+-- narrowest this family can be pushed and the shape ("a small scope inside a large namespace")
+-- that filtered-ANN starvation was originally found in.
+testExactScopeChannelDoesNotStarve :: IO ()
+testExactScopeChannelDoesNotStarve =
+  withRecallFixture \runEff -> do
+    result <- runEff do
+      available <- vectorTypeIsReachable
+      if not available
+        then pure Nothing
+        else do
+          corpus <- seedCorpus exactEntityStarvationCorpus
+          Just <$> measureRecallQuality corpus 10
+    case result of
+      Left err -> assertFailure ("store error: " <> show err)
+      Right Nothing ->
+        putStrLn "  [skipped] no reachable pgvector on this cluster; re-enter the dev shell to exercise the vector path"
+      Right (Just q) -> do
+        assertBool
+          ("the vector channel starved on an exact entity scope.\n" <> describeRecallQuality q)
+          (q.rowsReturned > 0)
+        assertBool
+          ( "the vector channel returned candidates for an exact entity scope, but missed most of \
+            \the true nearest.\n"
+              <> describeRecallQuality q
+          )
+          (q.recallAtK >= 0.5)
+        assertEqual
+          "a sibling entity scope's memory reached the caller: the scope filter is a correctness \
+          \boundary, not a ranking hint"
+          0
+          q.decoysReturned
+        assertBool
+          "the exact fallback did not fire, so the exact-scope family survived this corpus by luck \
+          \rather than by mechanism"
+          q.exactFallbackFired
 
 -- | Bar (b) of the bake-off, as a test: a fix that trades a rare failure for a common one is not
 -- a fix. On a corpus with nothing out of scope there is nothing for the filter to discard, the
