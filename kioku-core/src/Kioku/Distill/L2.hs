@@ -24,9 +24,9 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.Types (withObject, (.:))
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
-import Data.Foldable (for_)
+import Data.Foldable (for_, traverse_)
 import Data.Functor.Contravariant ((>$<))
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, maybeToList)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TextIO
@@ -42,7 +42,7 @@ import Hasql.Transaction qualified as Tx
 import Keiro.Projection (InlineProjection (..))
 import Keiro.ReadModel (ReadModelError)
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
-import Kioku.Api.Access (MemoryContextProvider (..), MemorySpaceId, memoryContextSpace)
+import Kioku.Api.Access (MemoryContextProvider (..), MemorySpaceId, legacyMemorySpaceId, memoryContextSpace)
 import Kioku.Api.Scope (MemoryScope, scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Distill.L3 (partitionedCorrelationId, scheduleL3PersonaTimerTx)
@@ -62,6 +62,7 @@ import Kioku.Memory.Domain
 import Kioku.Partition (memorySpaceColumn, memorySpaceParam, parsePartitionSpace)
 import Kioku.Prelude
 import Kioku.Recall qualified as Recall
+import Kioku.Workspace (legacySceneArtifactDir, sceneArtifactDir)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
 import Kiroku.Store.Types (EventId (..), RecordedEvent (..))
@@ -386,13 +387,29 @@ mirrorSceneToCurrentWorkspace row = do
 mirrorSceneToWorkspace :: FilePath -> SceneRow -> IO FilePath
 mirrorSceneToWorkspace workspace row = do
   let path = sceneMirrorPath workspace row
-  createDirectoryIfMissing True (workspace </> ".kioku" </> "scenes")
+  createDirectoryIfMissing True (sceneArtifactDir workspace row.memorySpaceId)
   TextIO.writeFile path (renderSceneFile row)
   pure path
 
+-- | The mirror path is derived from the row's own memory space as well as its scope.
+--
+-- The filename alone cannot separate two spaces: the slug comes from the namespace, kind, and
+-- ref, and two spaces are allowed to hold all three. The space is the directory. See
+-- "Kioku.Workspace" for why that directory is not simply the space id.
 sceneMirrorPath :: FilePath -> SceneRow -> FilePath
 sceneMirrorPath workspace row =
-  workspace </> ".kioku" </> "scenes" </> Text.unpack (sceneScopeSlug row <> ".md")
+  sceneArtifactDir workspace row.memorySpaceId </> Text.unpack (sceneScopeSlug row <> ".md")
+
+-- | Where this scene's mirror lived before memory spaces existed.
+--
+-- Only meaningful for the legacy space, which is the only space that can have one: the
+-- historical tree predates the partition, so every file in it was written by the deployment that
+-- became @kioku_legacy@.
+legacySceneMirrorPath :: FilePath -> SceneRow -> Maybe FilePath
+legacySceneMirrorPath workspace row
+  | row.memorySpaceId == legacyMemorySpaceId =
+      Just (legacySceneArtifactDir workspace </> Text.unpack (sceneScopeSlug row <> ".md"))
+  | otherwise = Nothing
 
 bestEffortMirrorScene :: DistillRuntime -> SceneRow -> IO ()
 bestEffortMirrorScene rt row = do
@@ -406,15 +423,23 @@ bestEffortMirrorScene rt row = do
 -- The durable artifact is the database row, and it is already gone by the time
 -- this runs; a failure to unlink the file must not fail the timer, and the next
 -- regeneration in this workspace rewrites or removes it anyway.
+--
+-- The legacy space's pre-partition mirror goes too, and it is the one place anything still
+-- touches the historical tree. Every memory in this scope has been forgotten, so a surviving
+-- @.kioku\/scenes\/…@ file is not merely stale — it is forgotten content that a host agent would
+-- keep reading until somebody ran the artifact migration.
 bestEffortRemoveSceneMirror :: DistillRuntime -> SceneRow -> IO ()
 bestEffortRemoveSceneMirror rt row = do
   let remove = do
         workspace <- distillWorkspaceRoot rt
-        let path = sceneMirrorPath workspace row
-        exists <- doesFileExist path
-        when exists (removeFile path)
+        traverse_ removeIfPresent (sceneMirrorPath workspace row : maybeToList (legacySceneMirrorPath workspace row))
   _ <- try remove :: IO (Either IOException ())
   pure ()
+
+removeIfPresent :: FilePath -> IO ()
+removeIfPresent path = do
+  exists <- doesFileExist path
+  when exists (removeFile path)
 
 renderSceneFile :: SceneRow -> Text
 renderSceneFile row =

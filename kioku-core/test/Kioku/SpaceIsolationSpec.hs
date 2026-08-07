@@ -12,12 +12,13 @@
 -- the boundary cheap as well as real.
 module Kioku.SpaceIsolationSpec (tests) where
 
+import Data.Foldable (traverse_)
 import Data.Functor.Contravariant ((>$<))
 import Data.List (sort)
 import Data.Set qualified as Set
-import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding (encodeUtf8)
+import Data.Text.IO qualified as TextIO
 import Data.Text.Read qualified as Text.Read
 import Data.Time (addUTCTime)
 import Effectful (Eff, IOE, (:>))
@@ -36,8 +37,8 @@ import Kioku.Api.Access
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..))
 import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
-import Kioku.Distill.L2 (SceneRow (..), getScenesByScope)
-import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope)
+import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, mirrorSceneToWorkspace)
+import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, mirrorPersonaToWorkspace)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
@@ -56,6 +57,7 @@ import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase)
 
@@ -321,6 +323,36 @@ testDerivedArtifacts =
         "both spaces derived the same scene id"
         ((\row -> row.sceneId) <$> mineScenes)
         ((\row -> row.sceneId) <$> theirsScenes)
+
+    -- The same collision, one layer out. The scope slug in the filename is derived from the
+    -- namespace, kind, and ref alone, so these four rows produce two filenames; only the
+    -- per-space directory keeps them apart. Written for real rather than compared as strings,
+    -- because a path that differs but resolves to the same file on a case-folding filesystem
+    -- would still lose one space's mirror.
+    liftIO $ withSystemTempDirectory "kioku-space-mirrors" \workspace -> do
+      mineScenePaths <- traverse (mirrorSceneToWorkspace workspace) mineScenes
+      theirsScenePaths <- traverse (mirrorSceneToWorkspace workspace) theirsScenes
+      minePersonaPath <- traverse (mirrorPersonaToWorkspace workspace) minePersona
+      theirsPersonaPath <- traverse (mirrorPersonaToWorkspace workspace) theirsPersona
+
+      assertBool
+        ("the two spaces' scene mirrors are the same file: " <> show mineScenePaths)
+        (mineScenePaths /= theirsScenePaths)
+      assertBool
+        ("the two spaces' persona mirrors are the same file: " <> show minePersonaPath)
+        (minePersonaPath /= theirsPersonaPath)
+
+      traverse_ (assertFileContains "my scene mirror" "mine") mineScenePaths
+      traverse_ (assertFileContains "their scene mirror" "theirs") theirsScenePaths
+      traverse_ (assertFileContains "my persona mirror" "mine") minePersonaPath
+      traverse_ (assertFileContains "their persona mirror" "theirs") theirsPersonaPath
+
+assertFileContains :: String -> Text -> FilePath -> Assertion
+assertFileContains label needle path = do
+  body <- TextIO.readFile path
+  assertBool
+    (label <> " at " <> path <> " does not contain " <> Text.unpack needle <> ": " <> Text.unpack body)
+    (needle `Text.isInfixOf` body)
 
 derivedArtifactRows :: MemorySpaceId -> Text -> Text
 derivedArtifactRows space marker =

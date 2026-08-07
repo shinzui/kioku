@@ -25,9 +25,10 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.Types (withObject, (.:))
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
+import Data.Foldable (traverse_)
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int32)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, maybeToList)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TextIO
@@ -41,7 +42,13 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
-import Kioku.Api.Access (MemoryContextProvider (..), MemorySpaceId, memoryContextSpace, memorySpaceIdText)
+import Kioku.Api.Access
+  ( MemoryContextProvider (..),
+    MemorySpaceId,
+    legacyMemorySpaceId,
+    memoryContextSpace,
+    memorySpaceIdText,
+  )
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..))
 import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runPersonaDistillation)
@@ -49,6 +56,7 @@ import Kioku.Distill.ScopeIdentity (scopeIdentity, scopeSlugFromColumns)
 import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
 import Kioku.Partition (memorySpaceColumn, memorySpaceParam, parsePartitionSpace)
 import Kioku.Prelude
+import Kioku.Workspace (legacyPersonaArtifactDir, personaArtifactDir)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
 import Shikumi.Schema.Types (field, unField)
@@ -293,13 +301,24 @@ mirrorPersonaToCurrentWorkspace row = do
 mirrorPersonaToWorkspace :: FilePath -> PersonaRow -> IO FilePath
 mirrorPersonaToWorkspace workspace row = do
   let path = personaMirrorPath workspace row
-  createDirectoryIfMissing True (workspace </> ".kioku" </> "persona")
+  createDirectoryIfMissing True (personaArtifactDir workspace row.memorySpaceId)
   TextIO.writeFile path (row.bodyMd <> "\n")
   pure path
 
+-- | The mirror path is derived from the row's own memory space as well as its scope, for the
+-- reason given at 'Kioku.Distill.L2.sceneMirrorPath': the slug cannot separate two spaces
+-- because both are allowed to hold the same scope.
 personaMirrorPath :: FilePath -> PersonaRow -> FilePath
 personaMirrorPath workspace row =
-  workspace </> ".kioku" </> "persona" </> Text.unpack (personaScopeSlug row <> ".md")
+  personaArtifactDir workspace row.memorySpaceId </> Text.unpack (personaScopeSlug row <> ".md")
+
+-- | Where this persona's mirror lived before memory spaces existed. Only the legacy space can
+-- have one; see 'Kioku.Distill.L2.sceneMirrorPath'.
+legacyPersonaMirrorPath :: FilePath -> PersonaRow -> Maybe FilePath
+legacyPersonaMirrorPath workspace row
+  | row.memorySpaceId == legacyMemorySpaceId =
+      Just (legacyPersonaArtifactDir workspace </> Text.unpack (personaScopeSlug row <> ".md"))
+  | otherwise = Nothing
 
 bestEffortMirrorPersona :: DistillRuntime -> PersonaRow -> IO ()
 bestEffortMirrorPersona rt row = do
@@ -311,15 +330,24 @@ bestEffortMirrorPersona rt row = do
 
 -- | Remove a persona's mirror file. Best-effort for the same reason writing it
 -- is: the database row is the durable artifact and is already deleted.
+--
+-- The legacy space's pre-partition mirror goes too, symmetrically with the scene delete in
+-- "Kioku.Distill.L2": every scene this persona was distilled from is gone, so a surviving
+-- @.kioku\/persona\/…@ file describes memories nobody may read any more.
 bestEffortRemovePersonaMirror :: DistillRuntime -> PersonaRow -> IO ()
 bestEffortRemovePersonaMirror rt row = do
   let remove = do
         workspace <- distillWorkspaceRoot rt
-        let path = personaMirrorPath workspace row
-        exists <- doesFileExist path
-        when exists (removeFile path)
+        traverse_
+          removeIfPresent
+          (personaMirrorPath workspace row : maybeToList (legacyPersonaMirrorPath workspace row))
   _ <- try remove :: IO (Either IOException ())
   pure ()
+
+removeIfPresent :: FilePath -> IO ()
+removeIfPresent path = do
+  exists <- doesFileExist path
+  when exists (removeFile path)
 
 personaScopeSlug :: PersonaRow -> Text
 personaScopeSlug row =

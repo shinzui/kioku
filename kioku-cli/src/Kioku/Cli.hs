@@ -3,6 +3,7 @@ module Kioku.Cli
   )
 where
 
+import Kioku.Cli.Commands.Artifacts (ArtifactsOptions, artifactsOptionsParser, runArtifacts)
 import Kioku.Cli.Commands.Demo (DemoOptions, demoOptionsParser, runDemo)
 import Kioku.Cli.Commands.DemoSession (DemoSessionOptions, demoSessionOptionsParser, runDemoSession)
 import Kioku.Cli.Commands.Distill (DistillOptions, distillOptionsParser, runDistill)
@@ -12,7 +13,7 @@ import Kioku.Cli.Commands.Scenes (ScenesOptions, runScenes, scenesOptionsParser)
 import Kioku.Cli.Commands.Worker (WorkerOptions, runWorker, workerOptionsParser)
 import Options.Applicative
 
-data Command = Demo DemoOptions | DemoSession DemoSessionOptions | Distill DistillOptions | Persona PersonaOptions | Recall RecallOptions | Scenes ScenesOptions | Worker WorkerOptions
+data Command = Artifacts ArtifactsOptions | Demo DemoOptions | DemoSession DemoSessionOptions | Distill DistillOptions | Persona PersonaOptions | Recall RecallOptions | Scenes ScenesOptions | Worker WorkerOptions
 
 main :: IO ()
 main = run =<< execParser opts
@@ -29,8 +30,14 @@ commandParser :: Parser Command
 commandParser =
   subparser $
     command
-      "demo"
-      (info (Demo <$> (helper <*> demoOptionsParser)) (progDesc "Run the memory/session demonstration (writes permanent events)"))
+      "migrate-artifacts"
+      ( info
+          (Artifacts <$> (helper <*> artifactsOptionsParser))
+          (progDesc "Move pre-partition .kioku scene and persona mirrors into a memory space")
+      )
+      <> command
+        "demo"
+        (info (Demo <$> (helper <*> demoOptionsParser)) (progDesc "Run the memory/session demonstration (writes permanent events)"))
       <> command
         "demo-session"
         (info (DemoSession <$> (helper <*> demoSessionOptionsParser)) (progDesc "Run the session aggregate demonstration (writes permanent events)"))
@@ -51,6 +58,7 @@ commandParser =
         (info (Worker <$> (helper <*> workerOptionsParser)) (progDesc "Run kioku background workers"))
 
 run :: Command -> IO ()
+run (Artifacts opts) = runArtifacts opts
 run (Demo opts) = runDemo opts
 run (DemoSession opts) = runDemoSession opts
 run (Distill opts) = runDistill opts

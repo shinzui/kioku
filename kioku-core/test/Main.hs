@@ -17,6 +17,7 @@ import Kioku.SessionInvariantsSpec qualified as SessionInvariantsSpec
 import Kioku.SessionLineageSpec qualified as SessionLineageSpec
 import Kioku.SpaceIsolationSpec qualified as SpaceIsolationSpec
 import Kioku.TimerWorkerSpec qualified as TimerWorkerSpec
+import Kioku.WorkspaceSpec qualified as WorkspaceSpec
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
@@ -38,6 +39,7 @@ main =
         SessionInvariantsSpec.tests,
         SessionLineageSpec.tests,
         SpaceIsolationSpec.tests,
+        WorkspaceSpec.tests,
         EmbeddingWorkerSpec.tests,
         TimerWorkerSpec.tests,
         DistillSpec.tests
