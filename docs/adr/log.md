@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-08-06
+* **Addition**: ADR-7 records that the memory-space partition reaches the filesystem as a sanitised digest rather than the space id, that the pre-partition mirror tree becomes read-only history, and that a space belongs on a trace and never on a metric label.
 * **Addition**: ADR-6 records that the memory-space partition is a column and an unconditional predicate on every read-model statement, not a schema, database, or row-level-security policy per space.
 * **Update**: ADR-3's backfill and ADR-4's read-side gap are both closed by the read-model partition migration; their status and consequences now say so.
 * **Addition**: ADR-5 records that a pre-memory-space agent label is kept legacy-marked and an event that named no actor stays unattributed, so Kioku never manufactures a principal.

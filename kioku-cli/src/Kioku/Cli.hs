@@ -30,20 +30,20 @@ commandParser :: Parser Command
 commandParser =
   subparser $
     command
-      "migrate-artifacts"
-      ( info
-          (Artifacts <$> (helper <*> artifactsOptionsParser))
-          (progDesc "Move pre-partition .kioku scene and persona mirrors into a memory space")
-      )
-      <> command
-        "demo"
-        (info (Demo <$> (helper <*> demoOptionsParser)) (progDesc "Run the memory/session demonstration (writes permanent events)"))
+      "demo"
+      (info (Demo <$> (helper <*> demoOptionsParser)) (progDesc "Run the memory/session demonstration (writes permanent events)"))
       <> command
         "demo-session"
         (info (DemoSession <$> (helper <*> demoSessionOptionsParser)) (progDesc "Run the session aggregate demonstration (writes permanent events)"))
       <> command
         "distill"
         (info (Distill <$> (helper <*> distillOptionsParser)) (progDesc "Run distillation commands"))
+      <> command
+        "migrate-artifacts"
+        ( info
+            (Artifacts <$> (helper <*> artifactsOptionsParser))
+            (progDesc "Move pre-partition .kioku scene and persona mirrors into a memory space")
+        )
       <> command
         "persona"
         (info (Persona <$> (helper <*> personaOptionsParser)) (progDesc "Print distilled L3 persona"))

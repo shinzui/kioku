@@ -44,6 +44,17 @@
 - Scene and persona timer ids and correlation ids now include the memory space, so two spaces
   sharing a namespace and scope no longer share one timer. Timers already scheduled keep their
   old ids and fire in the legacy space.
+- `runEmbeddingWorkerHost`, `embeddingWorkerProcessor`, and `embeddingHandler` take a
+  `MemoryContextProvider`, like the timer handlers, because the embedding worker also discovers
+  its own work.
+- `backfillMissingEmbeddings` takes an `EmbeddingWorkerEnv` and an `EmbeddingBackfillScope` in
+  place of an `EmbeddingModel` and a dimension count.
+- `EmbedOutcome` gained `EmbedSpaceMismatch`.
+- `runKiokuTimerWorkerOnce` and `drainKiokuTimers` require `Tracing :> es`.
+- Scene and persona mirrors moved from `.kioku/{scenes,persona}/<slug>.md` to
+  `.kioku/spaces/<space-dir>/{scenes,persona}/<slug>.md`. `sceneMirrorPath` and
+  `personaMirrorPath` keep their signatures — the space comes from the row — but return different
+  paths. Run `kioku migrate-artifacts` to relocate existing files.
 - A cross-space id on a write path now returns `MemoryNotFound` / `SessionNotFound` rather than
   reaching the aggregate and returning `MemoryCommandRejected`. That closes the existence oracle
   the previous release documented: an id in another space is now indistinguishable from one that
@@ -58,6 +69,17 @@
   means: the legacy space, and a legacy-marked agent label. No codec invents its own default.
 - `Kioku.Distill.Timer.L1TimerPayload`, which carries the memory space a scheduled distillation
   pass belongs to.
+- `Kioku.Workspace` — the per-space artifact layout and the migration of the pre-partition tree.
+  A memory space id is validated for a database column rather than for a path, so the directory
+  component is a sanitised prefix plus a digest of the exact id: `..` cannot escape
+  `.kioku/spaces`, and two ids that differ only in case cannot share a directory.
+- `kioku migrate-artifacts` — a dry run by default; `--apply` copies, never moves, and refuses a
+  destination whose content differs.
+- `kioku worker --backfill --space ID` — an embedding backfill bounded to one memory space. The
+  default stays every space.
+- A `kioku.timer.fire` span per fire attempt, carrying `kioku.memory_space_id`, the timer id, the
+  attempt count, a bounded `kioku.timer.outcome`, and the failure reason. Metrics gained no space
+  or principal label and must not: a space is caller-supplied text.
 - Aggregate state carries the memory space, and every non-creation edge guards on it, so a command
   naming a different space is refused by the state machine rather than by a read-model precheck.
 
@@ -70,8 +92,11 @@
   `memory_space_id`, backfilled to `kioku_legacy`, and every statement names it. An upgraded
   single-space deployment sees exactly what it saw before. See
   `docs/user/upgrading-to-memory-spaces.md`.
-- Workspace mirrors under `.kioku/scenes` and `.kioku/persona` are still keyed by scope alone, so
-  two spaces sharing a scope still collide on one filename even though their rows do not.
+- Workspace mirrors are partitioned. Files written before this release stay at `.kioku/scenes`
+  and `.kioku/persona`, which nothing writes to any more; `kioku migrate-artifacts` reports and
+  relocates them. The one exception is deletion: emptying a scope in the legacy space unlinks its
+  historical mirror too, because forgotten content surviving on disk is a retention failure
+  rather than a stale cache.
 
 ## 0.3.0.0 — 2026-08-05
 

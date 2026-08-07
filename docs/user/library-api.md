@@ -532,7 +532,15 @@ return `Nothing` when the scope has emptied — they delete the row and its mirr
 summarizing nothing.
 
 - `Kioku.Distill.L2` also exports `getScenesByScope` and the mirroring helpers
-  (`mirrorSceneToWorkspace`, `sceneMirrorPath`); `Kioku.Distill.L3` the persona equivalents.
+  (`mirrorSceneToWorkspace`, `sceneMirrorPath`); `Kioku.Distill.L3` the persona equivalents. Both
+  paths are derived from the row's own `memorySpaceId`, so the signatures are unchanged.
+- `Kioku.Workspace` — the artifact layout itself: `spaceArtifactRoot`, `sceneArtifactDir`,
+  `personaArtifactDir`, and the pre-partition `legacySceneArtifactDir` /
+  `legacyPersonaArtifactDir`. A memory space id is validated for a database column rather than for
+  a path (`..` is legal), so the directory component is a sanitised prefix plus a digest, never
+  the id itself. `planArtifactMigration` / `applyArtifactMigration` are what
+  `kioku migrate-artifacts` runs; the plan is a pure report and the apply copies, never moves or
+  overwrites.
 - `Kioku.Distill.Timer` — the timer ids, the schedule projection (`l1TimerScheduleProjection`,
   `l1IdleTimerId`, `idleFlushSeconds`), and `L1TimerPayload`, which carries the memory space the
   scheduled pass belongs to.
@@ -593,7 +601,12 @@ fallback.
 - `Kioku.Memory.Embedding` — `resolveEmbeddingConfig`, `toEmbeddingModel`.
 - `Kioku.Memory.Embedding.Worker` — the embedding worker a host must run, or hybrid recall degrades
   to keyword: `mkEmbeddingWorkerEnv`, `runEmbeddingWorkerHost`, `embeddingHandler`,
-  `backfillMissingEmbeddings`, `shouldSkipEmbedding`.
+  `backfillMissingEmbeddings`, `shouldSkipEmbedding`. It discovers its own work, so it takes a
+  `MemoryContextProvider` rather than a context, and reads the space from the delivered event; an
+  envelope whose space disagrees with the memory row it names dead-letters without writing.
+  `backfillMissingEmbeddings` takes an `EmbeddingBackfillScope` (`BackfillEverySpace` or
+  `BackfillOneSpace`) and an `EmbeddingWorkerEnv`, so a host can bound a pass to one tenant and a
+  test can drive it with a fake provider.
 - `Kioku.Worker.Failure` — the retry/dead-letter/halt classification a host's own worker loop needs:
   `isTransientStoreError`, `embeddingRetryDelay`.
 

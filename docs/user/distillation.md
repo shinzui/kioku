@@ -213,8 +213,8 @@ L2 scenes and L3 personas are mirrored to the filesystem as plain markdown, so a
 you) can read them without querying the database:
 
 ```text
-.kioku/scenes/<slug>.md      # e.g. mori-repo-proj_01h455vb4pex5vsknk084sn02q-3f2a1c9d7b.md
-.kioku/persona/<slug>.md
+.kioku/spaces/<space-dir>/scenes/<slug>.md   # e.g. kioku_legacy-9d4b2c1a7f/scenes/mori-repo-web-3f2a1c9d7b.md
+.kioku/spaces/<space-dir>/persona/<slug>.md
 ```
 
 - Scene files render as `# <title>` + body; persona files render the persona markdown directly.
@@ -223,9 +223,17 @@ you) can read them without querying the database:
   scope's true identity. The readable prefix alone is *not* collision-free — the sanitizer maps
   `a-b` and `a`/`b` onto the same text — so the digest is what actually keeps two scopes in separate
   files. Don't construct these names by hand: derive them, or list the directory.
+- The **space directory** is built the same way, out of the memory space id, and for one more
+  reason on top of collision-freedom: a `MemorySpaceId` is validated for a database column, not
+  for a path, so `..` is a legal space id. Sanitising every character outside `A-Za-z0-9_-` is
+  what makes it an ordinary directory name instead of traversal. Two spaces holding the same
+  namespace and scope produce the same *filename* and different directories.
 - **They land in the working directory of the process that regenerates them.** In practice that is
   wherever you started `kioku worker` — so run the worker from the workspace you want mirrored, or
   the files will appear next to the worker instead of next to your code.
+- Mirrors written before memory spaces existed are still at `.kioku/scenes` and `.kioku/persona`.
+  Nothing writes there any more; `kioku migrate-artifacts` relocates them. See the
+  [CLI Reference](cli-reference.md#kioku-migrate-artifacts).
 
 Mirroring is **best-effort**: if the workspace isn't writable, distillation still succeeds and the
 database remains the source of truth. The mirror is a convenience cache, not authoritative. When a
@@ -240,8 +248,8 @@ scope empties, the mirror files are deleted along with the rows.
  L1 timer fires ──► extract atoms ──► consolidate ──► memory events   (L1)
         │  recording / forgetting a memory, or changing its confidence, schedules…
         ▼
- L2 timer fires ──► regenerate (or delete) scene ──► mirror .kioku/scenes/   (L2)
+ L2 timer fires ──► regenerate (or delete) scene ──► mirror <space>/scenes/   (L2)
         │  every scene regeneration schedules…
         ▼
- L3 timer fires ──► regenerate (or delete) persona ──► mirror .kioku/persona/ (L3)
+ L3 timer fires ──► regenerate (or delete) persona ──► mirror <space>/persona/ (L3)
 ```

@@ -166,6 +166,94 @@ A refusal dead-letters the timer instead of retrying it silently: a worker that 
 for a space is a configuration problem, and an operator needs to see it rather than watch it
 retry every thirty seconds for an hour.
 
+The embedding worker takes a provider for the same reason — it learns the space from the
+`MemoryRecorded` event it was handed, not from its caller:
+
+```haskell
+runEmbeddingWorkerHost store contexts capability model dimensions
+```
+
+Two of its outcomes are worth knowing about. A space the provider refuses dead-letters, as above.
+And an event whose `memorySpaceId` disagrees with the memory row it names dead-letters too,
+without writing anything: the row's own space is read back and compared, so a stale or forged
+envelope is visible rather than quietly acked as "no such memory".
+
+`backfillMissingEmbeddings` takes an `EmbeddingBackfillScope`. `BackfillEverySpace` is what the
+continuous worker runs at startup; `BackfillOneSpace` is for repairing one tenant:
+
+```bash
+kioku worker --backfill                       # every space in the database
+kioku worker --backfill --space space_prod    # one space
+```
+
+Every space is the default deliberately. A worker subscribes to every space's events, so
+defaulting to `KIOKU_MEMORY_SPACE` would let you run a backfill, read a count, and never learn
+that the other spaces are still unsearchable.
+
+Diagnostics name the space. Each fire runs inside a `kioku.timer.fire` span carrying
+`kioku.memory_space_id`, the timer id, the attempt count, and a bounded
+`kioku.timer.outcome`; and the `last_error` written to a dead-lettered timer is prefixed with the
+space its payload named. Metrics carry neither the space nor the principal, and must not start
+to: a space is caller-supplied text, so a counter labelled by it is an unbounded time series per
+tenant.
+
+## Workspace artifacts
+
+Scene and persona mirrors used to be written to `.kioku/scenes/<scope-slug>.md` and
+`.kioku/persona/<scope-slug>.md`. The slug is derived from the namespace, kind, and ref — all
+three of which two spaces are allowed to share — so both spaces wrote to one file. They are now
+rooted per space:
+
+```text
+.kioku/spaces/<space-dir>/scenes/<scope-slug>.md
+.kioku/spaces/<space-dir>/persona/<scope-slug>.md
+```
+
+`<space-dir>` is not the space id. A `MemorySpaceId` is validated for a database column, not for
+a path: `..` is a legal space id and would walk out of `.kioku/spaces` entirely, and on a
+case-folding filesystem `space_A` and `space_a` are two spaces and one directory. It is a
+sanitised readable prefix plus a digest of the exact id — the same shape, for the same reasons,
+as the scope slug in the filename.
+
+Nothing writes to the old tree any more. To relocate what is already there:
+
+```bash
+kioku migrate-artifacts                # dry run: report every move and every collision
+kioku migrate-artifacts --apply        # copy the files
+```
+
+The destination space is `KIOKU_MEMORY_SPACE`, which defaults to `kioku_legacy` — the same rule
+the database backfill follows, because every file in the historical tree was written before the
+partition existed. `--workspace DIR` points it somewhere other than the current directory.
+
+It copies rather than moves, so a failed verification still has the originals; removing the old
+tree is your call and is deliberately not something the command will do. A destination that
+already holds byte-identical content is reported as `migrated` and skipped, which is what makes a
+second run a no-op. A destination holding *different* content is a `COLLISION`: it is refused,
+never overwritten — the partitioned file is what the running worker writes, and a pre-partition
+snapshot is older. The command exits non-zero if any collision was reported, in dry-run mode too.
+
+One thing still touches the old tree: when every memory in a scope is forgotten, the legacy
+space's historical mirror is unlinked along with the partitioned one. A merely out-of-date file
+shows up in the migration plan; forgotten content surviving on disk is not out of date, it is a
+retention failure.
+
+### Ordering
+
+Roll the pieces out in this order, which is the order in which each one stops being able to
+mislead the next:
+
+1. **Migrate the database** (`kioku-migrate up`), which backfills every row into `kioku_legacy`.
+2. **Deploy the new writers and workers.** Every write now carries a space; every timer payload
+   and embedding envelope names one.
+3. **Drain or convert old work.** Timers scheduled by the previous release keep their old ids and
+   fire in the legacy space, which is correct for a single-space installation and is the only
+   thing they can safely do. Let the queue empty before step 5.
+4. **Migrate the workspace artifacts** (`kioku migrate-artifacts --apply`), then point host agents
+   at the new paths and remove the old tree once you have verified them.
+5. **Only then create a second memory space.** Every step above is safe while `kioku_legacy` is
+   the only space with rows; none of them is once a second one exists.
+
 ## The CLI
 
 `kioku` resolves its space and actor from the environment:
@@ -257,11 +345,6 @@ so a deployment that failed part-way can simply be re-run.
 
 ## What has not changed yet
 
-**Workspace mirrors are still keyed by scope alone.** The `.kioku/scenes` and `.kioku/persona`
-files two spaces write for the same scope still collide on one filename, even though their
-database rows no longer do. Timer identity and worker claims are partitioned, but the filesystem
-layout is not.
-
 **Recall targets are still a `MemoryScope`,** so "the exact global bucket" and "every scope in
 this namespace" remain the same value with two meanings depending on which function reads it.
 That asymmetry is unchanged by the partition and is documented in [Recall](recall.md).
@@ -274,3 +357,5 @@ That asymmetry is unchanged by the partition and is documented in [Recall](recal
 - [ADR-3](../adr/legacy-data-lands-in-one-explicit-space.md) — why legacy data gets a named space.
 - [ADR-6](../adr/the-partition-is-a-column-not-a-schema.md) — how the boundary is enforced in
   PostgreSQL.
+- [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md) — how it is enforced on
+  disk, and why a space never becomes a metric label.

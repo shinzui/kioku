@@ -13,13 +13,14 @@ Usage: kioku COMMAND
   kioku reusable agent memory tools
 
 Available commands:
-  demo           Run the memory/session demonstration (writes permanent events)
-  demo-session   Run the session aggregate demonstration (writes permanent events)
-  distill        Run distillation commands
-  persona        Print distilled L3 persona
-  recall         Recall memories by query
-  scenes         Print distilled L2 scenes
-  worker         Run kioku background workers
+  demo               Run the memory/session demonstration (writes permanent events)
+  demo-session       Run the session aggregate demonstration (writes permanent events)
+  distill            Run distillation commands
+  migrate-artifacts  Move pre-partition .kioku scene and persona mirrors into a memory space
+  persona            Print distilled L3 persona
+  recall             Recall memories by query
+  scenes             Print distilled L2 scenes
+  worker             Run kioku background workers
 ```
 
 Run `kioku <command> --help` for the flags of any subcommand.
@@ -266,14 +267,20 @@ Run kioku's background workers. With no flags it runs **continuously**; the flag
 one-shot modes.
 
 ```bash
-kioku worker [--backfill | --timers-once]
+kioku worker [--backfill [--space MEMORY_SPACE_ID] | --timers-once]
 ```
 
-| Flag           | Description                                                                              |
-|----------------|------------------------------------------------------------------------------------------|
-| *(none)*       | Run continuously. When pgvector is available it first runs an idempotent **startup backfill**, then runs the embedding worker and the distillation timer loop under supervision. |
-| `--backfill`   | Compute embeddings for any memories missing them, then exit, printing `Backfilled N memory embeddings.` Refuses (exit 1) if the configured embedding dimension does not match the column. |
-| `--timers-once`| Claim and fire at most one due distillation timer, then exit.                            |
+| Flag             | Description                                                                            |
+|------------------|----------------------------------------------------------------------------------------|
+| *(none)*         | Run continuously. When pgvector is available it first runs an idempotent **startup backfill** across every space, then runs the embedding worker and the distillation timer loop under supervision. |
+| `--backfill`     | Compute embeddings for any memories missing them, then exit, printing `Backfilled N memory embeddings across every memory space.` Refuses (exit 1) if the configured embedding dimension does not match the column. |
+| `--space ID`     | With `--backfill` only: bound the pass to one memory space. Default is every space in the database. |
+| `--timers-once`  | Claim and fire at most one due distillation timer, then exit.                           |
+
+`--backfill` covers every space by default rather than `KIOKU_MEMORY_SPACE`. A worker serves
+every space in its database, so a per-space default would let you run a backfill, read a count,
+and never learn that the other spaces are still unsearchable. A malformed `--space` value is a
+parse error, not an empty result.
 
 The two one-shot modes are **mutually exclusive** — they do unrelated work, so there is no
 combined meaning. Passing both is a parse error naming whichever flag came *second*
@@ -308,12 +315,63 @@ kioku worker
 # One-off embedding backfill after importing memories
 kioku worker --backfill
 
+# Repair one tenant's embeddings without re-scanning every other space
+kioku worker --backfill --space space_prod
+
 # Fire a single due timer (useful in cron or tests)
 kioku worker --timers-once
 ```
 
 See **[The Distillation Pyramid](distillation.md)** for what the timers do and
 **[Recall](recall.md)** for how embeddings affect retrieval.
+
+---
+
+## `kioku migrate-artifacts`
+
+Relocate the plaintext scene and persona mirrors written before memory spaces existed.
+
+```bash
+kioku migrate-artifacts [--workspace DIR] [--apply]
+```
+
+Mirrors used to be written to `.kioku/scenes/<scope-slug>.md` and `.kioku/persona/<scope-slug>.md`,
+keyed by scope alone — so two memory spaces holding the same scope wrote to one file. They now
+live under `.kioku/spaces/<space-dir>/{scenes,persona}/`, and nothing writes to the old tree any
+more. This command moves what is already there.
+
+| Flag              | Description                                                                        |
+|-------------------|-------------------------------------------------------------------------------------|
+| *(none)*          | **Dry run.** Print every file, its destination, and its verdict; write nothing.      |
+| `--apply`         | Copy the files. The originals stay where they are.                                   |
+| `--workspace DIR` | The directory holding `.kioku`. Default: the current directory.                      |
+
+The destination space is `KIOKU_MEMORY_SPACE`, defaulting to `kioku_legacy` — every file in the
+historical tree was written before the partition existed, so that is the space it belongs to.
+
+Each file gets one of three verdicts:
+
+- `copy` — nothing at the destination; it will be copied.
+- `migrated` — the destination already holds byte-identical content. Skipped, which is what makes
+  a second run a no-op.
+- `COLLISION` — the destination holds *different* content. Refused and never overwritten: the
+  partitioned file is what the running worker writes, and the historical one is older.
+
+The command exits `1` if any collision was reported, in dry-run mode as well as under `--apply`.
+
+Removing the old tree after you have verified the new layout is your decision; this command will
+not delete anything.
+
+```bash
+# See what would happen
+kioku migrate-artifacts
+
+# Do it
+kioku migrate-artifacts --apply
+
+# A workspace other than the current directory, into a named space
+KIOKU_MEMORY_SPACE=space_prod kioku migrate-artifacts --workspace /srv/agent --apply
+```
 
 ---
 
