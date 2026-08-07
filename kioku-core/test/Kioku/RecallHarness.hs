@@ -446,9 +446,10 @@ measureRecallQuality corpus k = do
 -- is a no-op that silently measures the baseline while claiming to measure the candidate — and
 -- reports a confident number either way. Both go in the single transaction below.
 --
--- Second, the query is 'Kioku.Recall.selectVectorCandidatesStmt' itself, not a copy, and the
--- @EXPLAIN@ runs under the same settings in its own transaction. 'planAgreesWithQuery' still
--- guards the pair.
+-- Second, the query is the shipping approximate pass itself, not a copy: both it and the
+-- @EXPLAIN@ are driven from the one 'Kioku.Recall.VectorCandidateSql' the corpus's target
+-- compiles to, and the @EXPLAIN@ runs under the same settings in its own transaction.
+-- 'planAgreesWithQuery' still guards the pair.
 measureRecallQualityWith ::
   (Store :> es) =>
   -- | @SET LOCAL@ statements, e.g. @["SET LOCAL hnsw.iterative_scan = 'strict_order'"]@.
