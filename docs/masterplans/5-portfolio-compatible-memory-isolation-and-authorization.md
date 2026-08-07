@@ -125,8 +125,12 @@ rationale that will matter later, and deliberate exclusions.
   Any later plan adding a worker, an artifact kind, or an instrument must go through
   [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md): artifact paths come from
   `Kioku.Workspace.spaceArtifactRoot`, and no metric may be labelled by a space or a principal.
-- **Recall:** `docs/masterplans/6-explicit-and-safe-recall-boundaries.md` consumes the completed
-  partition contract; recall must never be namespace-wide across memory spaces.
+- **Recall:** `docs/masterplans/6-explicit-and-safe-recall-boundaries.md` consumed the completed
+  partition contract and closed on 2026-08-07. Its constraint — recall must never be namespace-wide
+  *across* memory spaces — is discharged: `RecallTarget` names the exact scope and the
+  namespace-wide case separately, each target has its own statement, and every statement puts
+  `memory_space_id` first in the predicate before applying any scope condition. The breadth that
+  initiative added therefore stops at this initiative's boundary rather than reaching past it.
 
 
 ## Progress
@@ -198,6 +202,14 @@ interactions between child plans. Provide concise evidence.
   directory name. EP-4 encodes rather than validates, and
   [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md) records the rule so the next
   sink asks the same question instead of inheriting the answer.
+
+- **The partition contract survived its first consumer without amendment.** MasterPlan 6 took
+  `MemorySpaceId` and `MemoryAccessContext` through a new public request type, three new SQL
+  statements, a CLI grammar, and a candidate finder between 2026-08-06 and 2026-08-07, and changed
+  nothing in this initiative's boundary — no type moved, no ADR here was superseded, and no
+  statement it added needed an exception to the rule that every statement names the column. That is
+  the strongest available evidence that the boundary was drawn in the right place, and it is worth
+  recording because the reverse would have been discovered the same way.
 
 - **A partition predicate can create the silence it was added to prevent.** The embedding
   handler's state read looks like every other partitioned read and must not be one: scoping it by
@@ -322,3 +334,84 @@ the En object type and permission names stay host-supplied rather than defaulted
 process mid-fire is covered by redelivery rather than by an actual restart, and two concurrent
 worker processes are left to keiro's own claim semantics, which this initiative preserved and did
 not re-test.
+
+
+### What is left, reviewed 2026-08-07
+
+
+The paragraph above is the state at closing and is kept as written. This is what survives it, one
+day later, sorted by who can act on it.
+
+**Discharged since closing: the recall handoff.** The first exclusion is gone.
+`docs/masterplans/6-explicit-and-safe-recall-boundaries.md` completed on 2026-08-07 across all
+three of its child plans, and the two meanings now have two names, two statements, and two proven
+row sets. Nothing in that work reopened the partition; it consumed it. What remains on that side is
+a release action rather than engineering — the legacy `MemoryScope` wrapper's deprecation window
+has not opened, because no released version yet carries `RecallTarget`, and its removal is gated on
+the three conditions in
+[ADR-8](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md), one of which is met.
+That clock belongs to MasterPlan 6, not here.
+
+**Open, and blocked outside this repository: the En binding and the adapter.** Kikan-En IR-1 is
+still `status: proposed` and its live `Kikan.En.Schema` still declares no `space` object and no
+`person` or `team` subject type (re-verified 2026-08-07). The En object type and permission names
+therefore remain a required host input, and `mkMemoryAuthorizationBinding` still refuses a partial
+one. Neither Meibo, Shomei, En, nor Kikan-En has a release tag (all four checkouts still have empty
+`git tag` output), so the adapter package that would map `PrincipalDirectory` and
+`PermissionChecker` onto them is still unwritten — deliberately, per
+[ADR-1](../adr/kioku-owns-memory-not-identity.md), which is why waiting costs Kioku nothing. When
+the owner ships, the change here is a default binding and one fixture; no type in `kioku-api` or
+`kioku-core` moves. There is no work to schedule until then, only a trigger to watch.
+
+**Open, and accepted: the two worker gaps.** A genuinely killed process mid-fire is still simulated
+by redelivery rather than by a kill, and concurrency between two worker processes is still left to
+keiro's claim semantics. Both stay open on purpose: neither is a partition question. The partition
+invariant is proven per fire, per claim, and per artifact path; what is untested is the
+at-least-once contract underneath it, which this initiative inherited and preserved rather than
+introduced. Whoever tests it is testing keiro, and should say so.
+
+**Open, and operational: the artifact migration.** An upgraded deployment's scene and persona
+mirrors stay at their pre-partition `.kioku/scenes` and `.kioku/persona` paths until an operator
+runs `kioku migrate-artifacts`, and the historical tree goes stale in the interval. That is the
+cost [ADR-7](../adr/the-partition-reaches-the-filesystem-as-a-digest.md) records, not an oversight,
+but it is the one remaining item that a person outside this repository has to actually do.
+
+**Downstream, now unblocked: IR-4 and IR-5.**
+`docs/improvement-requests/add-an-authenticated-http-service.md` names exactly two dependencies —
+partitioned memory spaces and explicit recall targets — and refuses to ship "an unpartitioned
+endpoint or private identity/ACL model". Both dependencies are now satisfied, by this MasterPlan
+and by MasterPlan 6 respectively, so IR-4 is blocked on nothing but a decision to plan it; it
+remains `proposed`. `docs/improvement-requests/publish-typescript-and-python-sdks.md` (IR-5) waits
+on IR-4's OpenAPI contract. Any such service is the fifth surface the space and the target must be
+named on, and it inherits every rule in ADR-4 through ADR-8 rather than re-deciding them.
+
+
+## Revision Notes
+
+**2026-08-07 — remaining-work review.** This MasterPlan closed on 2026-08-06 with four exclusions
+stated in one paragraph. One of them has since been discharged and the other three have not, so
+Outcomes & Retrospective gains a dated **What is left** subsection that sorts what survives by who
+can act on it: a release action owned by MasterPlan 6, an external trigger to watch, two accepted
+gaps that belong to keiro's at-least-once contract rather than to the partition, one operator
+action, and two now-unblocked downstream improvement requests. The closing paragraph is kept
+verbatim above it, because it is the accurate record of what was true at closing and the point of
+the review is the delta.
+
+Integration Points' **Recall** entry moves from an expectation to a result: MasterPlan 6 completed
+on 2026-08-07 and its statements place `memory_space_id` ahead of every scope condition, so the
+constraint that recall never widen across spaces is discharged rather than pending. Surprises &
+Discoveries gains the corresponding cross-plan observation — the partition contract went through a
+full consumer initiative without a type moving or an ADR being superseded.
+
+The decomposition is unchanged: no child plan was split, merged, reordered, or cancelled, and the
+Exec-Plan Registry and Progress sections are already final. No child ExecPlan was cascaded, because
+each one's "what is not done" note is a point-in-time record of what was true when it shipped, and
+rewriting those would destroy the record this review depends on. No ADR changed: the recall closure
+is recorded in [ADR-8](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md) by
+MasterPlan 6, and nothing here superseded ADR-1 through ADR-7.
+
+Verified rather than assumed while writing this: Kikan-En IR-1 is still `status: proposed`;
+`Kikan.En.Schema` still has no `space` object or `person`/`team` subject; Meibo, Shomei, En, and
+Kikan-En all still have empty `git tag` output; `mkMemoryAuthorizationBinding`,
+`PrincipalDirectory`, `PermissionChecker`, `RecallTarget`, and `kioku migrate-artifacts` all still
+exist under the names used above.
