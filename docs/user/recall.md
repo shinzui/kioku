@@ -81,13 +81,11 @@ unmigrated call site is a compiler warning rather than a surprise in production.
 > [An explicit recall target replaces the overloaded scope](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md)
 > for the exact conditions.
 
-> **Exact global recall is not executable yet.** `ExactScope (ScopeGlobal ns)` type-checks,
-> round-trips on the wire, and is refused at execution with `RecallExactGlobalUnsupported`. Both
-> candidate statements read NULL scope columns as *no scope filter*, so the only rows an exact
-> global request could reach through them are the namespace-wide ones — and answering the wrong
-> question quietly is the defect this vocabulary exists to remove. The statements are split in
-> `docs/plans/29-enforce-exact-and-namespace-wide-recall-in-postgresql.md`. Until then, use
-> `getGlobal` for an unranked exact global read.
+All three targets execute. `ExactScope (ScopeGlobal ns)` was refused for one release, because the
+candidate SQL then read NULL scope columns as *no scope filter* and the only rows it could have
+reached were the namespace-wide ones; each target now compiles to its own statement, so it returns
+the global bucket and nothing else. See
+[Each recall target gets its own statement](../adr/each-recall-target-gets-its-own-statement.md).
 
 ## Strategies
 
@@ -121,8 +119,9 @@ embedding endpoint. `embedding` is pure semantic similarity.
      and where it cannot (PostgreSQL before 13, or an incremental sort it declines) it
      abandons the index for a sequential scan. The vector channel runs in two passes; see
      [The vector channel's two passes](#the-vector-channels-two-passes).
-   Both queries filter `status = 'active'`, the authorized `memory_space_id`, the target's
-   `namespace`, and — for an exact entity target — the exact `scope_kind`/`scope_ref`.
+   Both queries filter `status = 'active'`, the authorized `memory_space_id`, and the target's
+   `namespace`, and then add the target's own scope clause — see
+   [How a target reaches SQL](#how-a-target-reaches-sql).
 4. **Fuse.** The two candidate lists are merged by memory id; each memory keeps its FTS rank
    and/or its vector rank.
 5. **Score & sort.** Each fused candidate gets a blended score (below); results are sorted
@@ -175,11 +174,11 @@ That is the price of a correct answer, and it is bounded by the set you asked to
   this is a genuine gap rather than a proof.
 - **Ordering within the returned candidates is the approximate pass's ordering** when the fallback
   does not fire. That is the normal, intended behaviour of approximate search.
-- **For a namespace-wide target, "the scope you asked about" is the whole namespace.** Recall's
-  scope filter vanishes for `NamespaceWide` (see [What a recall call targets](#what-a-recall-call-targets)),
-  so if the approximate pass starves — which it still can, since the `memory_space_id`,
-  `namespace` and `status` predicates are *also* applied after the index picks — the exact pass
-  scans every embedded row in the namespace.
+- **For a namespace-wide target, "the scope you asked about" is the whole namespace.** The
+  namespace-wide statement carries no scope clause (see
+  [How a target reaches SQL](#how-a-target-reaches-sql)), so if the approximate pass starves —
+  which it still can, since the `memory_space_id`, `namespace` and `status` predicates are *also*
+  applied after the index picks — the exact pass scans every embedded row in the namespace.
 
 **Seeing it.** `Kioku.Recall.selectVectorCandidatesDiagnosed` returns a `VectorChannelOutcome`
 alongside the rows, recording how many candidates the approximate pass produced, whether the exact
@@ -227,16 +226,40 @@ Both behaviours were wanted; the defect was that the type could not tell you whi
 getting. `legacyRecall` preserves the old reading exactly — see
 [Migrating from `RecallRequest`](#migrating-from-recallrequest).
 
-Concretely, recall's scope predicate is
+### How a target reaches SQL
 
-```sql
-(($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))
-```
+Each target compiles to its own statement, and the difference between them is a whole SQL clause
+rather than a parameter value. Every statement starts from the same bound — `status = 'active'`,
+`memory_space_id = $2`, `namespace = $3` — and then adds:
 
-— for a `NamespaceWide` target both parameters are NULL, so the first disjunct is always true and
-the scope filter vanishes; an `ExactScope` entity target compares both columns. The scoped reads
-instead *require* the columns to be NULL, which is why the exact global bucket has no parameter
-assignment here and is refused rather than answered wrongly.
+| Target                            | Scope clause                                       |
+|-----------------------------------|----------------------------------------------------|
+| `ExactScope (ScopeGlobal ns)`     | `AND scope_kind IS NULL AND scope_ref IS NULL`     |
+| `ExactScope (ScopeEntity ns k r)` | `AND scope_kind = $4 AND scope_ref = $5`           |
+| `NamespaceWide ns`                | *(none)*                                            |
+
+There are nine statements in all: three channels — full text, the approximate vector pass, the
+exact vector pass — times these three clauses. They are generated from one template per channel,
+so the space, namespace and status predicates cannot drift apart between them.
+
+**Why nine rather than three parameterised statements.** Recall used to carry one scope predicate,
+`(($4 IS NULL AND $5 IS NULL) OR (scope_kind = $4 AND scope_ref = $5))`, in which passing NULL
+silently dropped the scope filter. A caller who meant *the global bucket* and a caller who meant
+*the whole namespace* then issued the identical query with the identical parameters — so the exact
+global bucket could not be asked for at all, and no artifact anywhere could show a reviewer which
+meaning a call had. Splitting the statements puts the difference in the statement's name and in
+its query plan.
+
+**All three are partition-led.** `memory_space_id` is the first mandatory predicate in every one,
+and PostgreSQL answers all three through the same partition-first index,
+`kioku_memories_space_scope_idx` on `(memory_space_id, namespace, scope_kind, scope_ref)`: the two
+exact bounds as four-column index conditions, the namespace-wide bound as a two-column prefix. A
+btree index takes `scope_kind IS NULL` as an index condition rather than as a filter, which is why
+the exact global bucket needs no index of its own.
+
+The scoped reads (`getActiveByScope` and friends) *require* the scope columns to be NULL for a
+global scope, which is the same set of rows `ExactScope (ScopeGlobal ns)` now returns — ranked
+instead of unranked.
 
 ## Scoring model
 

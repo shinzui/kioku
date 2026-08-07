@@ -54,9 +54,15 @@ This section must always reflect the actual current state of the work.
       `Kioku.RecallHarness` gained `exactEntityStarvationCorpus`.)
 - [x] Add query-plan tests. (2026-08-07: `Recall.Target`'s third case asserts every bound's plan
       is partition-led and that the three bounds are three distinguishable plans.)
-- [ ] Run the full PostgreSQL suite.
-- [ ] Document SQL semantics and operational verification.
-- [ ] Distill into ADRs and update the MasterPlan.
+- [x] Run the full PostgreSQL suite. (2026-08-07: `cabal test all` — 208 + 119 + 38 + 10 tests,
+      all passing, against real ephemeral PostgreSQL clusters with pgvector reachable.)
+- [x] Document SQL semantics and operational verification. (2026-08-07: `docs/user/recall.md`
+      gained "How a target reaches SQL"; `docs/user/library-api.md` and
+      `docs/user/upgrading-to-memory-spaces.md` no longer describe the refusal;
+      `kioku-core/CHANGELOG.md` records the seam changes.)
+- [x] Distill into ADRs and update the MasterPlan. (2026-08-07:
+      [ADR-9](../adr/each-recall-target-gets-its-own-statement.md) created, ADR-8's intermediate
+      state closed, `docs/adr/log.md` updated, MasterPlan 6 marks EP-2 complete.)
 
 
 ## Surprises & Discoveries
@@ -182,8 +188,38 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-No implementation has started. Completion means the semantic matrix passes for all strategies
-against a real PostgreSQL database and query plans stay bounded.
+Completed 2026-08-07.
+
+**What was achieved.** Recall's three targets compile to three SQL scope clauses across nine
+statements — full text, the approximate vector pass and the exact vector pass, each in an
+exact-global, exact-entity and namespace-wide family. Exact global recall executes for the first
+time and returns the global bucket rather than the whole namespace;
+`RecallExactGlobalUnsupported` is deleted and `resolveRecall` is total. Every statement leads with
+`memory_space_id`, and `Kioku.RecallTargetSpec` proves against a real database that the nine
+target/strategy combinations return exactly the rows their target names, that the same three
+targets under a second space's context return that space's byte-identical twins, and that no case
+crosses the boundary. The filtered-ANN expansion and exact fallback are unchanged and are now
+proven on the exact-scope family as well as the namespace-wide one.
+
+**What was measured rather than built.** The index milestone. All three bounds are already served
+by `kioku_memories_space_scope_idx`, so no migration was written; the captured `Index Cond` lines
+are in Surprises & Discoveries and the reasoning is in ADR-9.
+
+**Two lessons worth carrying.**
+
+The first is that a representation defect does not stay in one layer. This plan existed because
+NULL meant two things in SQL; EP-1 had already had to reject the same shape on the wire (two tags
+separated only by whether `scope_kind` was present), and the plan's own Interfaces sketch would
+have reintroduced it a third time in the Hasql encoder for `ExactRecallSql`. The fix each time was
+the same: give each meaning its own name in the artifact a reader actually sees.
+
+The second is that an instrument that restates the thing it measures will drift, and the fix is to
+delete the restatement rather than to check it. The harness's copy of the vector SQL had been
+wrong twice before this plan and would have had to become three copies; removing it *reduced*
+`Kioku.Recall`'s exported test seams from five to four.
+
+**What remains.** Nothing in this plan. The CLI still has no grammar for the exact global bucket,
+which is `docs/plans/30-migrate-recall-consumers-to-explicit-targets.md`.
 
 
 ## Context and Orientation
@@ -195,32 +231,56 @@ pgvector availability. `kioku-core/test/Kioku/RecallHarness.hs` builds real Post
 
 The completed `docs/plans/18-build-a-recall-quality-harness-that-reproduces-filtered-ann-starvation.md`
 and `docs/plans/19-fix-filtered-ann-starvation-in-vector-recall.md` are regression constraints.
-Plans 26 and 28 supply the partitioned schema and target type. No additional ADR is expected
-beyond the API/compatibility ADR from plan 28.
+Plans 26 and 28 supply the partitioned schema and target type.
+
+Three local ADRs matter here.
+[ADR-8](../adr/an-explicit-recall-target-replaces-the-overloaded-scope.md) is the vocabulary this
+plan makes executable; it explicitly hands this plan the decision that exact and namespace-wide
+recall get separate statements rather than one statement with a nullable predicate.
+[ADR-2](../adr/namespace-is-not-a-security-boundary.md) is why `memory_space_id` is mandatory and
+first in every statement — namespace-wide means every scope in one space, never every space — and
+[ADR-6](../adr/the-partition-is-a-column-not-a-schema.md) is the column and the partition-first
+index those predicates sit on.
+
+The plan originally recorded that no additional ADR was expected. That was wrong: the split is a
+durable structural decision about how a security-relevant breadth choice is made visible, and it
+became [ADR-9](../adr/each-recall-target-gets-its-own-statement.md) during implementation.
 
 
 ## Plan of Work
 
 ### Milestone 1: explicit predicate planning
 
-Introduce a small internal plan that compiles `RecallTarget` into either an exact-scope or
-namespace-wide statement family. Exact global uses `scope_kind IS NULL AND scope_ref IS NULL`;
-exact entity compares both values; namespace-wide omits only those scope comparisons. All three
-compare memory space and namespace explicitly.
+Introduce a small internal plan that compiles `RecallTarget` into a statement family. Exact global
+uses `scope_kind IS NULL AND scope_ref IS NULL`; exact entity compares both values; namespace-wide
+omits only those scope comparisons. All three compare memory space and namespace explicitly.
 
 Use distinct Hasql input records so it is impossible to call a namespace-wide statement by
 passing nullable scope fields to an exact statement. Validate `maxResults` before SQL.
 
+*As built:* three families, not two. `ScopeBound` has one constructor per target;
+`BoundedCandidateParams` (used by exact-global and namespace-wide) carries no scope columns at
+all and `EntityCandidateParams` carries two non-nullable ones, so no parameter assignment can
+widen a bound — the choice is which statement you name. `maxResults` was already validated into a
+`RecallLimit` by plan 28, which is what let `resolveRecall` become total.
+
 ### Milestone 2: keyword/vector statements and indexes
 
-Update FTS and vector statements for both target families. Keep the filtered-ANN algorithm:
+Update FTS and vector statements for every target family. Keep the filtered-ANN algorithm:
 retrieve an expanded vector candidate set inside the authorized predicate, combine/rank, and
 fall back to exact filtered scoring when expansion cannot fill the requested page. Keyword-only
 fallback remains available when vector capability is absent.
 
-Add or replace indexes in the pg-migrate schema from plan 26. Every index starts with
-`memory_space_id` and supports the target's namespace/scope predicates before ranking fields.
-Do not add an unbounded namespace query.
+Every index must start with `memory_space_id` and support the target's namespace/scope predicates
+before ranking fields. Do not add an unbounded namespace query.
+
+*As built:* nine statements — three channels times three bounds — generated from one SQL template
+per channel and one scope clause per bound, so the space, namespace and `status` predicates cannot
+drift apart between families. The two-pass vector channel is unchanged and now dispatches per
+family. **No index migration was needed**: `kioku_memories_space_scope_idx` from plan 26's
+migration 0011 already answers all three bounds, which was measured rather than assumed — see
+Surprises & Discoveries for the captured plans and the Decision Log for why a partial index for
+the global bucket was rejected.
 
 ### Milestone 3: semantic and query-plan matrix
 
@@ -236,20 +296,41 @@ embedding, and hybrid strategies, assert:
 Add low-`ef_search` and selective-filter fixtures to preserve plan 19. Capture concise `EXPLAIN`
 evidence that queries use a bounded partition-leading access path.
 
+*As built:* `kioku-core/test/Kioku/RecallTargetSpec.hs` holds the matrix. Its two spaces carry
+byte-identical rows — same namespace, same three scopes, same content — so nothing but the
+`memory_space_id` predicate can separate them, and it runs the three targets under each space's
+context. `embedding` and `hybrid` are exercised at the channel level because
+`Baikai.Embedding.EmbeddingModel` is an HTTP endpoint (Decision Log); the keyword row also goes
+through the public `recall`. The plan evidence runs under `SET LOCAL enable_seqscan = off`,
+because the six-row fixture would otherwise be scanned sequentially and the plan would say nothing
+about which access paths are available. Plan 19's selective-filter fixture became
+`Kioku.RecallHarness.exactEntityStarvationCorpus`, which starves the exact-scope family.
+
 
 ## Concrete Steps
 
-Run from the repository root:
+Run from the repository root. The tasty group names are `Recall scoring`, `Recall.Compat`,
+`Recall.Sql` and `Recall.Target`, so `-p Recall` selects every recall case:
 
 ```bash
-nix develop -c cabal test kioku-core --test-options='-p "Recall SQL|Recall harness"'
-nix develop -c cabal test kioku-core --test-options='-p "filtered ANN"'
+nix develop -c cabal test kioku-core --test-options='-p "Recall"'
+nix develop -c cabal test kioku-core --test-options='-p "Recall.Target"'
 nix develop -c cabal test kioku-migrations
 nix develop -c cabal test all
 ```
 
-When pgvector is unavailable, vector-specific cases may report a documented skip; keyword and
-partition isolation cases must still run and pass.
+Expected output for the target matrix:
+
+```text
+  Recall.Target
+    every target and strategy returns its own rows, in its own space:        OK
+    the public entry point answers all three targets:                        OK
+    each target's plan is bounded by the partition and its own scope clause: OK
+```
+
+When pgvector is unavailable, the vector rows of the matrix and the starvation cases print
+`[skipped] no reachable pgvector on this cluster` rather than passing silently; the keyword rows
+and every partition-isolation assertion still run and must pass.
 
 
 ## Validation and Acceptance
@@ -263,24 +344,94 @@ IDs and never the second space. It also requires:
 - Keyword fallback preserves target and memory-space predicates when vectors are unavailable.
 - Representative plans can use partition-leading indexes and do not scan unrelated spaces.
 
+All met, 2026-08-07:
+
+- The nine combinations are `Recall.Target`'s first case, and the second space's twins are
+  asserted absent from every one of them.
+- Distinct SQL shapes are asserted from the query plans themselves rather than from the Haskell:
+  the exact-global plan tests `scope_kind` for NULL, the exact-entity plan compares it, the
+  namespace-wide plan constrains no scope, and the first two plans differ from the third.
+- Limits: `RecallLimit` is validated 1–100 by `mkRecallLimit` before a `RecallQuery` exists (plan
+  28), and `Recall.Compat`'s edge case still pins the legacy request's zero-returns-nothing and
+  clamp-above-100 behaviour.
+- `Recall.Sql`'s two starvation cases prove expansion and fallback on the namespace-wide and
+  exact-entity families; `a healthy scope never pays for the exact fallback` proves the fallback
+  stays off when the pool fills.
+- Keyword fallback: `Recall.Target`'s second case runs under `VectorExtensionUnavailable` with an
+  embedding model that throws if forced, and still gets the right rows in the right space.
+- Every plan captured carries `Index Cond: ((memory_space_id …`, which is asserted, not merely
+  observed.
+
 
 ## Idempotence and Recovery
 
-SQL and test edits are safe to rerun. Index migrations use new names and are additive until the
-new statements are deployed. Drop obsolete indexes only in a later migration after production
-plan verification. If vector tests expose a regression, retain the old candidate-expansion
-implementation and change only its target predicate.
+SQL and test edits are safe to rerun. No migration was written, so there is no schema state to
+recover: the change is entirely in compiled statements, and rolling back is reverting the commits.
+Had an index been needed it would have used a new name and been additive, with obsolete indexes
+dropped only in a later migration after production plan verification.
+
+The candidate-expansion implementation was deliberately not rewritten — only the predicate it
+carries changed — so a vector regression is diagnosable as a predicate problem rather than an
+algorithm one.
 
 
 ## Interfaces and Dependencies
 
-Internal input types should make widening explicit, for example:
+Internal input types make widening explicit. The plan originally sketched two families:
 
 ```haskell
 data ExactRecallSql = ExactRecallSql MemorySpaceId MemoryScope Text Int
 data NamespaceRecallSql = NamespaceRecallSql MemorySpaceId Namespace Text Int
 ```
 
+That was rejected during implementation (Decision Log): encoding a `MemoryScope` needs nullable
+scope parameters again for the global case, which is the representation this plan removes, one
+layer down. What shipped in `kioku-core/src/Kioku/Recall.hs` is three bounds and two parameter
+records, neither of which can express a scope filter's absence:
+
+```haskell
+data ScopeBound
+  = GlobalBucketOnly              -- AND scope_kind IS NULL AND scope_ref IS NULL
+  | EntityScopeOnly !Text !Text   -- AND scope_kind = $4 AND scope_ref = $5
+  | EveryScopeInNamespace         -- (no scope clause)
+
+data BoundedCandidateParams = BoundedCandidateParams
+  { match :: !Text, memorySpaceId :: !MemorySpaceId, namespace :: !Text, limit :: !Int32 }
+
+data EntityCandidateParams = EntityCandidateParams
+  { match :: !Text, memorySpaceId :: !MemorySpaceId, namespace :: !Text,
+    scopeKind :: !Text, scopeRef :: !Text, limit :: !Int32 }
+```
+
+`FtsCandidateSql` and `VectorCandidateSql` are the compiled queries — one constructor per family —
+and `runFtsCandidates`, `runVectorAnnCandidates`, `runVectorExactCandidates` and the three
+`explain*` seams dispatch on them with a total `case`.
+
 The implementation uses existing Hasql, pgvector capability detection, and RRF helpers. It
-depends on plan 26's schema and plan 28's `RecallTarget`. It must not call En per candidate;
-authorization has already produced one allowed memory-space context.
+depends on plan 26's schema and plan 28's `RecallTarget`. It makes no per-candidate authorization
+call; authorization has already produced one allowed memory-space context.
+
+
+## Revision Notes
+
+**2026-08-07 — implementation.** Three sections changed against what was planned, and each is
+recorded where a reader meets it rather than only here.
+
+*Two statement families became three.* The Interfaces sketch proposed `ExactRecallSql` carrying a
+`MemoryScope`, which needs nullable scope parameters again for the global case — the same
+null-means-two-things representation this plan exists to delete, moved into the Hasql encoder. The
+Interfaces section now shows what shipped and why the sketch was rejected.
+
+*The index milestone produced no migration.* "Add partition-leading indexes for each bounded query
+shape" was answered by measuring: `kioku_memories_space_scope_idx` already serves all three,
+because a btree index takes `scope_kind IS NULL` as an index condition. The captured plans are in
+Surprises & Discoveries and the rejection of a redundant partial index is in the Decision Log.
+
+*The plan expected no new ADR and was wrong.* Context and Orientation said so; the split is a
+durable structural decision and became ADR-9. That section now cites ADR-2, ADR-6, ADR-8 and
+ADR-9, and says plainly that the original expectation was mistaken.
+
+Two smaller corrections: Concrete Steps named tasty filters (`Recall SQL`, `Recall harness`,
+`filtered ANN`) that match no test group in this repository and would have selected nothing, and
+are replaced with commands that run; and Validation and Acceptance now records how each acceptance
+criterion was met rather than only stating it.

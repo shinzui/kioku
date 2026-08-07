@@ -1,6 +1,8 @@
 # Bundle Update Log
 
 ## 2026-08-07
+* **Addition**: ADR-9 records that each recall target compiles to its own SQL scope clause across nine statements rather than to one parameterised predicate with nullable scope columns, that memory_space_id leads all nine, and that the existing partition-first index serves all three bounds.
+* **Update**: ADR-8's intermediate state is over — the exact global bucket executes, RecallExactGlobalUnsupported is gone, and its consequences now point at ADR-9.
 * **Update**: ADR-2's requirement that recall never span memory spaces is now carried by the type: ADR-8's RecallTarget names breadth while the memory space comes from the authorizing context.
 * **Addition**: ADR-8 records that an explicit RecallTarget replaces the overloaded scope, that the memory space comes from the authorizing context rather than the target, and that the pre-target request survives one release as a deprecated wrapper.
 

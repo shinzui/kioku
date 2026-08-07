@@ -5,7 +5,7 @@ description: >-
   Recall takes a RecallTarget naming exactly one of three meanings, the pre-target request
   survives one release as a deprecated wrapper, and the memory space comes from the authorizing
   context rather than the target.
-timestamp: 2026-08-07T00:00:00Z
+timestamp: 2026-08-07T12:00:00Z
 docId: ADR-8
 status: accepted
 date: 2026-08-07
@@ -87,14 +87,17 @@ A call site now says which of the three sets of rows it means, and a reviewer ca
 knowing which function is being called. The exact global bucket became expressible for the first
 time.
 
-It is expressible before it is executable. `ExactScope (ScopeGlobal ns)` type-checks, round-trips
-on the wire, and is refused at execution with `RecallExactGlobalUnsupported`, because the shared
-scope predicate has no parameter assignment for it — the only rows it could reach through the
-current statements are the namespace-wide ones. Refusing is the honest intermediate state;
-answering the wrong question quietly is the defect being removed. Splitting the statements is
-`docs/plans/29-enforce-exact-and-namespace-wide-recall-in-postgresql.md`, which also owns the
-decision that exact and namespace-wide recall get separate statements rather than one statement
-with a nullable predicate.
+It was expressible before it was executable. For one release `ExactScope (ScopeGlobal ns)`
+type-checked, round-tripped on the wire, and was refused at execution with
+`RecallExactGlobalUnsupported`, because the shared scope predicate had no parameter assignment for
+it — the only rows it could reach through the statements of the day were the namespace-wide ones.
+Refusing was the honest intermediate state; answering the wrong question quietly is the defect
+being removed.
+
+**That state is over.** [ADR-9](each-recall-target-gets-its-own-statement.md) gives each target its
+own SQL scope clause, so all three execute, `RecallExactGlobalUnsupported` is gone, and
+`resolveRecall` is total. `RecallError` retains only `RecallSpaceMismatch`, which nothing but
+`legacyRecall` can produce.
 
 `Kioku.Distill.L1.FindMergeCandidates` receives the pass's `MemoryAccessContext` rather than its
 `MemorySpaceId`, because a finder that runs recall must be handed the decision that authorized the

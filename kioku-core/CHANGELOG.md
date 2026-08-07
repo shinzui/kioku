@@ -16,17 +16,27 @@
   which is unobservable because a fused result set holds at most 100 memories). See
   `docs/adr/an-explicit-recall-target-replaces-the-overloaded-scope.md` for the removal
   conditions.
-- `ExactScope (ScopeGlobal ns)` — ranked recall of the exact global bucket — is representable but
-  not yet executable: it is refused with `RecallExactGlobalUnsupported`, because the shared scope
-  predicate reads NULL scope columns as "no scope filter" and would silently answer the
-  namespace-wide question instead. Use `getGlobal` for an unranked exact global read until the
-  statements are split.
+- `ExactScope (ScopeGlobal ns)` — ranked recall of the exact global bucket — **executes**, and
+  returns the rows recorded with no entity scope rather than the whole namespace. Each of the
+  three targets now compiles to its own SQL: the exact global bucket asks for
+  `scope_kind IS NULL AND scope_ref IS NULL`, an exact entity compares both columns, and a
+  namespace-wide target carries no scope clause at all. The single parameterised predicate they
+  replace read NULL scope columns as "no scope filter", which is why the exact global bucket
+  previously had to be refused. See
+  `docs/adr/each-recall-target-gets-its-own-statement.md`.
+- `RecallError` lost `RecallExactGlobalUnsupported`. Its only remaining constructor is
+  `RecallSpaceMismatch`, which only the deprecated `legacyRecall` can produce; `recall` keeps
+  returning `Either` so that adding a refusal later is not a breaking change at every call site.
 - `RecallStrategy` moved to `kioku-api`'s `Kioku.Api.Recall`. `Kioku.Recall` re-exports it, so an
   existing import keeps working.
 - The recall test seams (`selectFtsCandidates`, `selectVectorCandidates`,
-  `selectVectorCandidatesDiagnosed`, `vectorCandidateQuery`) take a `ResolvedRecall` — a query
-  bound to one authorized space with its target already compiled to scope columns. `resolveRecall`
-  is the only way to build one.
+  `selectVectorCandidatesDiagnosed`) take a `ResolvedRecall` — a query bound to one authorized
+  space with its target already compiled to a scope predicate. `resolveRecall` is the only way to
+  build one, and it is total. `selectVectorCandidatesStmt`, `selectVectorCandidatesExactStmt`,
+  `vectorCandidateQuery` and `memoryRecordColumns` are replaced by `vectorCandidateSql` /
+  `ftsCandidateSql` and the `runVectorAnnCandidates` / `explainVectorAnnCandidates` /
+  `explainVectorExactCandidates` / `explainFtsCandidates` transaction seams, which is how the
+  recall harness stopped keeping its own copy of the vector SQL to `EXPLAIN`.
 - `Kioku.Distill.L1.FindMergeCandidates` receives the pass's `MemoryAccessContext` rather than its
   `MemorySpaceId`, and its error channel is `L1Error` rather than `ReadModelError`. `L1Error`
   gained `L1RecallRefused`, so a recall refusal cannot arrive at the consolidator as an empty

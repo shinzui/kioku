@@ -409,7 +409,6 @@ data RecallHit = RecallHit
 
 data RecallError
   = RecallSpaceMismatch MemorySpaceId MemorySpaceId  -- requested, authorized (legacyRecall only)
-  | RecallExactGlobalUnsupported Namespace
 
 mkRecallQuery :: RecallTarget -> Text -> RecallStrategy -> Int -> Either Text RecallQuery
 mkRecallLimit :: Int -> Either Text RecallLimit
@@ -423,9 +422,10 @@ the space, so widening a target never widens the tenancy.
 `authorizeMemoryAccess` already checked against that space, which is the same reason the reads
 below take a bare `MemorySpaceId`.
 
-`ExactScope (ScopeGlobal ns)` is currently refused with `RecallExactGlobalUnsupported`; the SQL
-that distinguishes it from a namespace-wide search does not exist yet. Use `getGlobal` for an
-unranked exact global read. See [Recall](recall.md#what-a-recall-call-targets).
+All three targets execute. `RecallError` therefore has one constructor left, and only
+`legacyRecall` can produce it — a `RecallQuery` carries no memory space of its own to disagree
+with the context. `recall` keeps returning `Either` so that adding a refusal later is not a
+breaking change at every call site.
 
 Build the `EmbeddingModel` from config with `Kioku.Memory.Embedding` (`resolveEmbeddingConfig`,
 `toEmbeddingModel`), and detect the vector capability with `Kioku.Recall.Capability`. Note that

@@ -351,9 +351,11 @@ so a deployment that failed part-way can simply be re-run.
 
 ## What has not changed yet
 
-**Recall targets are still a `MemoryScope`,** so "the exact global bucket" and "every scope in
-this namespace" remain the same value with two meanings depending on which function reads it.
-That asymmetry is unchanged by the partition and is documented in [Recall](recall.md).
+**The command line still spells a recall target as a `--scope`,** so `--scope mori` searches the
+whole `mori` namespace and there is no way to ask it for the exact global bucket. The library API
+names the three targets apart — see [Recall](recall.md#what-a-recall-call-targets) — and giving
+the CLI the same grammar is
+`docs/plans/30-migrate-recall-consumers-to-explicit-targets.md`.
 
 ## Related
 
