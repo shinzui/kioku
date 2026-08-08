@@ -32,11 +32,14 @@ remains unchanged after the application reconciles its Keiro read-model registry
 
 ## Progress
 
-- [ ] Record the durable schema-ownership decision in a local ADR and add migration tests
+- [x] Record the durable schema-ownership decision in a local ADR and add migration tests
       that demonstrate fresh-install, Kiroku-only adoption, upgrade, collision, and Codd-import
-      behavior.
-- [ ] Add forward migration `0012-relocate-projections-to-kioku-schema.sql` and adapt the
+      behavior. (2026-08-07) ADR-10 is `docs/adr/projections-live-in-the-kioku-schema.md`, listed
+      in `docs/adr/log.md`. Eight new cases live in `kioku-migrations/test/Main.hs`.
+- [x] Add forward migration `0012-relocate-projections-to-kioku-schema.sql` and adapt the
       historical-migration test harness without rewriting migrations `0001` through `0011`.
+      (2026-08-07) `withPrePartitionDatabase` now reverses the relocation first via
+      `undoSchemaRelocation`; migrations `0001`–`0011` and the Codd fixture are untouched.
 - [ ] Centralize qualified Kioku relation names and update all production SQL and diagnostics.
 - [ ] Advance the memory, session, and turn read-model identities and test fail-closed startup
       followed by successful reconciliation.
@@ -48,7 +51,31 @@ remains unchanged after the application reconciles its Keiro read-model registry
 
 ## Surprises & Discoveries
 
-(None yet.)
+- The plan assumed the Codd rehearsal recognized thirty historical rows "before applying the
+  native suffix" and that `Kioku.Migrations.History.Codd` itself would need editing. It does not.
+  The mapping tables in that module describe pre-cutover history only, and `0012` is a forward
+  migration, so the module compiled unchanged. What had to move were the rehearsal's forward
+  expectations in `kioku-migrations/test/Main.hs`: `expectedForwardMigrationIds` gained
+  `kioku/0012-relocate-projections-to-kioku-schema`, the applied and already-applied counts went
+  from 39 to 40, and `forwardMigrationEffectCountStatement` went from five effects to six by
+  adding `to_regclass('kioku.memories') IS NOT NULL AND to_regclass('kiroku.kioku_memories') IS
+  NULL`. The state validators in `Codd.hs` still assert the *historical* session registry at v3,
+  which stays correct: that is what migration `0006` left in a pre-cutover database, and
+  reconciliation — not a migration — is what advances it afterwards.
+  Date: 2026-08-07
+
+- `ORDER BY 1 COLLATE "C"` does not mean "order by the first output column under the C
+  collation". PostgreSQL reads the `1` as an integer literal and rejects the clause:
+
+  ```text
+  ServerError "42804" "collations are not supported by type integer"
+  ```
+
+  The ordinal form of `ORDER BY` only accepts a bare integer, so a collation has to be attached
+  to a named column instead — which inside a `UNION ALL` means wrapping the whole set operation
+  in a subquery and ordering the wrapper. Both row-count statements in
+  `kioku-migrations/test/Main.hs` do that.
+  Date: 2026-08-07
 
 
 ## Decision Log

@@ -93,6 +93,7 @@ test-suite kioku-migrations-test
     , hasql                          >=1.6
     , kioku-migrations               ^>=0.3.0.0
     , kioku-migrations:test-support
+    , kiroku-store-migrations        ^>=0.3.0.0
     , pg-migrate                     ^>=1.1.0.0
     , pg-migrate-embed               ^>=1.1.0.0
     , pg-migrate-import-codd         ^>=1.1.0.0

@@ -13,6 +13,8 @@ module Main where
 import Control.Exception (bracket)
 import Data.Foldable (toList)
 import Data.Int (Int64)
+import Data.List (sort)
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -26,6 +28,7 @@ import Database.PostgreSQL.Migrate
     HistoryImportResult (..),
     MigrationId,
     MigrationOutcome (AlreadyApplied, AppliedNow),
+    MigrationPlan,
     MigrationReport (..),
     MigrationResult (..),
     VerificationReport (..),
@@ -33,6 +36,7 @@ import Database.PostgreSQL.Migrate
     defaultImportOptions,
     defaultRunOptions,
     migrationId,
+    migrationPlan,
     runMigrationPlan,
     validateHistoryMappingTargets,
     verifyMigrationPlan,
@@ -55,6 +59,7 @@ import Kioku.Migrations.History.Codd
     kiokuCoddHistoryMappings,
   )
 import Kioku.Migrations.TestSupport (withBareDatabase, withKiokuMigratedDatabase)
+import Kiroku.Store.Migrations qualified as KirokuMigrations
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 
@@ -80,6 +85,20 @@ tests =
         [ testCase "backfills every pre-partition row into the legacy space" testMemorySpaceBackfill,
           testCase "refuses to finish when a derived row disagrees with its session" testMemorySpaceDriftAborts,
           testCase "re-applying its body changes nothing" testMemorySpaceBackfillIdempotent
+        ],
+      testGroup
+        "the projection schema relocation"
+        [ testCase "a fresh database owns seven relations in kioku and none in kiroku" testRelocatedFreshLayout,
+          testCase "a Kiroku-only ledger adopts Kioku without replaying Kiroku" testKirokuOnlyAdoption,
+          testCase "a data-bearing upgrade keeps every row, OID, index, and grant" testRelocationPreservesTables,
+          testCase "re-applying its body against the new layout changes nothing" testRelocationRerunIsNoOp,
+          testGroup
+            "a layout that is neither wholly old nor wholly new aborts and changes nothing"
+            [ testCase "one table already moved" (assertRelocationAborts moveOneTableForward),
+              testCase "one source table missing" (assertRelocationAborts dropOneSourceTable),
+              testCase "a target name taken by a table" (assertRelocationAborts occupyTargetWithTable),
+              testCase "a target name taken by a view" (assertRelocationAborts occupyTargetWithView)
+            ]
         ]
     ]
 
@@ -294,13 +313,17 @@ memorySpacePartitionMigration = "0011-kioku-memory-space-partition.sql"
 
 -- | A fully migrated database rolled back to the shape it had before memory spaces, then
 -- seeded with one row in every partitioned table.
+--
+-- Migration 0011 predates the @kioku@ schema, so it names @kiroku.kioku_*@ throughout. The
+-- database has to be walked back past 0012 before 0011 can be tested in the layout it was
+-- written for; 'undoSchemaRelocation' is that step. It is a test fixture, not an operator
+-- procedure — a released migration is never reversed in a real database.
 withPrePartitionDatabase :: (Connection.Connection -> IO a) -> IO a
 withPrePartitionDatabase use =
-  withKiokuMigratedDatabase \connStr ->
-    withConnection connStr \conn -> do
-      run conn (Session.script undoMemorySpacePartition)
-      run conn (Session.script prePartitionRows)
-      use conn
+  withPreRelocationDatabase \conn -> do
+    run conn (Session.script undoMemorySpacePartition)
+    run conn (Session.script prePartitionRows)
+    use conn
 
 -- | @DROP COLUMN … CASCADE@ takes the column's indexes and constraints with it, including the
 -- composite primary keys, which is why the single-column ones have to be put back by hand.
@@ -451,6 +474,379 @@ kiokuSchemaSnapshot =
     E.noParams
     (D.singleRow (D.column (D.nonNullable D.text)))
 
+-- * The projection schema relocation
+
+-- | The seven relations Kioku owns: the name migration 0011 left them under, and the name
+-- migration 0012 puts them under. The schema changes with the name — @kiroku.kioku_memories@
+-- becomes @kioku.memories@ — because the schema now supplies the namespace the prefix used to.
+relocatedRelations :: [(Text, Text)]
+relocatedRelations =
+  [ ("kioku_memories", "memories"),
+    ("kioku_sessions", "sessions"),
+    ("kioku_turns", "turns"),
+    ("kioku_l1_watermarks", "l1_watermarks"),
+    ("kioku_consolidation_decisions", "consolidation_decisions"),
+    ("kioku_scenes", "scenes"),
+    ("kioku_personas", "personas")
+  ]
+
+relocationMigration :: FilePath
+relocationMigration = "0012-relocate-projections-to-kioku-schema.sql"
+
+-- | What 'projectionLayout' must report once the relocation has run: seven ordinary tables in
+-- @kioku@, and nothing at all left behind in @kiroku@ under the old prefix.
+targetProjectionLayout :: [(Text, Text, Text)]
+targetProjectionLayout =
+  [("kioku", target, "r") | target <- sort (snd <$> relocatedRelations)]
+
+-- | Every relation that could occupy one of the fourteen names this migration cares about.
+--
+-- Indexes are excluded deliberately: they share PostgreSQL's relation namespace, so the
+-- migration itself has to treat an index named @kioku.memories@ as a collision, but listing the
+-- twenty-odd projection indexes here would drown the layout the assertions are about. The
+-- relkind travels with each row so a view squatting on a target name is visible as a view.
+projectionLayout :: Statement () [(Text, Text, Text)]
+projectionLayout =
+  preparable
+    """
+    SELECT n.nspname::text, c.relname::text, c.relkind::text
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relkind IN ('r', 'v', 'm', 'f', 'p')
+      AND (n.nspname = 'kioku'
+           OR (n.nspname = 'kiroku' AND c.relname LIKE 'kioku\\_%'))
+    ORDER BY n.nspname COLLATE "C", c.relname COLLATE "C"
+    """
+    E.noParams
+    ( D.rowList
+        ( (,,)
+            <$> D.column (D.nonNullable D.text)
+            <*> D.column (D.nonNullable D.text)
+            <*> D.column (D.nonNullable D.text)
+        )
+    )
+
+-- | A fresh database must land in the target layout with nothing left in the event store's
+-- schema. This is the whole point of the migration stated as a catalog fact.
+testRelocatedFreshLayout :: Assertion
+testRelocatedFreshLayout =
+  withKiokuMigratedDatabase \connStr ->
+    query connStr projectionLayout >>= (@?= targetProjectionLayout)
+
+-- | The adoption case: a host that already runs Kiroku, and whose ledger therefore holds the
+-- Kiroku component and nothing else.
+--
+-- pg-migrate identities are component-qualified, so Kioku's composed plan recognises those rows
+-- as its own first component, verifies their checksums, and skips them. Nothing about the event
+-- store is re-run or rewritten; only the missing Keiro and Kioku components apply. A host that
+-- also has its own migration component is a different case on purpose — the standalone runner
+-- rejects a ledger row outside its plan, and that host must compose one complete plan instead.
+testKirokuOnlyAdoption :: Assertion
+testKirokuOnlyAdoption =
+  withBareDatabase \connStr -> do
+    let settings = Settings.connectionString connStr
+    kirokuOnly <- kirokuOnlyPlan
+    full <- either (fail . show) pure kiokuMigrationPlan
+
+    kirokuReport <- runMigrationPlan defaultRunOptions settings kirokuOnly >>= either (assertFailure . show) pure
+    length (appliedNow kirokuReport) @?= 8
+    ledgerBefore <- query connStr kirokuLedgerSnapshot
+
+    adoption <- runMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
+    let MigrationReport {results = adoptionResults} = adoption
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 8
+    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 32
+
+    -- Verified and skipped, never re-executed: the stored rows keep their checksums and their
+    -- original application timestamps.
+    query connStr kirokuLedgerSnapshot >>= (@?= ledgerBefore)
+
+    -- Kioku adopted the host's event store rather than standing up a second one beside it.
+    query connStr eventStoreRelationsExist >>= (@?= True)
+    query connStr projectionLayout >>= (@?= targetProjectionLayout)
+
+    verification <- verifyMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
+    let VerificationReport {issues = adoptionIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
+    adoptionIssues @?= []
+    length appliedMigrations @?= 40
+    pendingMigrations @?= []
+    unknownMigrations @?= []
+
+-- | The Kiroku component on its own, which is what an existing Kiroku host's database has
+-- applied before it adopts Kioku.
+kirokuOnlyPlan :: IO MigrationPlan
+kirokuOnlyPlan = do
+  component <- either (fail . show) pure KirokuMigrations.kirokuMigrations
+  either (fail . show) pure (migrationPlan (component :| []))
+
+kirokuLedgerSnapshot :: Statement () Text
+kirokuLedgerSnapshot =
+  preparable
+    """
+    SELECT coalesce(
+      string_agg(migration || ':' || encode(checksum, 'hex') || ':' || status
+                   || ':' || started_at::text || ':' || coalesce(finished_at::text, ''),
+                 E'\n' ORDER BY position),
+      '')
+    FROM pgmigrate.migrations
+    WHERE component = 'kiroku'
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
+
+eventStoreRelationsExist :: Statement () Bool
+eventStoreRelationsExist =
+  preparable
+    "SELECT to_regclass('kiroku.events') IS NOT NULL AND to_regclass('kiroku.streams') IS NOT NULL"
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.bool)))
+
+-- | The data-bearing upgrade. @ALTER TABLE … SET SCHEMA@ and @… RENAME TO@ are catalog metadata
+-- edits, so the table keeps its object identity — and that is the claim worth asserting, because
+-- a relocation implemented as create-copy-drop would pass a row-count check and still silently
+-- rebuild every index and drop every grant.
+testRelocationPreservesTables :: Assertion
+testRelocationPreservesTables =
+  withPreRelocationDatabase \conn -> do
+    relocation <- loadMigration relocationMigration
+    run conn (Session.script relocationSeedRows)
+
+    oidsBefore <- run conn (Session.statement () oldLayoutTableOids)
+    rowsBefore <- run conn (Session.statement () oldLayoutRowCounts)
+    attachmentsBefore <- run conn (Session.statement () oldLayoutAttachments)
+    length oidsBefore @?= 7
+    rowsBefore @?= [(target, 1) | target <- sort (snd <$> relocatedRelations)]
+
+    run conn (Session.script relocation)
+
+    run conn (Session.statement () projectionLayout) >>= (@?= targetProjectionLayout)
+    run conn (Session.statement () newLayoutTableOids) >>= (@?= oidsBefore)
+    run conn (Session.statement () newLayoutRowCounts) >>= (@?= rowsBefore)
+    run conn (Session.statement () newLayoutAttachments) >>= (@?= attachmentsBefore)
+
+-- | Rerunning the body against the finished layout is the second of the migration's only two
+-- accepted states, and it must not so much as touch a catalog row.
+testRelocationRerunIsNoOp :: Assertion
+testRelocationRerunIsNoOp =
+  withKiokuMigratedDatabase \connStr ->
+    withConnection connStr \conn -> do
+      relocation <- loadMigration relocationMigration
+      oidsBefore <- run conn (Session.statement () newLayoutTableOids)
+      attachmentsBefore <- run conn (Session.statement () newLayoutAttachments)
+
+      run conn (Session.script relocation)
+
+      run conn (Session.statement () projectionLayout) >>= (@?= targetProjectionLayout)
+      run conn (Session.statement () newLayoutTableOids) >>= (@?= oidsBefore)
+      run conn (Session.statement () newLayoutAttachments) >>= (@?= attachmentsBefore)
+
+-- | Every layout other than wholly-old and wholly-new is refused before a single table moves.
+--
+-- The migration is transactional, so \"refused\" has to mean the catalog is bit-for-bit what it
+-- was before the attempt — not merely that an error was reported after a partial move.
+assertRelocationAborts :: Text -> Assertion
+assertRelocationAborts damage =
+  withPreRelocationDatabase \conn -> do
+    relocation <- loadMigration relocationMigration
+    run conn (Session.script damage)
+    before <- run conn (Session.statement () projectionLayout)
+
+    result <- Connection.use conn (Session.script relocation)
+    case result of
+      Right () -> assertFailure "the relocation accepted a layout that is neither wholly old nor wholly new"
+      Left err ->
+        assertBool
+          ("expected a layout refusal, got: " <> show err)
+          ("refusing to relocate" `Text.isInfixOf` Text.pack (show err))
+
+    run conn (Session.statement () projectionLayout) >>= (@?= before)
+
+moveOneTableForward :: Text
+moveOneTableForward =
+  """
+  ALTER TABLE kiroku.kioku_turns SET SCHEMA kioku;
+  ALTER TABLE kioku.kioku_turns RENAME TO turns;
+  """
+
+dropOneSourceTable :: Text
+dropOneSourceTable = "DROP TABLE kiroku.kioku_personas"
+
+occupyTargetWithTable :: Text
+occupyTargetWithTable = "CREATE TABLE kioku.memories (placeholder text)"
+
+occupyTargetWithView :: Text
+occupyTargetWithView = "CREATE VIEW kioku.scenes AS SELECT 1 AS placeholder"
+
+-- | A fully migrated database put back into the layout migration 0011 left behind: the seven
+-- tables in @kiroku@ under their @kioku_@ names. The empty @kioku@ schema stays, which is also
+-- the state a host is in if it created the schema ahead of the upgrade.
+withPreRelocationDatabase :: (Connection.Connection -> IO a) -> IO a
+withPreRelocationDatabase use =
+  withKiokuMigratedDatabase \connStr ->
+    withConnection connStr \conn -> do
+      run conn (Session.script undoSchemaRelocation)
+      use conn
+
+undoSchemaRelocation :: Text
+undoSchemaRelocation =
+  """
+  ALTER TABLE kioku.memories RENAME TO kioku_memories;
+  ALTER TABLE kioku.kioku_memories SET SCHEMA kiroku;
+  ALTER TABLE kioku.sessions RENAME TO kioku_sessions;
+  ALTER TABLE kioku.kioku_sessions SET SCHEMA kiroku;
+  ALTER TABLE kioku.turns RENAME TO kioku_turns;
+  ALTER TABLE kioku.kioku_turns SET SCHEMA kiroku;
+  ALTER TABLE kioku.l1_watermarks RENAME TO kioku_l1_watermarks;
+  ALTER TABLE kioku.kioku_l1_watermarks SET SCHEMA kiroku;
+  ALTER TABLE kioku.consolidation_decisions RENAME TO kioku_consolidation_decisions;
+  ALTER TABLE kioku.kioku_consolidation_decisions SET SCHEMA kiroku;
+  ALTER TABLE kioku.scenes RENAME TO kioku_scenes;
+  ALTER TABLE kioku.kioku_scenes SET SCHEMA kiroku;
+  ALTER TABLE kioku.personas RENAME TO kioku_personas;
+  ALTER TABLE kioku.kioku_personas SET SCHEMA kiroku;
+  """
+
+-- | One row in each of the seven relations, in the pre-relocation layout. Each carries a memory
+-- space, because this database is already past migration 0011.
+relocationSeedRows :: Text
+relocationSeedRows =
+  """
+  INSERT INTO kiroku.kioku_sessions
+    (memory_space_id, session_id, agent_id, focus, namespace, started_at)
+  VALUES ('space_a', 's-1', 'agent', 'focus', 'ns', now());
+
+  INSERT INTO kiroku.kioku_turns
+    (memory_space_id, turn_id, session_id, turn_index, role, content, recorded_at)
+  VALUES ('space_a', 't-1', 's-1', 1, 'user', 'hello', now());
+
+  INSERT INTO kiroku.kioku_l1_watermarks (memory_space_id, session_id, last_turn_index)
+  VALUES ('space_a', 's-1', 1);
+
+  INSERT INTO kiroku.kioku_memories
+    (memory_space_id, memory_id, agent_id, session_id, namespace, memory_type,
+     content, created_at, updated_at)
+  VALUES ('space_a', 'm-1', 'agent', 's-1', 'ns', 'fact', 'content', now(), now());
+
+  INSERT INTO kiroku.kioku_consolidation_decisions
+    (memory_space_id, decision_id, session_id, namespace, candidate_content, decision)
+  VALUES ('space_a', 'd-1', 's-1', 'ns', 'content', 'store');
+
+  INSERT INTO kiroku.kioku_scenes
+    (memory_space_id, scene_id, namespace, scene_key, title, body_md, source_hash)
+  VALUES ('space_a', 'kioku_scene:ns:default', 'ns', 'default', 'title', 'body', 'hash');
+
+  INSERT INTO kiroku.kioku_personas
+    (memory_space_id, persona_id, namespace, body_md, source_hash)
+  VALUES ('space_a', 'kioku_persona:ns', 'ns', 'body', 'hash');
+  """
+
+oldLayoutTableOids :: Statement () [(Text, Int64)]
+oldLayoutTableOids =
+  preparable
+    """
+    SELECT substr(c.relname, 7)::text, c.oid::int8
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'kiroku' AND c.relkind = 'r' AND c.relname LIKE 'kioku\\_%'
+    ORDER BY substr(c.relname, 7) COLLATE "C"
+    """
+    E.noParams
+    (D.rowList ((,) <$> D.column (D.nonNullable D.text) <*> D.column (D.nonNullable D.int8)))
+
+newLayoutTableOids :: Statement () [(Text, Int64)]
+newLayoutTableOids =
+  preparable
+    """
+    SELECT c.relname::text, c.oid::int8
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'kioku' AND c.relkind = 'r'
+    ORDER BY c.relname COLLATE "C"
+    """
+    E.noParams
+    (D.rowList ((,) <$> D.column (D.nonNullable D.text) <*> D.column (D.nonNullable D.int8)))
+
+oldLayoutRowCounts :: Statement () [(Text, Int64)]
+oldLayoutRowCounts =
+  preparable
+    """
+    SELECT relation, row_count
+    FROM (
+      SELECT 'consolidation_decisions'::text AS relation, count(*) AS row_count FROM kiroku.kioku_consolidation_decisions
+      UNION ALL SELECT 'l1_watermarks'::text, count(*) FROM kiroku.kioku_l1_watermarks
+      UNION ALL SELECT 'memories'::text, count(*) FROM kiroku.kioku_memories
+      UNION ALL SELECT 'personas'::text, count(*) FROM kiroku.kioku_personas
+      UNION ALL SELECT 'scenes'::text, count(*) FROM kiroku.kioku_scenes
+      UNION ALL SELECT 'sessions'::text, count(*) FROM kiroku.kioku_sessions
+      UNION ALL SELECT 'turns'::text, count(*) FROM kiroku.kioku_turns
+    ) AS counts
+    ORDER BY relation COLLATE "C"
+    """
+    E.noParams
+    (D.rowList ((,) <$> D.column (D.nonNullable D.text) <*> D.column (D.nonNullable D.int8)))
+
+newLayoutRowCounts :: Statement () [(Text, Int64)]
+newLayoutRowCounts =
+  preparable
+    """
+    SELECT relation, row_count
+    FROM (
+      SELECT 'consolidation_decisions'::text AS relation, count(*) AS row_count FROM kioku.consolidation_decisions
+      UNION ALL SELECT 'l1_watermarks'::text, count(*) FROM kioku.l1_watermarks
+      UNION ALL SELECT 'memories'::text, count(*) FROM kioku.memories
+      UNION ALL SELECT 'personas'::text, count(*) FROM kioku.personas
+      UNION ALL SELECT 'scenes'::text, count(*) FROM kioku.scenes
+      UNION ALL SELECT 'sessions'::text, count(*) FROM kioku.sessions
+      UNION ALL SELECT 'turns'::text, count(*) FROM kioku.turns
+    ) AS counts
+    ORDER BY relation COLLATE "C"
+    """
+    E.noParams
+    (D.rowList ((,) <$> D.column (D.nonNullable D.text) <*> D.column (D.nonNullable D.int8)))
+
+-- | Everything PostgreSQL is supposed to carry along with a table when it changes schema and
+-- name: its owner, its table grants, the names of its indexes, and the full text of its
+-- constraints. None of Kioku's seven constraints names a schema, so their definitions are
+-- expected to be identical on both sides of the move rather than merely similar.
+tableAttachmentsSql :: Text -> Text -> Text
+tableAttachmentsSql schema shortName =
+  "SELECT "
+    <> shortName
+    <> "::text,\n\
+       \       (pg_catalog.pg_get_userbyid(c.relowner)\n\
+       \         || '|' || coalesce(c.relacl::text, '')\n\
+       \         || '|' || coalesce((SELECT string_agg(i.relname, ',' ORDER BY i.relname COLLATE \"C\")\n\
+       \                               FROM pg_catalog.pg_index x\n\
+       \                               JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid\n\
+       \                              WHERE x.indrelid = c.oid), '')\n\
+       \         || '|' || coalesce((SELECT string_agg(con.conname || '=' || pg_catalog.pg_get_constraintdef(con.oid),\n\
+       \                                               ',' ORDER BY con.conname COLLATE \"C\")\n\
+       \                               FROM pg_catalog.pg_constraint con\n\
+       \                              WHERE con.conrelid = c.oid), ''))::text\n\
+       \FROM pg_catalog.pg_class c\n\
+       \JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n\
+       \WHERE n.nspname = '"
+    <> schema
+    <> "' AND c.relkind = 'r'"
+    <> (if schema == "kiroku" then " AND c.relname LIKE 'kioku\\_%'" else "")
+    <> "\nORDER BY "
+    <> shortName
+    <> " COLLATE \"C\""
+
+oldLayoutAttachments :: Statement () [(Text, Text)]
+oldLayoutAttachments =
+  preparable
+    (tableAttachmentsSql "kiroku" "substr(c.relname, 7)")
+    E.noParams
+    (D.rowList ((,) <$> D.column (D.nonNullable D.text) <*> D.column (D.nonNullable D.text)))
+
+newLayoutAttachments :: Statement () [(Text, Text)]
+newLayoutAttachments =
+  preparable
+    (tableAttachmentsSql "kioku" "c.relname")
+    E.noParams
+    (D.rowList ((,) <$> D.column (D.nonNullable D.text) <*> D.column (D.nonNullable D.text)))
+
 -- * The downstream Codd cutover rehearsal
 
 -- | Exercise the operator runbook against the exact 30 historical migration
@@ -517,18 +913,19 @@ testCoddCohortImport =
     let MigrationReport {results = migratedResults} = migrated
     appliedNow migrated @?= expectedForwardMigrationIds
     length [() | MigrationResult {outcome = AlreadyApplied} <- toList migratedResults] @?= 30
-    query connStr forwardMigrationEffectCountStatement >>= (@?= 5)
+    query connStr forwardMigrationEffectCountStatement >>= (@?= 6)
+    query connStr projectionLayout >>= (@?= targetProjectionLayout)
 
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 39
+    length appliedMigrations @?= 40
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 39
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 40
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 fixtureMigrationNames :: Text -> [FilePath]
@@ -602,7 +999,8 @@ expectedForwardMigrationIds =
           migrationId "keiro" "0018",
           migrationId "keiro" "0019-keiro-snapshots-state-shape-hash",
           migrationId "keiro" "0020-keiro-workflow-children-failure-reason",
-          migrationId "kioku" "0011-kioku-memory-space-partition"
+          migrationId "kioku" "0011-kioku-memory-space-partition",
+          migrationId "kioku" "0012-relocate-projections-to-kioku-schema"
         ]
 
 expectRight :: (Show error) => Either error value -> value
@@ -652,6 +1050,8 @@ forwardMigrationEffectCountStatement =
       + (to_regclass('keiro.keiro_inbox_received_idx') IS NULL)::int
       + (coalesce(obj_description(to_regnamespace('keiro'), 'pg_namespace'), '') =
           'Managed by pg-migrate component keiro through 0017-schema-management-comment')::int
+      + (to_regclass('kioku.memories') IS NOT NULL
+          AND to_regclass('kiroku.kioku_memories') IS NULL)::int
     )::bigint
     """
     E.noParams

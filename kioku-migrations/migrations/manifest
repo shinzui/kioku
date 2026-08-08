@@ -9,3 +9,4 @@
 0009-kioku-embedding-schema-heal.sql
 0010-kioku-scope-identity-recompute.sql
 0011-kioku-memory-space-partition.sql
+0012-relocate-projections-to-kioku-schema.sql
