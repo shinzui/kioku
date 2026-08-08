@@ -176,6 +176,30 @@ remains unchanged after the application reconciles its Keiro read-model registry
   extension's actual schema remains governed by the existing search-path contract.
   Date: 2026-08-07
 
+- Decision: Export the three unqualified short relation names (`memoriesRelation`,
+  `sessionsRelation`, `turnsRelation`) from `Kioku.Database.Schema` alongside the eight values this
+  plan's Interfaces section named, and build the qualified constants from them.
+  Rationale: Keiro's `ReadModel` records `schema` and `tableName` separately from the SQL, so a
+  literal `"memories"` in a read-model declaration could drift from the constant the query uses.
+  Deriving both from one name makes them structurally unable to disagree. The module is internal,
+  so a wider export list costs nothing.
+  Date: 2026-08-07
+
+- Decision: Put the operator contract in a new page, `docs/user/upgrading-to-the-kioku-schema.md`,
+  rather than distributing it across the pages the plan listed.
+  Rationale: The repository already keeps one page per upgrade (`upgrading-to-pg-migrate.md`,
+  `upgrading-to-memory-spaces.md`), and this upgrade has a quiesced rollout, a privilege step, a
+  reconciliation step, and a rollback story that read as a sequence. The listed pages link to it
+  and were still corrected wherever they showed the physical layout.
+  Date: 2026-08-07
+
+- Decision: Add `kiroku-store-migrations` to `kioku-migrations`' test dependencies so the adoption
+  test can compose a Kiroku-only plan.
+  Rationale: Acceptance requires proving that a ledger holding exactly the Kiroku component is
+  adopted without replay. That needs the Kiroku component on its own, which only that package
+  supplies. It is a test-only dependency and the library's bound already pins the same version.
+  Date: 2026-08-07
+
 
 ## Outcomes & Retrospective
 
@@ -804,7 +828,7 @@ composed dependency order remains Kiroku, then Keiro, then Kioku. A host migrati
 follow those dependencies in its own complete plan; the standalone runner remains deliberately
 strict about ledger components outside its declared plan.
 
-The new internal module `kioku-core/src/Kioku/Database/Schema.hs` must provide:
+The new internal module `kioku-core/src/Kioku/Database/Schema.hs` provides:
 
 ```haskell
 kiokuSchema :: Text
@@ -815,11 +839,16 @@ l1WatermarksTable :: Text
 consolidationDecisionsTable :: Text
 scenesTable :: Text
 personasTable :: Text
+memoriesRelation :: Text
+sessionsRelation :: Text
+turnsRelation :: Text
 ```
 
 Each table value is constructed with `Keiro.Connection.qualifyTable kiokuSchema <shortName>` and
-is suitable for concatenating into trusted static SQL. `Kioku.Database.Schema` remains in
-`other-modules`; callers outside `kioku-core` do not import it.
+is suitable for concatenating into trusted static SQL. The three `*Relation` values are the
+unqualified short names; they exist so that a `ReadModel`'s `tableName` field and the SQL its
+`query` runs are built from the same string rather than from two literals that could drift.
+`Kioku.Database.Schema` remains in `other-modules`; callers outside `kioku-core` do not import it.
 
 The public values in `Kioku.Memory.ReadModel` and `Kioku.Session.ReadModel` retain their existing
 types such as `ReadModel query result`. Their embedded `version` and `shapeHash` fields advance as
@@ -833,3 +862,21 @@ change stream identities, event codecs, event tables, the primary `kiroku` schem
 `extraSearchPath`. Keiro continues to execute queries and store logical read-model registry rows;
 it does not rewrite physical relation names. pgvector remains optional and in its installed schema.
 No new external package, service, dependency bound, or network interface is introduced.
+
+
+## Revision Notes
+
+**2026-08-07 — implementation complete.** All six Progress items are checked, Outcomes &
+Retrospective carries the acceptance evidence, and three implementation judgment calls were added
+to the Decision Log: the extra short-name exports from `Kioku.Database.Schema`, the decision to
+give the operator contract its own page (`docs/user/upgrading-to-the-kioku-schema.md`), and the
+test-only `kiroku-store-migrations` dependency needed by the Kiroku-only adoption case. Interfaces
+and Dependencies now lists the module's actual eleven exports rather than the eight originally
+specified.
+
+Three findings from implementation are recorded in Surprises & Discoveries rather than changing the
+plan's design: `Kioku.Migrations.History.Codd` needed no edit (only the rehearsal's forward
+expectations moved), `ORDER BY <ordinal> COLLATE` is not valid SQL, and GHC's `MultilineStrings`
+drops both boundary newlines. Two stale migration counts in the current user documentation were
+corrected in passing. ADR-10 was extended with the pgvector verification trap the acceptance run
+surfaced.
