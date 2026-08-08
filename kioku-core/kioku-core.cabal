@@ -42,8 +42,8 @@ common shared
     TemplateHaskell
 
 library
-  import:          warnings, shared
-  hs-source-dirs:  src
+  import:           warnings, shared
+  hs-source-dirs:   src
   exposed-modules:
     Kioku.App
     Kioku.Distill.Consolidate
@@ -78,7 +78,26 @@ library
   -- Where Kioku's projections physically live is Kioku's business, so the
   -- qualified relation names stay internal rather than becoming a public API a
   -- consumer could pin its own SQL to.
-  other-modules:   Kioku.Database.Schema
+  other-modules:    Kioku.Database.Schema
+
+  -- Works around a GHC 9.12.4 coercion-optimiser bug that makes the *profiled*
+  -- build of Kioku.Distill.L1 panic:
+  --
+  --     panic! (the 'impossible' happened) / coercionKind / ConsSymbolDef
+  --     pprPanic, called at compiler/GHC/Core/Coercion.hs:2550:17
+  --
+  -- `ConsSymbolDef` is the built-in rewrite axiom behind the type-level Symbol
+  -- machinery that mmzk-typeid's `Data.KindID.V7` prefix validation produces.
+  -- With -prof, optCoercion builds an AxiomRuleCo whose argument coercions no
+  -- longer let the built-in rule re-prove itself, and coercionKind crashes.
+  --
+  -- This lives in ghc-prof-options, not ghc-options, so ordinary builds keep the
+  -- coercion optimiser; only the profiled way pays for the workaround. Profiling
+  -- detail is NOT the trigger -- `profiling-detail: none` and `late-toplevel`
+  -- both still panic -- so do not "simplify" this to a -fprof-auto tweak.
+  -- Retest and drop once the toolchain moves off GHC 9.12.4. Full write-up:
+  -- mori://MMZK1526/mmzk-typeid/upstream-issues/mmzk-typeid-kindid-ghc-9-12-4-profiling-coercionkind-panic
+  ghc-prof-options: -fno-opt-coercion
 
   -- Two bounds below look wrong but are not. baikai-effectful has no 0.4
   -- release; 0.3.0.2 is its newest and is itself built against baikai ^>=0.4.0,

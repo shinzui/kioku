@@ -41,8 +41,8 @@ common shared
     TemplateHaskell
 
 library
-  import:          warnings, shared
-  hs-source-dirs:  src
+  import:           warnings, shared
+  hs-source-dirs:   src
   exposed-modules:
     Kioku.Cli
     Kioku.Cli.Commands.Artifacts
@@ -57,6 +57,18 @@ library
     Kioku.Cli.Options
     Kioku.Cli.Scope
 
+  -- Same GHC 9.12.4 coercion-optimiser bug that kioku-core works around; here it
+  -- fells the profiled build of Kioku.Cli.Commands.DemoSession:
+  --
+  --     panic! (the 'impossible' happened) / coercionKind / ConsSymbolDef
+  --     pprPanic, called at compiler/GHC/Core/Coercion.hs:2550:17
+  --
+  -- The type-level Symbol axioms arrive transitively through kioku-core's
+  -- KindID-typed identifiers, so this package needs the same opt-out even though
+  -- it never mentions mmzk-typeid itself. See kioku-core.cabal for the full
+  -- write-up. Profiled way only; ordinary builds keep the coercion optimiser.
+  -- mori://MMZK1526/mmzk-typeid/upstream-issues/mmzk-typeid-kindid-ghc-9-12-4-profiling-coercionkind-panic
+  ghc-prof-options: -fno-opt-coercion
   build-depends:
     , async                 >=2.2      && <2.3
     , base                  >=4.21     && <5
