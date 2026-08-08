@@ -4,6 +4,25 @@
 
 ### Breaking Changes
 
+- Kioku's projections now live in the `kioku` PostgreSQL schema instead of `kiroku`, and every
+  statement names them explicitly through the new internal `Kioku.Database.Schema` rather than
+  resolving them through `search_path`. The event store is unchanged; Kioku still appends to the
+  host's Kiroku streams. The runtime role needs `USAGE ON SCHEMA kioku` in addition to its
+  existing table privileges.
+- Read-model identities advance with the relations they name: memory v2 -> v3
+  (`kioku-memory-v3`), session v4 -> v5 (`kioku-session-v5`), turn v2 -> v3 (`kioku-turn-v3`).
+  Keiro's registry stores no physical relation name, so the version bump is what makes a binary
+  from the wrong side of `kioku/0012-relocate-projections-to-kioku-schema` fail closed with
+  `ReadModelStaleSchema` instead of querying tables that have moved. `kioku-migrate up` reconciles
+  the registry; a library embedder must call `Kioku.ReadModel.reconcileReadModelRegistry` itself
+  before serving traffic.
+- pgvector capability detection now probes schema `kioku`, table `memories`. The `to_regtype`
+  check for the `vector` type still resolves against the connection's search path, because the
+  extension was deliberately not moved.
+
+
+### Breaking Changes
+
 - `recall` takes a `MemoryAccessContext` and a `RecallQuery` instead of a `RecallRequest`, and
   returns `Either RecallError [RecallHit]`. The target says what to search; the memory space comes
   from the context and nothing in the request can change it, so widening a target can never widen

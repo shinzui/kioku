@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+Kioku's projections move into a schema of their own. Kioku keeps sharing the host application's
+Kiroku event store — that sharing is the integration boundary and it is unchanged — but the seven
+relations Kioku alone reads and writes leave `kiroku` for a dedicated `kioku` schema, dropping the
+now-redundant name prefix: `kiroku.kioku_memories` becomes `kioku.memories`, and likewise for
+`sessions`, `turns`, `l1_watermarks`, `consolidation_decisions`, `scenes`, and `personas`. The
+full rollout is in [docs/user/upgrading-to-the-kioku-schema.md](docs/user/upgrading-to-the-kioku-schema.md);
+the reasoning is in [ADR-10](docs/adr/projections-live-in-the-kioku-schema.md).
+
+### Breaking Changes
+
+- **kioku-migrations:** New migration `0012-relocate-projections-to-kioku-schema.sql`. The move is
+  metadata only — `ALTER TABLE ... SET SCHEMA` plus `... RENAME TO` keep every table's OID, rows,
+  indexes, constraints, owner, and grants, and index and constraint names are left alone. It
+  accepts exactly two catalog states and raises transactionally on any other, so a partial upgrade
+  or a name collision changes nothing. The composed plan is now 40 migrations (kiroku 8, keiro 20,
+  kioku 12).
+- **kioku-core:** Every statement names its relation explicitly through the new internal
+  `Kioku.Database.Schema` instead of resolving it through `search_path`. Read-model identities
+  advance to memory v3, session v5, and turn v3 so a binary on the wrong side of the migration
+  fails closed with `ReadModelStaleSchema` rather than querying relations that have moved.
+- **Operational:** This is a migration-first upgrade with a short planned outage. Stop writers,
+  back up, migrate, grant `USAGE ON SCHEMA kioku` if the runtime role is not the schema owner,
+  reconcile the read-model registry (`kioku-migrate up` does it; library embedders must call
+  `Kioku.ReadModel.reconcileReadModelRegistry` themselves), then start the new binary. There are
+  no compatibility views, and restarting the old binary is not a rollback.
+
+### Changed
+
+- The `vector` extension is deliberately not moved: it is a database-wide object the host may
+  share. pgvector capability detection probes `kioku.memories`, while the `vector` type itself
+  still resolves against the connection's search path.
+
 ## 0.3.0.0 — 2026-08-05
 
 Kioku moves onto the Keiki 0.9 / Keiro 0.11 cohort. This is a bounds-only release: no Kioku source

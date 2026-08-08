@@ -327,15 +327,20 @@ session and memory query failing closed with `ReadModelStaleSchema`.
 should all name the same one:
 
 ```sql
-SELECT 'memories' AS table_name, memory_space_id, count(*) FROM kiroku.kioku_memories GROUP BY 1, 2
-UNION ALL SELECT 'sessions', memory_space_id, count(*) FROM kiroku.kioku_sessions GROUP BY 1, 2
-UNION ALL SELECT 'turns', memory_space_id, count(*) FROM kiroku.kioku_turns GROUP BY 1, 2
-UNION ALL SELECT 'watermarks', memory_space_id, count(*) FROM kiroku.kioku_l1_watermarks GROUP BY 1, 2
-UNION ALL SELECT 'decisions', memory_space_id, count(*) FROM kiroku.kioku_consolidation_decisions GROUP BY 1, 2
-UNION ALL SELECT 'scenes', memory_space_id, count(*) FROM kiroku.kioku_scenes GROUP BY 1, 2
-UNION ALL SELECT 'personas', memory_space_id, count(*) FROM kiroku.kioku_personas GROUP BY 1, 2
+SELECT 'memories' AS table_name, memory_space_id, count(*) FROM kioku.memories GROUP BY 1, 2
+UNION ALL SELECT 'sessions', memory_space_id, count(*) FROM kioku.sessions GROUP BY 1, 2
+UNION ALL SELECT 'turns', memory_space_id, count(*) FROM kioku.turns GROUP BY 1, 2
+UNION ALL SELECT 'watermarks', memory_space_id, count(*) FROM kioku.l1_watermarks GROUP BY 1, 2
+UNION ALL SELECT 'decisions', memory_space_id, count(*) FROM kioku.consolidation_decisions GROUP BY 1, 2
+UNION ALL SELECT 'scenes', memory_space_id, count(*) FROM kioku.scenes GROUP BY 1, 2
+UNION ALL SELECT 'personas', memory_space_id, count(*) FROM kioku.personas GROUP BY 1, 2
 ORDER BY 1, 2;
 ```
+
+> These names are the ones a database has *after*
+> [`0012-relocate-projections-to-kioku-schema`](upgrading-to-the-kioku-schema.md). If you are
+> stepping through the memory-space upgrade on a database that has not yet reached `0012`, the
+> same seven tables are still `kiroku.kioku_memories` and friends.
 
 The migration refuses to finish if a turn or watermark ends up in a different space from the
 session it belongs to, so a successful run has already proved that much.

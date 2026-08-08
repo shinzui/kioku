@@ -4,8 +4,9 @@ This guide takes you from an empty checkout to writing and recalling your first 
 
 ## Prerequisites
 
-- **PostgreSQL** reachable from your machine. kioku's tables live in the `kiroku` schema (event
-  streams + read-model projections), alongside keiro's framework tables. For semantic recall you
+- **PostgreSQL** reachable from your machine. kioku's own tables live in the `kioku` schema; it
+  shares the `kiroku` schema's event store and sits alongside keiro's framework tables in
+  `keiro`. For semantic recall you
   also want the **`pgvector`** extension; without it kioku degrades gracefully to full-text-only
   recall (see [Recall](recall.md)).
 - The **Nix dev shell** (recommended). kioku is a kikan project; the flake provides GHC, Cabal,
@@ -50,16 +51,24 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 The migration ledger records the stable `component/name` identity and SHA-256 checksum of all
-36 migrations (kiroku 8, keiro 18, kioku 10). `verify` is read-only and fails if applied SQL no
+40 migrations (kiroku 8, keiro 20, kioku 12). `verify` is read-only and fails if applied SQL no
 longer matches the bytes compiled into the executable.
 
 The migrations create three things you care about:
 
-- `kiroku.kioku_memories` — the memory read-model row table, including a `content_tsv`
+- `kioku.memories` — the memory read-model row table, including a `content_tsv`
   `tsvector` column (full-text) and a nullable `embedding` `vector` column (semantic).
-- `kiroku.kioku_sessions` (and a turns table) — the session read model, including continuation
+- `kioku.sessions` (and `kioku.turns`) — the session read model, including continuation
   chains, delegation lineage, and awaiting/resume fields.
-- The distillation tables for scenes (L2) and personas (L3).
+- The distillation tables for scenes (L2) and personas (L3), `kioku.scenes` and
+  `kioku.personas`, plus `kioku.l1_watermarks` and `kioku.consolidation_decisions`.
+
+> **Where these tables live.** Everything kioku owns is in the `kioku` schema; the `kiroku`
+> schema holds the event store kioku appends to and shares with its host. Before
+> `kioku/0012-relocate-projections-to-kioku-schema` these seven tables were `kiroku.kioku_*`; if
+> you are upgrading an existing database rather than creating one, read
+> [Upgrading to the kioku schema](upgrading-to-the-kioku-schema.md) first — it is a
+> migration-first upgrade with a short planned outage.
 
 > **pgvector note.** The embedding column and vector index are created only when the `pgvector`
 > extension is installable. kioku detects this at runtime (`VectorCapability`) and adapts: if

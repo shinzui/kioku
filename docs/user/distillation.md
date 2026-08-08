@@ -73,7 +73,7 @@ The pass records what it **applied**, not what the model asked for. A merge nami
 longer exist degrades to a **store**; one whose only target is the atom's own prior copy, or whose
 winner is already retired, degrades to a **skip**.
 
-Every decision is written to the `kioku_consolidation_decisions` **audit table** — the action
+Every decision is written to the `kioku.consolidation_decisions` **audit table** — the action
 actually applied, its targets, the resulting memory, and the rationale — while the memory changes
 themselves are events. The audit key is deterministic, so a re-fired timer does not duplicate rows.
 

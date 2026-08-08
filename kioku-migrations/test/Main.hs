@@ -79,7 +79,7 @@ tests =
       testCase "the full migration chain applies to a fresh database" testFreshDatabase,
       testCase "the migration manifest is complete and valid" testManifestIntegrity,
       testCase "the pinned Codd history maps 30 known plan targets" testHistoryMappings,
-      testCase "the pre-cutover Codd cohort imports 30 rows and applies only nine forward migrations" testCoddCohortImport,
+      testCase "the pre-cutover Codd cohort imports 30 rows and applies only ten forward migrations" testCoddCohortImport,
       testGroup
         "the memory-space partition migration"
         [ testCase "backfills every pre-partition row into the legacy space" testMemorySpaceBackfill,

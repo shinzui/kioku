@@ -241,7 +241,7 @@ documented in **[The Distillation Pyramid](distillation.md)**.
   Kioku.Memory / Kioku.Session  ──►  event streams (source of truth)
       │                                   │ projections
       │                                   ▼
-      │                          kiroku.kioku_memories (row + tsvector + embedding)
+      │                          kioku.memories (row + tsvector + embedding)
       ▼                                   │
   Kioku.Recall  ◄───────────────────────┘  hybrid retrieval (FTS + vector + RRF)
 

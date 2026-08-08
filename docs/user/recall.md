@@ -343,7 +343,7 @@ keyword fallback; vector recall remains correct but may use a much slower sequen
 
 A **dimension mismatch** is a *configuration* error rather than a missing feature, and the rest of
 the system is louder about it than recall is: `kioku worker` prints
-`embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=N but kiroku.kioku_memories.embedding is
+`embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=N but kioku.memories.embedding is
 vector(M)` to stderr and runs distillation timers only, and `kioku worker --backfill` refuses to
 start rather than embed every memory into a cast that must fail. Recall itself degrades quietly.
 Fix the environment variable, or migrate the column — see
@@ -375,13 +375,17 @@ Then confirm:
 psql "$PG_CONNECTION_STRING" -tAc "SELECT format_type(atttypid, atttypmod) FROM pg_attribute a
              JOIN pg_class c ON c.oid = a.attrelid
              JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'kiroku' AND c.relname = 'kioku_memories'
+            WHERE n.nspname = 'kioku' AND c.relname = 'memories'
               AND attname = 'embedding'"
 # kiroku.vector(1536)
 ```
 
-**Which schema pgvector lives in matters.** kioku connects with `search_path = kiroku,
-pg_catalog`, and recall casts query vectors with a bare `$1::vector`. If the extension was
+**Which schema pgvector lives in matters, and it is not the schema the table is in.** kioku
+names its own relations explicitly — `kioku.memories` — but it casts query vectors with a bare
+`$1::vector`, which resolves through the connection's `search_path = kiroku, pg_catalog`. The
+relocation of the projections into the `kioku` schema deliberately did not move the extension:
+extensions are database-wide objects a host may share. So the two questions stay separate — where
+the table is, and where the type resolves from. If the extension was
 installed into `public` — the usual operator default — that cast cannot resolve the type,
 and recall degrades to keyword-only even though the columns look perfectly healthy. The heal
 migration creates the extension into `kiroku` when it is absent, and raises a `WARNING`

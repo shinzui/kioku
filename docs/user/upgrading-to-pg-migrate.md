@@ -59,6 +59,12 @@ moves indexes and constraints with their tables; rows are not copied. The import
 the relocated tables, indexes, recovery columns, workflow backfill, and generation-aware primary key
 before accepting Keiro's state-equivalent history.
 
+Kioku's own seven projections make the same journey later, in the ordinary forward migration
+`kioku/0012-relocate-projections-to-kioku-schema` — not here. Nothing on this page needs to
+anticipate it; step 5 below applies it along with the rest of the forward suffix. See
+[Upgrading to the kioku schema](upgrading-to-the-kioku-schema.md) for what that one requires
+operationally.
+
 ## 4. Import the 30 historical rows
 
 Use the migrate executable built from the reviewed kioku revision:
@@ -80,7 +86,7 @@ mapped SQL. Six Kiroku and nine Kioku mappings are checked against preserved SHA
 Running the same import again is safe: matching audit evidence reports `already imported`. Changed
 evidence fails with a history-import conflict instead of overwriting the first audit.
 
-## 5. Apply the six post-pin migrations and verify
+## 5. Apply the ten post-pin migrations and verify
 
 ```bash
 DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- up
@@ -88,15 +94,20 @@ DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- verify
 DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- status
 ```
 
-`up` reports the 30 imported migrations as already applied and applies only Kiroku 0007/0008 and
-Keiro 0015/0016/0017/0018. The final status is 36 applied migrations with no pending, unknown, or
-verification issues:
+`up` reports the 30 imported migrations as already applied and applies only the forward suffix:
+Kiroku 0007/0008, Keiro 0015 through 0020, Kioku 0011 (the memory-space partition) and Kioku 0012
+(the projection relocation into the `kioku` schema). The final status is 40 applied migrations
+with no pending, unknown, or verification issues:
 
 ```text
 kiroku  8
-keiro  18
-kioku  10
+keiro  20
+kioku  12
 ```
+
+Because the suffix includes Kioku 0012, this cutover also moves the seven projections out of
+`kiroku`; see [Upgrading to the kioku schema](upgrading-to-the-kioku-schema.md) for the outage and
+registry-reconciliation requirements that come with it.
 
 Keep the backup until the application and workers have restarted successfully and their normal
 read/write paths have been checked.

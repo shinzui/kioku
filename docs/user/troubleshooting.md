@@ -25,7 +25,7 @@ The command reached Postgres but a query failed. Usual causes:
 
 If a command mentions `parent_session_id`, `delegation_depth`, `awaiting_reason`,
 `awaiting_correlation_key`, `awaiting_deadline`, `resume_input` (session lineage and
-park-and-resume), or a missing `kiroku.kioku_l1_watermarks` table (L1 idempotency), the database is
+park-and-resume), or a missing `kioku.l1_watermarks` table (L1 idempotency), the database is
 on an older kioku migration set. Run:
 
 ```bash
@@ -56,6 +56,20 @@ shape.
 Run `just migrate`. The migration binary reconciles the read-model registry against what the code
 declares, so the repair ships with the schema change. Do not hand-edit the registry.
 
+Two variants of this are worth telling apart, because only one of them is fixed by migrating:
+
+- **The binary expects a newer identity than the registry has** (for instance it wants session v5
+  and finds v4). The migrations ran but nothing reconciled the registry. `kioku-migrate up` does
+  it for you; a host that applies the plan as a library must call
+  `Kioku.ReadModel.reconcileReadModelRegistry` itself — see
+  [Library API](library-api.md#applying-migrations-as-a-library-reconcile-the-read-model-registry).
+- **The binary expects an older identity than the registry has** (it wants session v4 and finds
+  v5). That is an old binary running against an already-migrated database, and the guard is doing
+  its job: since
+  [`0012-relocate-projections-to-kioku-schema`](upgrading-to-the-kioku-schema.md) that binary's
+  SQL names relations that no longer exist. Deploy the matching binary. Migrating again will not
+  help, and neither will editing the registry.
+
 ### `recall` returns `(no matches)`
 
 - **The target is wrong.** `--scope rei:intention:abc` matches exactly and does not match
@@ -83,7 +97,7 @@ Run the worker; it reports the detected capability. Three unhealthy answers:
 ```text
 pgvector is not available; recall will run FTS-only; running kioku timer worker only.
 pgvector columns are missing (embedding, embedding_model, dimensions, content_hash); running kioku timer worker only.
-kioku worker: embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=512 but kiroku.kioku_memories.embedding is vector(1536); fix the env var or migrate the column; running kioku timer worker only.
+kioku worker: embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=512 but kioku.memories.embedding is vector(1536); fix the env var or migrate the column; running kioku timer worker only.
 ```
 
 A healthy start prints, in order:
@@ -96,10 +110,11 @@ kioku embedding worker started. Press Ctrl+C to stop.
 
 ### pgvector is installed but reports as not available
 
-This is the most common false alarm. kioku connects with `search_path = kiroku, pg_catalog`, so an
-extension installed into `public` — the usual operator default — **cannot be named** and reports as
-unavailable even though `CREATE EXTENSION vector` succeeded. Move it, then follow the healing
-procedure below:
+This is the most common false alarm. kioku names its own tables explicitly (`kioku.memories`),
+but it casts query vectors with a bare `$1::vector`, which resolves through the connection's
+`search_path = kiroku, pg_catalog`. An extension installed into `public` — the usual operator
+default — therefore **cannot be named** and reports as unavailable even though
+`CREATE EXTENSION vector` succeeded. Move it, then follow the healing procedure below:
 
 ```bash
 psql "$PG_CONNECTION_STRING" -c 'ALTER EXTENSION vector SET SCHEMA kiroku;'
@@ -142,16 +157,22 @@ vector recall works but is unexpectedly slow, check it separately:
 
 ```bash
 psql "$PG_CONNECTION_STRING" -tAc \
-  "SELECT to_regclass('kiroku.kioku_memories_embedding_hnsw')"
+  "SELECT to_regclass('kioku.kioku_memories_embedding_hnsw')"
 ```
 
 An empty result means the index is absent. Reapplying the idempotent 0009 SQL above recreates it;
 the absence of the index does not trigger keyword-only degradation.
 
+The index name still carries the old `kioku_memories_` prefix even though the table is now
+`kioku.memories`. That is deliberate: `0012` moved the tables by object identity and left every
+index and constraint name alone, so nothing that referred to them by name had to change.
+
+
+
 ### Embedding dimension mismatch
 
 ```text
-embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=512 but kiroku.kioku_memories.embedding is vector(1536)
+embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=512 but kioku.memories.embedding is vector(1536)
 ```
 
 The embedding column is `vector(1536)` — the shipped migrations hard-code it. kioku checks your
@@ -245,7 +266,7 @@ No. It's a library plus a CLI, embedded by host applications (rei, mori, shikiga
 The CLI is for operations, demos, and inspection.
 
 **Where is the source of truth — the row table or the event log?**
-The **event log**. The `kiroku.kioku_memories` row (with its `tsvector` and `embedding`) is a
+The **event log**. The `kioku.memories` row (with its `tsvector` and `embedding`) is a
 projection of the memory's event stream. Recall reads the projection; writes append events.
 
 **Can I run without an embedding endpoint?**

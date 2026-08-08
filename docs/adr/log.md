@@ -1,6 +1,7 @@
 # Bundle Update Log
 
 ## 2026-08-07
+* **Update**: ADR-10 records what the acceptance run proved and the trap it leaves behind: the relocation preserves every table OID, so "where the table is" and "where the `vector` type resolves from" stay two separate questions, and a suite run outside the dev shell skips every case that would notice them being conflated.
 * **Addition**: ADR-10 records that Kioku keeps sharing the host's Kiroku event store while every relation it owns moves into a dedicated `kioku` schema, that the seven tables drop their now-redundant name prefix but keep their index and constraint names, that the qualification is explicit rather than a search-path effect, and that the read-model version bump is what makes an old binary fail closed instead of querying relations that moved.
 * **Update**: ADR-2's recall example is restated in the explicit vocabulary: the documented return-everything target is --namespace-wide, not a bare global scope.
 * **Update**: ADR-8's last two consumers of the overloaded scope are migrated: the command line gives each target its own flag and refuses the ambiguous bare-namespace --scope rather than re-reading it, and L1's recall-backed merge-candidate finder now targets the exact session scope so it agrees with the scan-based finder beside it.

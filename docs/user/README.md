@@ -40,7 +40,10 @@ Start here, in order:
 9. **[Troubleshooting & FAQ](troubleshooting.md)** — common errors and how to resolve them.
 10. **[Upgrading from Codd](upgrading-to-pg-migrate.md)** — the backup-first, zero-replay
     cutover for existing data-bearing databases.
-11. **[Upgrading to memory spaces](upgrading-to-memory-spaces.md)** — the explicit isolation
+11. **[Upgrading to the kioku schema](upgrading-to-the-kioku-schema.md)** — moving the seven
+    projections out of `kiroku` and into their own schema, and the migration-first rollout it
+    needs.
+12. **[Upgrading to memory spaces](upgrading-to-memory-spaces.md)** — the explicit isolation
     boundary: what breaks at compile time, what happens to data already stored, and how to deploy
     and verify the migration that backfills it.
 
@@ -61,11 +64,17 @@ Start here, in order:
                             │
         ┌───────────────────┴────────────────────────────┐
         │   Postgres                                      │
-        │   schema kiroku: kioku_* tables · event streams  │
+        │   schema kioku:  memories · sessions · turns     │
+        │     · scenes · personas · watermarks · decisions │
         │     · tsvector FTS · pgvector embeddings         │
+        │   schema kiroku: the shared event store          │
         │   schema keiro:  framework tables (timers,       │
         │     read-model registry)                         │
         └─────────────────────────────────────────────────┘
+
+kioku shares the host's kiroku event store and owns everything in the `kioku` schema. The
+namespaces are an ownership boundary in the catalog, not an authorization one — see
+[ADR-10](../adr/projections-live-in-the-kioku-schema.md).
 ```
 
 ## Quick taste

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Breaking Changes
+
+- `0012-relocate-projections-to-kioku-schema.sql` moves the seven Kioku-owned projections out of
+  the `kiroku` schema and into a dedicated `kioku` one, dropping the now-redundant name prefix:
+  `kiroku.kioku_memories` becomes `kioku.memories`, and likewise for `sessions`, `turns`,
+  `l1_watermarks`, `consolidation_decisions`, `scenes`, and `personas`. The shared Kiroku event
+  store does not move. `ALTER TABLE ... SET SCHEMA` plus `... RENAME TO` preserve each table's
+  OID, rows, indexes, constraints, owner, and grants; index and constraint names are deliberately
+  unchanged. The `vector` extension is not touched.
+- The migration accepts exactly two catalog states — seven ordinary source tables with no occupied
+  target, or no source with seven ordinary targets — and raises before moving anything otherwise.
+  It is transactional, so a refusal leaves the catalog exactly as it was found. There are no
+  compatibility views: run it with writers stopped, before the new binary starts, and see
+  `docs/user/upgrading-to-the-kioku-schema.md`.
+- The composed fresh-install plan is now 40 migrations: kiroku 8, keiro 20, kioku 12.
+
+
 ### Added
 
 - `0011-kioku-memory-space-partition.sql` adds a non-null `memory_space_id` to `kioku_memories`,

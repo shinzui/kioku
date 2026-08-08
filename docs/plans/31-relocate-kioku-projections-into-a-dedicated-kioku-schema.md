@@ -48,13 +48,50 @@ remains unchanged after the application reconciles its Keiro read-model registry
       followed by successful reconciliation. (2026-08-07) memory v3, session v5, turn v3;
       `kioku-core/test/Kioku/ReadModelReconcileSpec.hs` covers the stale outage, the repair, the
       idempotent second pass, and an old binary refused against reconciled rows.
-- [ ] Update current user documentation and package changelogs with the layout and rollout
-      contract.
-- [ ] Run the package and repository validation suites, prove the catalog result on a disposable
-      database, and distill implementation discoveries into the ADR and this plan.
+- [x] Update current user documentation and package changelogs with the layout and rollout
+      contract. (2026-08-07) New guide `docs/user/upgrading-to-the-kioku-schema.md`, linked from
+      `README.md`, `getting-started.md`, `troubleshooting.md`, `upgrading-to-memory-spaces.md`, and
+      `upgrading-to-pg-migrate.md`; `concepts.md`, `distillation.md`, `recall.md`, and
+      `library-api.md` follow the new layout. Unreleased entries in the root, `kioku-migrations`,
+      `kioku-core`, `kioku-migrate`, and `kioku-cli` changelogs.
+- [x] Run the package and repository validation suites, prove the catalog result on a disposable
+      database, and distill implementation discoveries into the ADR and this plan. (2026-08-07)
+      Evidence below; the disposable database was created, proven, and dropped by name.
 
 
 ## Surprises & Discoveries
+
+- Two migration counts in the current documentation were already stale before this change, and the
+  audit for this plan surfaced them. `docs/user/getting-started.md` claimed "36 migrations
+  (kiroku 8, keiro 18, kioku 10)" and `docs/user/upgrading-to-pg-migrate.md` described "the six
+  post-pin migrations" ending at 36. The real pre-`0012` numbers were 39 (kiroku 8, keiro 20,
+  kioku 11) with ten forward migrations in the Codd suffix. Both pages now say 40 / kiroku 8,
+  keiro 20, kioku 12, which is what the ledger reports on a fresh install.
+  Date: 2026-08-07
+
+- GHC's `MultilineStrings` drops *both* boundary newlines, not just the leading one. A block
+  written as
+
+  ```haskell
+  """
+  SELECT one
+  FROM
+  """
+    <> table
+  ```
+
+  yields `"SELECT one\nFROM"` — no trailing newline — so concatenating the table straight onto it
+  produced `FROMT`. Every junction between a multiline SQL chunk and a relation constant therefore
+  carries an explicit `" "` or `"\n"` separator rather than relying on the literal's own
+  whitespace, which also survives reformatting.
+  Date: 2026-08-07
+
+- The ephemeral databases the test suites spin up only have pgvector when the process runs inside
+  the project dev shell. Outside it, `cabal test` reports `no reachable pgvector on this cluster`
+  and quietly skips every vector case — including the ones this change needed to see. Run
+  `nix develop -c cabal test all`; a bare `cabal test all` passes without exercising the vector
+  path at all.
+  Date: 2026-08-07
 
 - The plan assumed the Codd rehearsal recognized thirty historical rows "before applying the
   native suffix" and that `Kioku.Migrations.History.Codd` itself would need editing. It does not.
@@ -142,7 +179,119 @@ remains unchanged after the application reconciles its Keiro read-model registry
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+The relocation shipped as planned: Kioku still shares the host's Kiroku event store, and the seven
+relations it owns now live in a `kioku` schema under short names. Nothing in the plan had to be
+redesigned; the corrections were all local (see Surprises & Discoveries).
+
+### What was built
+
+Migration `kioku-migrations/migrations/0012-relocate-projections-to-kioku-schema.sql` creates the
+schema, comments it as Kioku-owned and pg-migrate-managed, classifies the whole catalog in one
+pass, and only then moves anything. `kioku-core/src/Kioku/Database/Schema.hs` is the single place
+a relation name is written down; every statement in the memory and session read models, recall,
+the capability probe, the embedding worker, L1/L2/L3, and the CLI diagnostic goes through it. The
+three read-model families advanced to memory v3, session v5, and turn v3. ADR-10
+(`docs/adr/projections-live-in-the-kioku-schema.md`) holds the durable rule, and
+`docs/user/upgrading-to-the-kioku-schema.md` holds the operator contract.
+
+### Evidence
+
+Every suite passes inside the dev shell, which is where pgvector is reachable:
+
+```text
+$ nix develop -c cabal test all --test-show-details=direct
+All 119 tests passed (0.01s)     # kioku-api
+All 18 tests passed (13.45s)     # kioku-migrations
+All 50 tests passed (3.36s)      # kioku-cli
+All 210 tests passed (49.00s)    # kioku-core
+```
+
+`nix flake check` reports `checks.aarch64-darwin.treefmt` and `checks.aarch64-darwin.pre-commit`
+green, and `git diff --check` prints nothing.
+
+A disposable database named `kioku_schema_relocation_acceptance` was confirmed absent, created,
+migrated, inspected, and dropped by name. `kioku-migrate up` applied 40 migrations ending with
+`applied kioku/0012-relocate-projections-to-kioku-schema`, and the ledger reported
+`applied=40 not_applied=0`. The catalog held exactly the intended seven relations and nothing
+under the old names:
+
+```text
+ table_schema |       table_name
+--------------+-------------------------
+ kioku        | consolidation_decisions
+ kioku        | l1_watermarks
+ kioku        | memories
+ kioku        | personas
+ kioku        | scenes
+ kioku        | sessions
+ kioku        | turns
+(7 rows)
+```
+
+The event store, the Keiro registry, and the pgvector objects were all where they belong —
+`kiroku_events | kiroku_streams | keiro_registry | hnsw_index` all `t`, with the `vector`
+extension still in schema `kiroku` — and all nineteen registry rows read memory v3 /
+`kioku-memory-v3`, session v5 / `kioku-session-v5`, turn v3 / `kioku-turn-v3`, status `live`.
+
+The upgrade-preservation proof reversed the relocation by hand, seeded one row per table
+(including a 1536-dimension embedding), and re-applied the shipped migration file. Every table OID
+is identical on both sides, and so are the index counts, constraint counts, owner, and row counts:
+
+```text
+=== BEFORE (old layout) ===
+        relation         | table_oid | indexes | constraints |  owner
+-------------------------+-----------+---------+-------------+---------
+ consolidation_decisions |     18693 |       3 |           4 | shinzui
+ l1_watermarks           |     18708 |       1 |           2 | shinzui
+ memories                |     18298 |      11 |           3 | shinzui
+ personas                |     18681 |       2 |           4 | shinzui
+ scenes                  |     18668 |       2 |           4 | shinzui
+ sessions                |     18315 |       8 |           3 | shinzui
+ turns                   |     18328 |       2 |           3 | shinzui
+
+=== AFTER (new layout) ===
+        relation         | table_oid | indexes | constraints |  owner
+-------------------------+-----------+---------+-------------+---------
+ consolidation_decisions |     18693 |       3 |           4 | shinzui
+ l1_watermarks           |     18708 |       1 |           2 | shinzui
+ memories                |     18298 |      11 |           3 | shinzui
+ personas                |     18681 |       2 |           4 | shinzui
+ scenes                  |     18668 |       2 |           4 | shinzui
+ sessions                |     18315 |       8 |           3 | shinzui
+ turns                   |     18328 |       2 |           3 | shinzui
+
+ hnsw_index_present | embedded_rows
+--------------------+---------------
+ t                  |             1
+```
+
+Every table's row count was 1 before and after. Re-applying the migration a third time left all
+seven OIDs unchanged, and moving one table back by hand produced the refusal, verbatim:
+
+```text
+ERROR:  P0001: refusing to relocate Kioku projections: expected either 7 ordinary kiroku.kioku_*
+tables with no kioku.* target relation, or no kiroku.kioku_* relation with 7 ordinary kioku.*
+tables; found 1 source relation(s) of which 1 ordinary, and 6 target relation(s) of which 6
+ordinary
+```
+
+### Lessons
+
+The strict two-state machine paid for itself immediately. Writing the catalog classification as a
+counting pass before any `ALTER` meant the four rejection tests were cheap to add and each one
+could assert that the catalog was untouched afterwards — which is the property an operator
+actually needs, and which a migration that moves tables as it discovers them cannot offer.
+
+Bumping the read-model version for a move that changes no column felt wrong at first and turned
+out to be the load-bearing part of the design. Keiro's registry records identity but not location,
+so the version is the only channel through which "the tables are not where your binary thinks"
+can be signalled. Testing the guard in *both* directions — new code against an old registry, old
+code against a reconciled one — is what makes the migration-first deployment order enforced rather
+than merely documented.
+
+Two documentation numbers had drifted before this plan started. Auditing every mention of the
+physical layout, rather than only the ones this change touched, is what caught them; a narrower
+search-and-replace would have left them.
 
 
 ## Context and Orientation

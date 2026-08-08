@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- The composed plan gains `kioku/0012-relocate-projections-to-kioku-schema`, which moves Kioku's
+  seven projections out of the `kiroku` schema into a dedicated `kioku` one. `up` and `status`
+  now report 40 migrations (kiroku 8, keiro 20, kioku 12). Run it with writers stopped and before
+  the new application binary starts; `up` reconciles the Keiro read-model registry to the new
+  memory v3 / session v5 / turn v3 identities afterwards, as it always has. See
+  `docs/user/upgrading-to-the-kioku-schema.md`.
+
 ## 0.3.0.0 — 2026-08-05
 
 ### Breaking Changes

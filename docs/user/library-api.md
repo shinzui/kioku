@@ -694,6 +694,22 @@ host composes `kiokuMigrations` with its own components; this repo's `kioku-migr
 standard `plan`, `list`, `check`, `status`, `verify`, `up`, `repair`, and `new` commands, plus the
 kioku-specific Codd history `import` command.
 
+### Where kioku's tables live
+
+kioku owns the `kioku` PostgreSQL schema and everything in it: `memories`, `sessions`, `turns`,
+`l1_watermarks`, `consolidation_decisions`, `scenes`, and `personas`. It does **not** own an event
+store — it appends to the host's kiroku streams, using the host's connection settings, and creates
+no second store. Every statement kioku issues names its own relations explicitly rather than
+resolving them through `search_path`, so adding entries to the store's `extraSearchPath` cannot
+change which relations kioku reads or writes.
+
+The database role your application connects with needs `USAGE ON SCHEMA kioku` in addition to its
+privileges on the tables. Nothing else about the connection contract changes.
+
+Hosts upgrading from a release where these tables were `kiroku.kioku_*` should read
+[Upgrading to the kioku schema](upgrading-to-the-kioku-schema.md): it is a migration-first upgrade
+with a short planned outage and no compatibility views.
+
 ### Applying migrations as a library: reconcile the read-model registry
 
 Applying the migrations is only half the job. keiro records each read model's schema
@@ -725,6 +741,11 @@ It is idempotent — a second run writes nothing — and it derives every name, 
 shape hash from the same `ReadModel` values the queries use, so it cannot drift from the
 code. Run it at migration time, not at app startup: every host process would otherwise race
 to write the registry on boot.
+
+This is not a hypothetical for the current release. `0012-relocate-projections-to-kioku-schema`
+advances memory to v3, session to v5, and turn to v3 precisely so that a binary on the wrong side
+of the move fails closed instead of querying relations that are no longer there — which means
+every kioku read stays down until reconciliation runs.
 
 ### Adding a migration
 

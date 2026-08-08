@@ -100,7 +100,12 @@ host, so `ALTER EXTENSION` is out of scope even as a recovery shortcut. The memo
 `vector` column and HNSW index by object identity, and the `to_regtype('vector')` probe keeps
 resolving against the configured connection search path exactly as
 `0009-kioku-embedding-schema-heal.sql` intended. What did change is the catalog probe: capability
-detection now asks about schema `kioku`, table `memories`.
+detection now asks about schema `kioku`, table `memories`. The consequence for anyone changing
+this later is that "where the table is" and "where the type resolves from" are two questions with
+two different answers, and a change that conflates them will pass every test that does not have
+pgvector — which, outside the project dev shell, is all of them: the suites detect an unreachable
+extension and skip the vector cases rather than fail. Verify vector-touching work with
+`nix develop -c cabal test all`.
 
 **Adoption by an existing Kiroku host still works without replay, but only for a ledger that
 contains nothing else.** Kioku's composed plan is `kiroku → keiro → kioku`, and pg-migrate's

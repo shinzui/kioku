@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- The embedding dimension-mismatch diagnostic names `kioku.memories.embedding` rather than
+  `kiroku.kioku_memories.embedding`, following the projection relocation in
+  `kioku/0012-relocate-projections-to-kioku-schema`.
+
+
 ### Added
 
 - `KIOKU_MEMORY_SPACE` (default `kioku_legacy`) and `KIOKU_ACTOR` (default `kioku_cli`) decide the
