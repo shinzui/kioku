@@ -32,12 +32,19 @@
       # The `.withPackages` wrapper has a single `out` output, so it drops the `dev` output
       # that carries `lib/pkgconfig/libpq.pc`; without that, postgresql-libpq fails to
       # resolve and the whole build plan collapses. Keep `.dev` alongside it.
+      # `libpq.pc` declares `Requires.private: libssl libcrypto`, and openssl is not
+      # propagated by `postgresql.dev`. Without `openssl.dev` on PKG_CONFIG_PATH,
+      # `pkg-config` cannot resolve libpq at all and postgresql-libpq-pkgconfig fails
+      # its configure step. A plain `cabal build` hides this whenever that unit is
+      # already in the cabal store; `cabal build --enable-profiling` changes the
+      # unit-id hash, forces a reconfigure, and the failure surfaces.
       baseDevPackages = [
         pkgs.zlib
         pkgs.just
         pkgs.pkg-config
         (pkgs.postgresql.withPackages (ps: [ ps.pgvector ]))
         pkgs.postgresql.dev
+        pkgs.openssl.dev
         pkgs.jq
         pkgs.process-compose
       ];
