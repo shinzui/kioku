@@ -50,6 +50,7 @@ import Kioku.Api.Access
     memorySpaceIdText,
   )
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Database.Schema (personasTable, scenesTable)
 import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..))
 import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runPersonaDistillation)
 import Kioku.Distill.ScopeIdentity (scopeIdentity, scopeSlugFromColumns)
@@ -426,30 +427,42 @@ personaRowEncoder =
 selectPersonaByScopeStmt :: Statement PartitionedScope (Maybe PersonaRow)
 selectPersonaByScopeStmt =
   preparable
-    """
-    SELECT memory_space_id, persona_id, namespace, scope_kind, scope_ref, body_md, scene_count,
-           source_hash, created_at, updated_at
-    FROM kioku_personas
-    WHERE memory_space_id = $1
-      AND namespace = $2
-      AND ((scope_kind = $3 AND scope_ref = $4)
-           OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
-    """
+    ( """
+      SELECT memory_space_id, persona_id, namespace, scope_kind, scope_ref, body_md, scene_count,
+             source_hash, created_at, updated_at
+      FROM
+      """
+        <> " "
+        <> personasTable
+        <> " "
+        <> """
+           WHERE memory_space_id = $1
+             AND namespace = $2
+             AND ((scope_kind = $3 AND scope_ref = $4)
+                  OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
+           """
+    )
     partitionedScopeEncoder
     (D.rowMaybe personaRowDecoder)
 
 selectScenesForPersonaStmt :: Statement PartitionedScope [PersonaSceneRow]
 selectScenesForPersonaStmt =
   preparable
-    """
-    SELECT scene_id, title, body_md, updated_at
-    FROM kioku_scenes
-    WHERE memory_space_id = $1
-      AND namespace = $2
-      AND ((scope_kind = $3 AND scope_ref = $4)
-           OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
-    ORDER BY scene_key ASC, updated_at DESC
-    """
+    ( """
+      SELECT scene_id, title, body_md, updated_at
+      FROM
+      """
+        <> " "
+        <> scenesTable
+        <> " "
+        <> """
+           WHERE memory_space_id = $1
+             AND namespace = $2
+             AND ((scope_kind = $3 AND scope_ref = $4)
+                  OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
+           ORDER BY scene_key ASC, updated_at DESC
+           """
+    )
     partitionedScopeEncoder
     (D.rowList personaSceneRowDecoder)
 
@@ -459,7 +472,7 @@ selectScenesForPersonaStmt =
 deletePersonaStmt :: Statement PersonaKey ()
 deletePersonaStmt =
   preparable
-    "DELETE FROM kioku_personas WHERE memory_space_id = $1 AND persona_id = $2"
+    ("DELETE FROM " <> personasTable <> " WHERE memory_space_id = $1 AND persona_id = $2")
     ( ((\(PersonaKey space _) -> space) >$< memorySpaceParam)
         <> ((\(PersonaKey _ personaId) -> personaId) >$< E.param (E.nonNullable E.text))
     )
@@ -468,16 +481,19 @@ deletePersonaStmt =
 upsertPersonaStmt :: Statement PersonaRow ()
 upsertPersonaStmt =
   preparable
-    """
-    INSERT INTO kioku_personas
-      (memory_space_id, persona_id, namespace, scope_kind, scope_ref, body_md, scene_count,
-       source_hash, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-    ON CONFLICT (memory_space_id, persona_id) DO UPDATE SET
-      body_md = EXCLUDED.body_md,
-      scene_count = EXCLUDED.scene_count,
-      source_hash = EXCLUDED.source_hash,
-      updated_at = EXCLUDED.updated_at
-    """
+    ( "INSERT INTO "
+        <> personasTable
+        <> "\n"
+        <> """
+             (memory_space_id, persona_id, namespace, scope_kind, scope_ref, body_md, scene_count,
+              source_hash, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           ON CONFLICT (memory_space_id, persona_id) DO UPDATE SET
+             body_md = EXCLUDED.body_md,
+             scene_count = EXCLUDED.scene_count,
+             source_hash = EXCLUDED.source_hash,
+             updated_at = EXCLUDED.updated_at
+           """
+    )
     personaRowEncoder
     D.noResult

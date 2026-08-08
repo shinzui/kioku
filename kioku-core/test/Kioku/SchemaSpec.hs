@@ -55,7 +55,7 @@ tests =
 duplicateGlobalScenes :: Text
 duplicateGlobalScenes =
   """
-  INSERT INTO kiroku.kioku_scenes (memory_space_id, scene_id, namespace, scene_key, title, body_md, source_hash)
+  INSERT INTO kioku.scenes (memory_space_id, scene_id, namespace, scene_key, title, body_md, source_hash)
   VALUES ('space_a', 'scene-a', 'ns', 'default', 't', 'b', 'h'),
          ('space_a', 'scene-b', 'ns', 'default', 't', 'b', 'h')
   """
@@ -63,7 +63,7 @@ duplicateGlobalScenes =
 duplicateGlobalPersonas :: Text
 duplicateGlobalPersonas =
   """
-  INSERT INTO kiroku.kioku_personas (memory_space_id, persona_id, namespace, body_md, source_hash)
+  INSERT INTO kioku.personas (memory_space_id, persona_id, namespace, body_md, source_hash)
   VALUES ('space_a', 'persona-a', 'ns', 'b', 'h'),
          ('space_a', 'persona-b', 'ns', 'b', 'h')
   """
@@ -74,7 +74,7 @@ duplicateGlobalPersonas =
 crossSpaceGlobalScenes :: Text
 crossSpaceGlobalScenes =
   """
-  INSERT INTO kiroku.kioku_scenes (memory_space_id, scene_id, namespace, scene_key, title, body_md, source_hash)
+  INSERT INTO kioku.scenes (memory_space_id, scene_id, namespace, scene_key, title, body_md, source_hash)
   VALUES ('space_a', 'kioku_scene:ns:default', 'ns', 'default', 't', 'b', 'h'),
          ('space_b', 'kioku_scene:ns:default', 'ns', 'default', 't', 'b', 'h')
   """
@@ -82,7 +82,7 @@ crossSpaceGlobalScenes =
 crossSpaceGlobalPersonas :: Text
 crossSpaceGlobalPersonas =
   """
-  INSERT INTO kiroku.kioku_personas (memory_space_id, persona_id, namespace, body_md, source_hash)
+  INSERT INTO kioku.personas (memory_space_id, persona_id, namespace, body_md, source_hash)
   VALUES ('space_a', 'kioku_persona:ns', 'ns', 'b', 'h'),
          ('space_b', 'kioku_persona:ns', 'ns', 'b', 'h')
   """
@@ -93,7 +93,7 @@ crossSpaceGlobalPersonas =
 -- SQL literals, so a case can pass @NULL@ for the column it wants to leave unset.
 halfScopedMemory :: Text -> Text -> Text
 halfScopedMemory scopeKind scopeRef =
-  "INSERT INTO kiroku.kioku_memories"
+  "INSERT INTO kioku.memories"
     <> " (memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, created_at, updated_at)"
     <> " VALUES ('space_a', 'm-half', 'agent', 'ns', "
     <> scopeKind
@@ -106,7 +106,7 @@ halfScopedMemory scopeKind scopeRef =
 unpartitionedMemory :: Text
 unpartitionedMemory =
   """
-  INSERT INTO kiroku.kioku_memories
+  INSERT INTO kioku.memories
     (memory_id, agent_id, namespace, memory_type, content, created_at, updated_at)
   VALUES ('m-unpartitioned', 'agent', 'ns', 'fact', 'content', now(), now())
   """
@@ -116,7 +116,7 @@ unpartitionedMemory =
 emptySpaceMemory :: Text
 emptySpaceMemory =
   """
-  INSERT INTO kiroku.kioku_memories
+  INSERT INTO kioku.memories
     (memory_space_id, memory_id, agent_id, namespace, memory_type, content, created_at, updated_at)
   VALUES ('', 'm-empty-space', 'agent', 'ns', 'fact', 'content', now(), now())
   """
@@ -190,7 +190,7 @@ testIndexes =
 selectKiokuIndexes :: Statement () [Text]
 selectKiokuIndexes =
   preparable
-    "SELECT indexname::text FROM pg_indexes WHERE schemaname = 'kiroku'"
+    "SELECT indexname::text FROM pg_indexes WHERE schemaname = 'kioku'"
     E.noParams
     (D.rowList (D.column (D.nonNullable D.text)))
 

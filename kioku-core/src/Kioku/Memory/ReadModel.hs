@@ -1,4 +1,4 @@
--- | The @kioku_memories@ projection and every query over it.
+-- | The @kioku.memories@ projection and every query over it.
 --
 -- Every row belongs to exactly one memory space, and every statement below names that space
 -- first. The predicate is not redundant with the primary key even though @memory_id@ is
@@ -44,6 +44,7 @@ import Keiro.ReadModel (ConsistencyMode (..), ReadModel (..), StrongScope (..))
 import Kioku.Api.Access (MemorySpaceId)
 import Kioku.Api.Scope (scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), confidenceToText, memoryTypeToText)
+import Kioku.Database.Schema (kiokuSchema, memoriesRelation, memoriesTable)
 import Kioku.Id (idText)
 import Kioku.Memory.Domain
 import Kioku.Partition (memorySpaceColumn, memorySpaceParam)
@@ -191,8 +192,8 @@ memoryByIdReadModel :: ReadModel MemoryByIdQuery (Maybe MemoryRow)
 memoryByIdReadModel =
   ReadModel
     { name = "kioku-memory-by-id",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -205,8 +206,8 @@ memoriesByNamespaceReadModel :: ReadModel MemoriesByNamespaceQuery [MemoryRecord
 memoriesByNamespaceReadModel =
   ReadModel
     { name = "kioku-memories-by-namespace",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -219,8 +220,8 @@ memoriesByNamespaceRowsReadModel :: ReadModel MemoriesByNamespaceQuery [MemoryRo
 memoriesByNamespaceRowsReadModel =
   ReadModel
     { name = "kioku-memory-rows-by-namespace",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -233,8 +234,8 @@ memoriesByScopeReadModel :: ReadModel MemoriesByScopeQuery [MemoryRecord]
 memoriesByScopeReadModel =
   ReadModel
     { name = "kioku-memories-by-scope",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -247,8 +248,8 @@ memoriesByScopeRowsReadModel :: ReadModel MemoriesByScopeQuery [MemoryRow]
 memoriesByScopeRowsReadModel =
   ReadModel
     { name = "kioku-memory-rows-by-scope",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -261,8 +262,8 @@ memoriesBySessionReadModel :: ReadModel MemoriesBySessionQuery [MemoryRecord]
 memoriesBySessionReadModel =
   ReadModel
     { name = "kioku-memories-by-session",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -275,8 +276,8 @@ memoriesBySessionRowsReadModel :: ReadModel MemoriesBySessionQuery [MemoryRow]
 memoriesBySessionRowsReadModel =
   ReadModel
     { name = "kioku-memory-rows-by-session",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -289,8 +290,8 @@ memoriesByTypeReadModel :: ReadModel MemoriesByTypeQuery [MemoryRecord]
 memoriesByTypeReadModel =
   ReadModel
     { name = "kioku-memories-by-type",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -303,8 +304,8 @@ memoriesByTypeRowsReadModel :: ReadModel MemoriesByTypeQuery [MemoryRow]
 memoriesByTypeRowsReadModel =
   ReadModel
     { name = "kioku-memory-rows-by-type",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -317,8 +318,8 @@ memorySupersessionChainReadModel :: ReadModel MemorySupersessionChainQuery [Memo
 memorySupersessionChainReadModel =
   ReadModel
     { name = "kioku-memory-supersession-chain",
-      schema = "kiroku",
-      tableName = "kioku_memories",
+      schema = kiokuSchema,
+      tableName = memoriesRelation,
       subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
@@ -329,15 +330,22 @@ memorySupersessionChainReadModel =
 
 -- | The registry identity of every memory read model.
 --
--- v2 is the memory-space partition: the row carries @memory_space_id@ and every query filters on
--- it. The migration leaves the table data correct for v2 (each pre-existing row is backfilled
--- into the legacy space), so @Kioku.ReadModel.reconcileReadModelRegistry@ can advance the guard
--- without a rebuild.
+-- v2 was the memory-space partition: the row carries @memory_space_id@ and every query filters
+-- on it. v3 is the relocation of this projection from @kiroku.kioku_memories@ to
+-- @kioku.memories@. Keiro's registry stores a logical name, version, and shape hash but no
+-- physical relation locator, so the version bump is the only signal available — and it is the
+-- one that matters, because it makes a binary compiled before the move fail closed with
+-- @ReadModelStaleSchema@ instead of issuing SQL at a relation that is no longer there.
+--
+-- Neither bump requires a rebuild: the migration leaves the table data correct for the new
+-- version (v2 backfilled every pre-existing row into the legacy space; v3 moved the rows
+-- without touching them), so @Kioku.ReadModel.reconcileReadModelRegistry@ can advance the guard
+-- on its own.
 memoryReadModelVersion :: Int
-memoryReadModelVersion = 2
+memoryReadModelVersion = 3
 
 memoryReadModelShapeHash :: Text
-memoryReadModelShapeHash = "kioku-memory-v2"
+memoryReadModelShapeHash = "kioku-memory-v3"
 
 memoryRowDecoder :: D.Row MemoryRow
 memoryRowDecoder =
@@ -433,7 +441,9 @@ selectMemoryByIdStmt =
   preparable
     ( "SELECT "
         <> memoryRowColumns
-        <> " FROM kioku_memories WHERE memory_space_id = $1 AND memory_id = $2"
+        <> " FROM "
+        <> memoriesTable
+        <> " WHERE memory_space_id = $1 AND memory_id = $2"
     )
     ( ((\q -> q.memorySpaceId) >$< memorySpaceParam)
         <> ((\q -> q.memoryId) >$< E.param (E.nonNullable E.text))
@@ -458,7 +468,9 @@ activeByNamespaceSql :: Text -> Text
 activeByNamespaceSql columns =
   "SELECT "
     <> columns
-    <> " FROM kioku_memories WHERE status = 'active' AND memory_space_id = $1 AND namespace = $2 ORDER BY priority ASC, created_at DESC"
+    <> " FROM "
+    <> memoriesTable
+    <> " WHERE status = 'active' AND memory_space_id = $1 AND namespace = $2 ORDER BY priority ASC, created_at DESC"
 
 namespaceQueryEncoder :: E.Params MemoriesByNamespaceQuery
 namespaceQueryEncoder =
@@ -490,7 +502,9 @@ activeByScopeSql :: Text -> Text
 activeByScopeSql columns =
   "SELECT "
     <> columns
-    <> " FROM kioku_memories WHERE status = 'active' AND memory_space_id = $1 AND namespace = $2 AND ((scope_kind = $3 AND scope_ref = $4) OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL)) ORDER BY priority ASC, created_at DESC"
+    <> " FROM "
+    <> memoriesTable
+    <> " WHERE status = 'active' AND memory_space_id = $1 AND namespace = $2 AND ((scope_kind = $3 AND scope_ref = $4) OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL)) ORDER BY priority ASC, created_at DESC"
 
 scopeQueryEncoder :: E.Params MemoriesByScopeQuery
 scopeQueryEncoder =
@@ -517,7 +531,9 @@ bySessionSql :: Text -> Text
 bySessionSql columns =
   "SELECT "
     <> columns
-    <> " FROM kioku_memories WHERE memory_space_id = $1 AND session_id = $2 ORDER BY created_at DESC"
+    <> " FROM "
+    <> memoriesTable
+    <> " WHERE memory_space_id = $1 AND session_id = $2 ORDER BY created_at DESC"
 
 sessionQueryEncoder :: E.Params MemoriesBySessionQuery
 sessionQueryEncoder =
@@ -542,7 +558,9 @@ byTypeSql :: Text -> Text
 byTypeSql columns =
   "SELECT "
     <> columns
-    <> " FROM kioku_memories WHERE status = 'active' AND memory_space_id = $1 AND namespace = $2 AND memory_type = $3 ORDER BY priority ASC, created_at DESC"
+    <> " FROM "
+    <> memoriesTable
+    <> " WHERE status = 'active' AND memory_space_id = $1 AND namespace = $2 AND memory_type = $3 ORDER BY priority ASC, created_at DESC"
 
 typeQueryEncoder :: E.Params MemoriesByTypeQuery
 typeQueryEncoder =
@@ -562,11 +580,15 @@ selectSupersessionChainStmt =
     ( "WITH RECURSIVE chain AS ("
         <> "SELECT "
         <> memoryRowColumns
-        <> " FROM kioku_memories WHERE memory_space_id = $1 AND memory_id = $2 "
+        <> " FROM "
+        <> memoriesTable
+        <> " WHERE memory_space_id = $1 AND memory_id = $2 "
         <> "UNION "
         <> "SELECT "
         <> qualifiedMemoryRowColumns "m"
-        <> " FROM kioku_memories m JOIN chain c ON m.memory_space_id = c.memory_space_id AND ("
+        <> " FROM "
+        <> memoriesTable
+        <> " m JOIN chain c ON m.memory_space_id = c.memory_space_id AND ("
         <> "m.memory_id = c.supersedes "
         <> "OR m.supersedes = c.memory_id "
         <> "OR m.memory_id = c.superseded_by "
@@ -583,29 +605,32 @@ selectSupersessionChainStmt =
 upsertMemoryStmt :: Statement MemoryRow ()
 upsertMemoryStmt =
   preparable
-    """
-    INSERT INTO kioku_memories
-      (memory_space_id, memory_id, agent_id, session_id, namespace, scope_kind, scope_ref,
-       memory_type, content, priority, confidence, tags, status, superseded_by, supersedes,
-       created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17)
-    ON CONFLICT (memory_id) DO UPDATE SET
-      memory_space_id = EXCLUDED.memory_space_id,
-      agent_id = EXCLUDED.agent_id,
-      session_id = EXCLUDED.session_id,
-      namespace = EXCLUDED.namespace,
-      scope_kind = EXCLUDED.scope_kind,
-      scope_ref = EXCLUDED.scope_ref,
-      memory_type = EXCLUDED.memory_type,
-      content = EXCLUDED.content,
-      priority = EXCLUDED.priority,
-      confidence = EXCLUDED.confidence,
-      tags = EXCLUDED.tags,
-      status = EXCLUDED.status,
-      superseded_by = EXCLUDED.superseded_by,
-      supersedes = EXCLUDED.supersedes,
-      updated_at = EXCLUDED.updated_at
-    """
+    ( "INSERT INTO "
+        <> memoriesTable
+        <> "\n"
+        <> """
+           (memory_space_id, memory_id, agent_id, session_id, namespace, scope_kind, scope_ref,
+              memory_type, content, priority, confidence, tags, status, superseded_by, supersedes,
+              created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17)
+           ON CONFLICT (memory_id) DO UPDATE SET
+             memory_space_id = EXCLUDED.memory_space_id,
+             agent_id = EXCLUDED.agent_id,
+             session_id = EXCLUDED.session_id,
+             namespace = EXCLUDED.namespace,
+             scope_kind = EXCLUDED.scope_kind,
+             scope_ref = EXCLUDED.scope_ref,
+             memory_type = EXCLUDED.memory_type,
+             content = EXCLUDED.content,
+             priority = EXCLUDED.priority,
+             confidence = EXCLUDED.confidence,
+             tags = EXCLUDED.tags,
+             status = EXCLUDED.status,
+             superseded_by = EXCLUDED.superseded_by,
+             supersedes = EXCLUDED.supersedes,
+             updated_at = EXCLUDED.updated_at
+           """
+    )
     memoryRowEncoder
     D.noResult
 
@@ -639,28 +664,28 @@ statusChangeEncoder =
 updateMemorySupersededStmt :: Statement MemoryStatusChange ()
 updateMemorySupersededStmt =
   preparable
-    "UPDATE kioku_memories SET status = 'superseded', superseded_by = $3, updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2"
+    ("UPDATE " <> memoriesTable <> " SET status = 'superseded', superseded_by = $3, updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2")
     statusChangeEncoder
     D.noResult
 
 updateMemoryArchivedStmt :: Statement MemoryStatusChange ()
 updateMemoryArchivedStmt =
   preparable
-    "UPDATE kioku_memories SET status = 'archived', updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2"
+    ("UPDATE " <> memoriesTable <> " SET status = 'archived', updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2")
     statusChangeEncoder
     D.noResult
 
 updateMemoryMergedStmt :: Statement MemoryStatusChange ()
 updateMemoryMergedStmt =
   preparable
-    "UPDATE kioku_memories SET status = 'merged', superseded_by = $3, updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2"
+    ("UPDATE " <> memoriesTable <> " SET status = 'merged', superseded_by = $3, updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2")
     statusChangeEncoder
     D.noResult
 
 updateMemoryTagsStmt :: Statement MemoryTagsChange ()
 updateMemoryTagsStmt =
   preparable
-    "UPDATE kioku_memories SET tags = $3::jsonb, updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2"
+    ("UPDATE " <> memoriesTable <> " SET tags = $3::jsonb, updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2")
     ( ((\c -> c.memorySpaceId) >$< memorySpaceParam)
         <> ((\c -> c.memoryId) >$< E.param (E.nonNullable E.text))
         <> ((encodeTags . (\c -> c.tags)) >$< E.param (E.nonNullable E.text))
@@ -671,7 +696,7 @@ updateMemoryTagsStmt =
 updateMemoryConfidenceStmt :: Statement MemoryConfidenceChange ()
 updateMemoryConfidenceStmt =
   preparable
-    "UPDATE kioku_memories SET confidence = $3, updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2"
+    ("UPDATE " <> memoriesTable <> " SET confidence = $3, updated_at = $4 WHERE memory_space_id = $1 AND memory_id = $2")
     ( ((\c -> c.memorySpaceId) >$< memorySpaceParam)
         <> ((\c -> c.memoryId) >$< E.param (E.nonNullable E.text))
         <> ((\c -> c.confidence) >$< E.param (E.nonNullable E.text))

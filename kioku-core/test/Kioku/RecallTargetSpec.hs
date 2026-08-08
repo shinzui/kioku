@@ -381,7 +381,7 @@ skipMessage =
 seedFixture :: (Store :> es) => Bool -> Eff es ()
 seedFixture withEmbeddings = do
   runTransaction . Tx.sql . encodeUtf8 $
-    "INSERT INTO kioku_memories \
+    "INSERT INTO kioku.memories \
     \(memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) VALUES "
       <> Text.intercalate ", " (concatMap rowsFor fixtureScopes)
   if withEmbeddings
@@ -421,7 +421,7 @@ seedFixture withEmbeddings = do
 setEmbedding :: (Store :> es) => (Int, Text) -> Eff es ()
 setEmbedding (i, memoryId) =
   runTransaction . Tx.sql . encodeUtf8 $
-    "UPDATE kioku_memories SET embedding = '"
+    "UPDATE kioku.memories SET embedding = '"
       <> vectorLiteral (basisVector i)
       <> "'::vector WHERE memory_id = '"
       <> memoryId

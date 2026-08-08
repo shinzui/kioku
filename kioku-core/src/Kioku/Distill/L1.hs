@@ -46,6 +46,7 @@ import Kioku.Api.Access
   )
 import Kioku.Api.Scope (MemoryScope, scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..), confidenceFromText, memoryTypeFromText)
+import Kioku.Database.Schema (consolidationDecisionsTable, l1WatermarksTable)
 import Kioku.Distill.Consolidate
   ( ConsolidateInput (..),
     ConsolidationAction (..),
@@ -696,12 +697,18 @@ encodeTargetIds =
 selectWatermarkStmt :: Statement WatermarkKey (Maybe Int32)
 selectWatermarkStmt =
   preparable
-    """
-    SELECT last_turn_index
-    FROM kioku_l1_watermarks
-    WHERE memory_space_id = $1
-      AND session_id = $2
-    """
+    ( """
+      SELECT last_turn_index
+      FROM
+      """
+        <> " "
+        <> l1WatermarksTable
+        <> " "
+        <> """
+           WHERE memory_space_id = $1
+             AND session_id = $2
+           """
+    )
     ( ((\(WatermarkKey space _) -> space) >$< memorySpaceParam)
         <> ((\(WatermarkKey _ sessionId) -> sessionId) >$< E.param (E.nonNullable E.text))
     )
@@ -712,14 +719,18 @@ selectWatermarkStmt =
 upsertWatermarkStmt :: Statement WatermarkRow ()
 upsertWatermarkStmt =
   preparable
-    """
-    INSERT INTO kioku_l1_watermarks (memory_space_id, session_id, last_turn_index, distilled_at)
-    VALUES ($1, $2, $3, $4)
-    ON CONFLICT (session_id) DO UPDATE
-      SET last_turn_index =
-            GREATEST(kioku_l1_watermarks.last_turn_index, EXCLUDED.last_turn_index),
-          distilled_at = EXCLUDED.distilled_at
-    """
+    ( "INSERT INTO "
+        <> l1WatermarksTable
+        <> " AS watermark\n"
+        <> """
+             (memory_space_id, session_id, last_turn_index, distilled_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (session_id) DO UPDATE
+             SET last_turn_index =
+                   GREATEST(watermark.last_turn_index, EXCLUDED.last_turn_index),
+                 distilled_at = EXCLUDED.distilled_at
+           """
+    )
     watermarkRowEncoder
     D.noResult
 
@@ -733,13 +744,16 @@ watermarkRowEncoder =
 insertAuditStmt :: Statement AuditRow ()
 insertAuditStmt =
   preparable
-    """
-    INSERT INTO kioku_consolidation_decisions
-      (memory_space_id, decision_id, session_id, namespace, scope_kind, scope_ref,
-       candidate_content, decision, target_ids, result_memory_id, rationale, decided_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
-    ON CONFLICT (decision_id) DO NOTHING
-    """
+    ( "INSERT INTO "
+        <> consolidationDecisionsTable
+        <> "\n"
+        <> """
+             (memory_space_id, decision_id, session_id, namespace, scope_kind, scope_ref,
+              candidate_content, decision, target_ids, result_memory_id, rationale, decided_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+           ON CONFLICT (decision_id) DO NOTHING
+           """
+    )
     auditRowEncoder
     D.noResult
 

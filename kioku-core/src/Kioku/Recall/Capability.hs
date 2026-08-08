@@ -21,7 +21,7 @@ data VectorCapability
   | VectorExtensionUnavailable
   | VectorColumnsUnavailable ![Text]
   | -- | @KIOKU_EMBEDDING_DIMENSIONS@ disagrees with the declared width of the
-    -- @kioku_memories.embedding@ column: configured first, actual second. Every embedding
+    -- @kioku.memories.embedding@ column: configured first, actual second. Every embedding
     -- write would fail on the @::vector@ cast, one event at a time, forever.
     VectorDimensionMismatch !Int !Int
   deriving stock (Generic, Eq, Show)
@@ -80,6 +80,12 @@ missingIf False _ = []
 -- query would fail with @42704@ while capability detection reported everything healthy.
 -- @to_regtype@ resolves against the live @search_path@, which is exactly the question the
 -- query asks.
+--
+-- The column probes name @kioku.memories@ because that is where the projection lives; the
+-- @vector@ type probe deliberately does /not/ name a schema, because the extension was never
+-- moved and its resolution is still whatever the connection's search path makes it. Those two
+-- questions are separate on purpose — see
+-- @docs\/adr\/projections-live-in-the-kioku-schema.md@.
 detectVectorCapabilityStmt :: Statement () CapabilityProbe
 detectVectorCapabilityStmt =
   preparable
@@ -89,30 +95,30 @@ detectVectorCapabilityStmt =
       EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'kiroku' AND table_name = 'kioku_memories' AND column_name = 'embedding'
+        WHERE table_schema = 'kioku' AND table_name = 'memories' AND column_name = 'embedding'
       ) AS has_embedding,
       EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'kiroku' AND table_name = 'kioku_memories' AND column_name = 'embedding_model'
+        WHERE table_schema = 'kioku' AND table_name = 'memories' AND column_name = 'embedding_model'
       ) AS has_embedding_model,
       EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'kiroku' AND table_name = 'kioku_memories' AND column_name = 'dimensions'
+        WHERE table_schema = 'kioku' AND table_name = 'memories' AND column_name = 'dimensions'
       ) AS has_dimensions,
       EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'kiroku' AND table_name = 'kioku_memories' AND column_name = 'content_hash'
+        WHERE table_schema = 'kioku' AND table_name = 'memories' AND column_name = 'content_hash'
       ) AS has_content_hash,
       (
         SELECT a.atttypmod
         FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'kiroku'
-          AND c.relname = 'kioku_memories'
+        WHERE n.nspname = 'kioku'
+          AND c.relname = 'memories'
           AND a.attname = 'embedding'
           AND NOT a.attisdropped
       ) AS embedding_typmod

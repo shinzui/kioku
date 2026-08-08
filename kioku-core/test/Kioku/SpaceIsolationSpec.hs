@@ -364,14 +364,14 @@ assertFileContains label needle path = do
 
 derivedArtifactRows :: MemorySpaceId -> Text -> Text
 derivedArtifactRows space marker =
-  "INSERT INTO kioku_scenes\
+  "INSERT INTO kioku.scenes\
   \ (memory_space_id, scene_id, namespace, scope_kind, scope_ref, scene_key, title, body_md, source_hash)\
   \ VALUES ('"
     <> memorySpaceIdText space
     <> "', 'kioku_scene:kioku_shared/repo/web:default', 'kioku_shared', 'repo', 'web', 'default', '"
     <> marker
     <> "', 'body', 'hash');\
-       \ INSERT INTO kioku_personas\
+       \ INSERT INTO kioku.personas\
        \ (memory_space_id, persona_id, namespace, scope_kind, scope_ref, body_md, source_hash)\
        \ VALUES ('"
     <> memorySpaceIdText space
@@ -418,24 +418,24 @@ testPartitionLeadingPlans =
     memoriesByScope <-
       explainPartitioned
         mine.space
-        "SELECT memory_id FROM kioku_memories WHERE status = 'active' AND memory_space_id = $1 \
+        "SELECT memory_id FROM kioku.memories WHERE status = 'active' AND memory_space_id = $1 \
         \AND namespace = 'kioku_shared' AND ((scope_kind = 'repo' AND scope_ref = 'web') \
         \OR (NULL IS NULL AND scope_kind IS NULL AND NULL IS NULL AND scope_ref IS NULL)) \
         \ORDER BY priority ASC, created_at DESC"
     memoriesByType <-
       explainPartitioned
         mine.space
-        "SELECT memory_id FROM kioku_memories WHERE status = 'active' AND memory_space_id = $1 \
+        "SELECT memory_id FROM kioku.memories WHERE status = 'active' AND memory_space_id = $1 \
         \AND namespace = 'kioku_shared' AND memory_type = 'fact' ORDER BY priority ASC, created_at DESC"
     sessionsByNamespace <-
       explainPartitioned
         mine.space
-        "SELECT session_id FROM kioku_sessions WHERE memory_space_id = $1 \
+        "SELECT session_id FROM kioku.sessions WHERE memory_space_id = $1 \
         \AND namespace = 'kioku_shared' ORDER BY started_at DESC LIMIT 10"
     sessionsAwaiting <-
       explainPartitioned
         mine.space
-        "SELECT session_id FROM kioku_sessions WHERE memory_space_id = $1 \
+        "SELECT session_id FROM kioku.sessions WHERE memory_space_id = $1 \
         \AND namespace = 'kioku_shared' AND status = 'awaiting' \
         \AND awaiting_correlation_key = 'approval_req_shared' ORDER BY started_at DESC"
 

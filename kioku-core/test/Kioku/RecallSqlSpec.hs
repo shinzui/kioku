@@ -352,7 +352,7 @@ actualDistances =
     stmt =
       preparable
         "SELECT memory_id, (embedding <=> $1::vector)::float8 \
-        \  FROM kiroku.kioku_memories \
+        \  FROM kioku.memories \
         \ WHERE embedding IS NOT NULL \
         \ ORDER BY 2"
         (E.param (E.nonNullable E.text))
@@ -526,7 +526,7 @@ seedMemories ::
   Eff es ()
 seedMemories rows =
   runTransaction . Tx.sql . encodeUtf8 $
-    "INSERT INTO kioku_memories (memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) VALUES "
+    "INSERT INTO kioku.memories (memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) VALUES "
       <> Text.intercalate ", " (row <$> rows)
   where
     row (memoryId, scope, content, status) =
@@ -562,7 +562,7 @@ seedMemories rows =
 setEmbedding :: (Store :> es) => Text -> Vector Double -> Eff es ()
 setEmbedding memoryId embedding =
   runTransaction . Tx.sql . encodeUtf8 $
-    "UPDATE kioku_memories SET embedding = '"
+    "UPDATE kioku.memories SET embedding = '"
       <> vectorLiteral embedding
       <> "'::vector WHERE memory_id = '"
       <> memoryId

@@ -196,7 +196,7 @@ seedCorpus =
 seedMemories :: (Store :> es) => [(Text, MemoryScope)] -> Eff es ()
 seedMemories rows =
   runTransaction . Tx.sql . encodeUtf8 $
-    "INSERT INTO kioku_memories (memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) VALUES "
+    "INSERT INTO kioku.memories (memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) VALUES "
       <> Text.intercalate ", " (row <$> rows)
   where
     row (memoryId, scope) =

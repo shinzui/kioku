@@ -60,6 +60,7 @@ import Kioku.Api.Access
     memoryContextSpace,
     memorySpaceIdText,
   )
+import Kioku.Database.Schema (memoriesTable)
 import Kioku.Id (MemoryId, idText)
 import Kioku.Memory.Domain (MemoryEvent (..), MemoryRecordedData (..))
 import Kioku.Memory.Embedding (EmbedError, embedWithRetry, sha256Hex)
@@ -437,12 +438,18 @@ embedAndStore env memorySpaceId memoryId content contentHash = do
 selectEmbeddingCandidatesStmt :: Statement () [EmbeddingCandidate]
 selectEmbeddingCandidatesStmt =
   preparable
-    """
-    SELECT memory_space_id, memory_id, content, content_hash, embedding IS NOT NULL AS has_embedding
-    FROM kiroku.kioku_memories
-    WHERE status = 'active'
-    ORDER BY created_at ASC
-    """
+    ( """
+      SELECT memory_space_id, memory_id, content, content_hash, embedding IS NOT NULL AS has_embedding
+      FROM
+      """
+        <> " "
+        <> memoriesTable
+        <> " "
+        <> """
+           WHERE status = 'active'
+           ORDER BY created_at ASC
+           """
+    )
     E.noParams
     (D.rowList embeddingCandidateDecoder)
 
@@ -455,23 +462,35 @@ selectEmbeddingCandidatesStmt =
 selectEmbeddingCandidatesInSpaceStmt :: Statement MemorySpaceId [EmbeddingCandidate]
 selectEmbeddingCandidatesInSpaceStmt =
   preparable
-    """
-    SELECT memory_space_id, memory_id, content, content_hash, embedding IS NOT NULL AS has_embedding
-    FROM kiroku.kioku_memories
-    WHERE status = 'active' AND memory_space_id = $1
-    ORDER BY created_at ASC
-    """
+    ( """
+      SELECT memory_space_id, memory_id, content, content_hash, embedding IS NOT NULL AS has_embedding
+      FROM
+      """
+        <> " "
+        <> memoriesTable
+        <> " "
+        <> """
+           WHERE status = 'active' AND memory_space_id = $1
+           ORDER BY created_at ASC
+           """
+    )
     memorySpaceParam
     (D.rowList embeddingCandidateDecoder)
 
 selectEmbeddingStateStmt :: Statement Text (Maybe EmbeddingState)
 selectEmbeddingStateStmt =
   preparable
-    """
-    SELECT memory_space_id, content_hash, embedding IS NOT NULL AS has_embedding
-    FROM kiroku.kioku_memories
-    WHERE memory_id = $1 AND status = 'active'
-    """
+    ( """
+      SELECT memory_space_id, content_hash, embedding IS NOT NULL AS has_embedding
+      FROM
+      """
+        <> " "
+        <> memoriesTable
+        <> " "
+        <> """
+           WHERE memory_id = $1 AND status = 'active'
+           """
+    )
     (E.param (E.nonNullable E.text))
     (D.rowMaybe embeddingStateDecoder)
 
@@ -500,14 +519,17 @@ embeddingStateDecoder =
 upsertEmbeddingStmt :: Statement EmbeddingUpdate ()
 upsertEmbeddingStmt =
   preparable
-    """
-    UPDATE kiroku.kioku_memories
-    SET embedding = $3::vector,
-        embedding_model = $4,
-        dimensions = $5,
-        content_hash = $6
-    WHERE memory_space_id = $1 AND memory_id = $2
-    """
+    ( "UPDATE "
+        <> memoriesTable
+        <> "\n"
+        <> """
+           SET embedding = $3::vector,
+               embedding_model = $4,
+               dimensions = $5,
+               content_hash = $6
+           WHERE memory_space_id = $1 AND memory_id = $2
+           """
+    )
     embeddingUpdateEncoder
     D.noResult
 

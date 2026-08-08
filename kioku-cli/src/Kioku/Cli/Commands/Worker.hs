@@ -197,7 +197,7 @@ dimensionMismatchMessage :: Int -> Int -> String
 dimensionMismatchMessage configured actual =
   "embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS="
     <> show configured
-    <> " but kiroku.kioku_memories.embedding is vector("
+    <> " but kioku.memories.embedding is vector("
     <> show actual
     <> "); fix the env var or migrate the column"
 

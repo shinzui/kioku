@@ -178,7 +178,7 @@ insertCyclicPair ::
   Eff es ()
 insertCyclicPair a b =
   runTransaction . Tx.sql . encodeUtf8 $
-    "INSERT INTO kioku_sessions (memory_space_id, session_id, agent_id, focus, namespace, delegation_depth, status, started_at, previous_session_id) VALUES "
+    "INSERT INTO kioku.sessions (memory_space_id, session_id, agent_id, focus, namespace, delegation_depth, status, started_at, previous_session_id) VALUES "
       <> "('"
       <> space
       <> "','"

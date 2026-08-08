@@ -1745,7 +1745,7 @@ selectMemoryStatusesStmt =
   preparable
     """
     SELECT memory_id, content, status
-    FROM kioku_memories
+    FROM kioku.memories
     WHERE namespace = $1
       AND ((scope_kind = $2 AND scope_ref = $3)
            OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL))
@@ -1759,7 +1759,7 @@ selectAuditCountStmt =
   preparable
     """
     SELECT count(*)
-    FROM kioku_consolidation_decisions
+    FROM kioku.consolidation_decisions
     WHERE namespace = $1
       AND ((scope_kind = $2 AND scope_ref = $3)
            OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL))
@@ -1772,7 +1772,7 @@ selectAuditRowsStmt =
   preparable
     """
     SELECT decision, target_ids::text, result_memory_id
-    FROM kioku_consolidation_decisions
+    FROM kioku.consolidation_decisions
     WHERE namespace = $1
       AND ((scope_kind = $2 AND scope_ref = $3)
            OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL))
@@ -1793,7 +1793,7 @@ selectMergeAuditCountStmt =
   preparable
     """
     SELECT count(*)
-    FROM kioku_consolidation_decisions
+    FROM kioku.consolidation_decisions
     WHERE namespace = $1
       AND ((scope_kind = $2 AND scope_ref = $3)
            OR ($2 IS NULL AND scope_kind IS NULL AND $3 IS NULL AND scope_ref IS NULL))

@@ -118,6 +118,7 @@ import Kioku.Api.Recall
   )
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), MemoryType, memoryTypeToText)
+import Kioku.Database.Schema (memoriesTable)
 import Kioku.Id (MemoryId, SessionId, idText)
 import Kioku.Memory.Embedding (embedWithRetry)
 import Kioku.Memory.ReadModel
@@ -828,7 +829,9 @@ ftsCandidateQuerySql :: ScopeClause -> Text
 ftsCandidateQuerySql scope =
   "SELECT "
     <> memoryRecordColumns
-    <> "FROM kiroku.kioku_memories "
+    <> "FROM "
+    <> memoriesTable
+    <> " "
     <> partitionPredicates
     <> scope.predicate
     <> " AND content_tsv @@ websearch_to_tsquery('english', $1) "
@@ -855,7 +858,9 @@ vectorAnnCandidateQuerySql :: ScopeClause -> Text
 vectorAnnCandidateQuerySql scope =
   "SELECT "
     <> memoryRecordColumns
-    <> "FROM kiroku.kioku_memories "
+    <> "FROM "
+    <> memoriesTable
+    <> " "
     <> partitionPredicates
     <> scope.predicate
     <> " AND embedding IS NOT NULL "
@@ -883,7 +888,9 @@ vectorExactCandidateQuerySql :: ScopeClause -> Text
 vectorExactCandidateQuerySql scope =
   "SELECT "
     <> memoryRecordColumns
-    <> "FROM (SELECT * FROM kiroku.kioku_memories "
+    <> "FROM (SELECT * FROM "
+    <> memoriesTable
+    <> " "
     <> partitionPredicates
     <> scope.predicate
     <> " AND embedding IS NOT NULL OFFSET 0) AS scoped "

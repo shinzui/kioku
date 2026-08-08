@@ -40,9 +40,14 @@ remains unchanged after the application reconciles its Keiro read-model registry
       historical-migration test harness without rewriting migrations `0001` through `0011`.
       (2026-08-07) `withPrePartitionDatabase` now reverses the relocation first via
       `undoSchemaRelocation`; migrations `0001`–`0011` and the Codd fixture are untouched.
-- [ ] Centralize qualified Kioku relation names and update all production SQL and diagnostics.
-- [ ] Advance the memory, session, and turn read-model identities and test fail-closed startup
-      followed by successful reconciliation.
+- [x] Centralize qualified Kioku relation names and update all production SQL and diagnostics.
+      (2026-08-07) `kioku-core/src/Kioku/Database/Schema.hs` is the single source; every
+      statement in the memory and session read models, recall, the capability probe, the
+      embedding worker, L1/L2/L3, and the CLI's dimension-mismatch message goes through it.
+- [x] Advance the memory, session, and turn read-model identities and test fail-closed startup
+      followed by successful reconciliation. (2026-08-07) memory v3, session v5, turn v3;
+      `kioku-core/test/Kioku/ReadModelReconcileSpec.hs` covers the stale outage, the repair, the
+      idempotent second pass, and an old binary refused against reconciled rows.
 - [ ] Update current user documentation and package changelogs with the layout and rollout
       contract.
 - [ ] Run the package and repository validation suites, prove the catalog result on a disposable

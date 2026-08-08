@@ -108,7 +108,7 @@ import Text.Read (readMaybe)
 
 -- * Geometry
 
--- | The width of @kioku_memories.embedding@, which is @vector(1536)@. A seeded vector must
+-- | The width of @kioku.memories.embedding@, which is @vector(1536)@. A seeded vector must
 -- match it exactly or the @::vector@ cast fails.
 embeddingDimensions :: Int
 embeddingDimensions = 1536
@@ -266,7 +266,7 @@ seedCorpus cfg = do
         | (i, t) <- zip [0 :: Int ..] (anglesAcross cfg.decoyCount cfg.decoyAngles)
         ]
   traverse_ insertBatch (chunksOf seedBatchSize (inScope <> decoys))
-  runTransaction (Tx.sql "ANALYZE kioku_memories")
+  runTransaction (Tx.sql "ANALYZE kioku.memories")
   pure
     SeededCorpus
       { config = cfg,
@@ -288,7 +288,7 @@ insertBatch :: (Store :> es) => [(Text, MemoryScope, Double)] -> Eff es ()
 insertBatch [] = pure ()
 insertBatch rows =
   runTransaction . Tx.sql . encodeUtf8 $
-    "INSERT INTO kioku_memories \
+    "INSERT INTO kioku.memories \
     \(memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at, embedding) VALUES "
       <> Text.intercalate ", " (row <$> rows)
   where
@@ -568,4 +568,4 @@ usedHnswIndex q = "kioku_memories_embedding_hnsw" `isInfixOf` Text.unpack q.plan
 runDdl :: (Store :> es) => [Text] -> Eff es ()
 runDdl statements = do
   traverse_ (runTransaction . Tx.sql . encodeUtf8) statements
-  runTransaction (Tx.sql "ANALYZE kioku_memories")
+  runTransaction (Tx.sql "ANALYZE kioku.memories")

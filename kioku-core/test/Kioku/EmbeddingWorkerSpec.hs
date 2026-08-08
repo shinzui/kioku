@@ -374,7 +374,7 @@ selectEmbeddedStmt =
   preparable
     """
     SELECT embedding IS NOT NULL AND content_hash IS NOT NULL
-    FROM kiroku.kioku_memories
+    FROM kioku.memories
     WHERE memory_id = $1
     """
     (E.param (E.nonNullable E.text))

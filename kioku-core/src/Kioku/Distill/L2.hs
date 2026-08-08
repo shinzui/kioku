@@ -45,6 +45,7 @@ import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTime
 import Kioku.Api.Access (MemoryContextProvider (..), MemorySpaceId, legacyMemorySpaceId, memoryContextSpace)
 import Kioku.Api.Scope (MemoryScope, scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
+import Kioku.Database.Schema (memoriesTable, scenesTable)
 import Kioku.Distill.L3 (partitionedCorrelationId, scheduleL3PersonaTimerTx)
 import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runSceneDistillation)
 import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..))
@@ -534,7 +535,7 @@ sceneRowEncoder =
 selectMemoryScopeColumnsStmt :: Statement MemoryScopeLookup (Maybe (Text, Maybe Text, Maybe Text))
 selectMemoryScopeColumnsStmt =
   preparable
-    "SELECT namespace, scope_kind, scope_ref FROM kioku_memories WHERE memory_space_id = $1 AND memory_id = $2"
+    ("SELECT namespace, scope_kind, scope_ref FROM " <> memoriesTable <> " WHERE memory_space_id = $1 AND memory_id = $2")
     ( ((\(MemoryScopeLookup space _) -> space) >$< memorySpaceParam)
         <> ((\(MemoryScopeLookup _ memoryId) -> memoryId) >$< E.param (E.nonNullable E.text))
     )
@@ -549,16 +550,22 @@ selectMemoryScopeColumnsStmt =
 selectSceneByScopeKeyStmt :: Statement SceneScopeKey (Maybe SceneRow)
 selectSceneByScopeKeyStmt =
   preparable
-    """
-    SELECT memory_space_id, scene_id, namespace, scope_kind, scope_ref, scene_key, title, body_md,
-           atom_ids::text, source_hash, created_at, updated_at
-    FROM kioku_scenes
-    WHERE memory_space_id = $1
-      AND namespace = $2
-      AND ((scope_kind = $3 AND scope_ref = $4)
-           OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
-      AND scene_key = $5
-    """
+    ( """
+      SELECT memory_space_id, scene_id, namespace, scope_kind, scope_ref, scene_key, title, body_md,
+             atom_ids::text, source_hash, created_at, updated_at
+      FROM
+      """
+        <> " "
+        <> scenesTable
+        <> " "
+        <> """
+           WHERE memory_space_id = $1
+             AND namespace = $2
+             AND ((scope_kind = $3 AND scope_ref = $4)
+                  OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
+             AND scene_key = $5
+           """
+    )
     ( ((\(SceneScopeKey scope _) -> scope) >$< partitionedScopeEncoder)
         <> ((\(SceneScopeKey _ sceneKey) -> sceneKey) >$< E.param (E.nonNullable E.text))
     )
@@ -567,16 +574,22 @@ selectSceneByScopeKeyStmt =
 selectScenesByScopeStmt :: Statement PartitionedScope [SceneRow]
 selectScenesByScopeStmt =
   preparable
-    """
-    SELECT memory_space_id, scene_id, namespace, scope_kind, scope_ref, scene_key, title, body_md,
-           atom_ids::text, source_hash, created_at, updated_at
-    FROM kioku_scenes
-    WHERE memory_space_id = $1
-      AND namespace = $2
-      AND ((scope_kind = $3 AND scope_ref = $4)
-           OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
-    ORDER BY scene_key ASC, updated_at DESC
-    """
+    ( """
+      SELECT memory_space_id, scene_id, namespace, scope_kind, scope_ref, scene_key, title, body_md,
+             atom_ids::text, source_hash, created_at, updated_at
+      FROM
+      """
+        <> " "
+        <> scenesTable
+        <> " "
+        <> """
+           WHERE memory_space_id = $1
+             AND namespace = $2
+             AND ((scope_kind = $3 AND scope_ref = $4)
+                  OR ($3 IS NULL AND scope_kind IS NULL AND $4 IS NULL AND scope_ref IS NULL))
+           ORDER BY scene_key ASC, updated_at DESC
+           """
+    )
     partitionedScopeEncoder
     (D.rowList sceneRowDecoder)
 
@@ -587,7 +600,7 @@ selectScenesByScopeStmt =
 deleteSceneStmt :: Statement SceneKey ()
 deleteSceneStmt =
   preparable
-    "DELETE FROM kioku_scenes WHERE memory_space_id = $1 AND scene_id = $2"
+    ("DELETE FROM " <> scenesTable <> " WHERE memory_space_id = $1 AND scene_id = $2")
     ( ((\(SceneKey space _) -> space) >$< memorySpaceParam)
         <> ((\(SceneKey _ sceneId) -> sceneId) >$< E.param (E.nonNullable E.text))
     )
@@ -596,17 +609,20 @@ deleteSceneStmt =
 upsertSceneStmt :: Statement SceneRow ()
 upsertSceneStmt =
   preparable
-    """
-    INSERT INTO kioku_scenes
-      (memory_space_id, scene_id, namespace, scope_kind, scope_ref, scene_key, title, body_md,
-       atom_ids, source_hash, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
-    ON CONFLICT (memory_space_id, scene_id) DO UPDATE SET
-      title = EXCLUDED.title,
-      body_md = EXCLUDED.body_md,
-      atom_ids = EXCLUDED.atom_ids,
-      source_hash = EXCLUDED.source_hash,
-      updated_at = EXCLUDED.updated_at
-    """
+    ( "INSERT INTO "
+        <> scenesTable
+        <> "\n"
+        <> """
+             (memory_space_id, scene_id, namespace, scope_kind, scope_ref, scene_key, title, body_md,
+              atom_ids, source_hash, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+           ON CONFLICT (memory_space_id, scene_id) DO UPDATE SET
+             title = EXCLUDED.title,
+             body_md = EXCLUDED.body_md,
+             atom_ids = EXCLUDED.atom_ids,
+             source_hash = EXCLUDED.source_hash,
+             updated_at = EXCLUDED.updated_at
+           """
+    )
     sceneRowEncoder
     D.noResult
