@@ -21,4 +21,13 @@ in  Schema.Project::{
       , "shinzui/shibuya"
       , "shinzui/pgmq-hs"
       ]
+    , okfBundles =
+      [ Schema.OkfBundle::{
+        , name = "improvement-requests"
+        , path = "docs/improvement-requests"
+        , profile = Some "docs/improvement-requests/profile.dhall"
+        , okfVersion = "0.1"
+        , description = Some "Kioku-owned improvement requests"
+        }
+      ]
     }

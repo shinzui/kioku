@@ -1,5 +1,10 @@
 # Bundle Update Log
 
+## 2026-08-10
+
+* **Register**: Adopt the shared improvement-request profile and expose the existing
+  IR-1 through IR-5 corpus through Mori's cross-project concept index.
+
 ## 2026-07-30
 
 * **Addition**: IR-1 requests a Kioku release compatible with Keiki 0.4 and Keiro 0.4.
