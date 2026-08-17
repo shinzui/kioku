@@ -74,11 +74,11 @@ test-suite kioku-api-test
 
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-    , aeson        >=2.2  && <2.3
-    , base         >=4.21 && <5
-    , bytestring   >=0.11 && <0.13
-    , containers   >=0.6  && <0.8
-    , kioku-api
-    , tasty        >=1.5  && <1.6
-    , tasty-hunit  >=0.10 && <0.11
-    , text         >=2.1  && <2.2
+    , aeson        >=2.2      && <2.3
+    , base         >=4.21     && <5
+    , bytestring   >=0.11     && <0.13
+    , containers   >=0.6      && <0.8
+    , kioku-api    ^>=0.4.0.0
+    , tasty        >=1.5      && <1.6
+    , tasty-hunit  >=0.10     && <0.11
+    , text         >=2.1      && <2.2
