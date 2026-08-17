@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0.0 — 2026-08-17
 
 Kioku's projections move into a schema of their own. Kioku keeps sharing the host application's
 Kiroku event store — that sharing is the integration boundary and it is unchanged — but the seven

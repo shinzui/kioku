@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0.0 — 2026-08-17
 
 ### Breaking Changes
 
@@ -13,15 +13,6 @@
   `Shibuya.Core.Ack.DeadLetterReason` must handle the new `ApplicationFailure` arm.
 - The library now builds with `-Werror=incomplete-patterns`. This is breaking only for a fork
   carrying its own partial matches; `kioku-core` itself was already clean.
-
-### Fixed
-
-- `Kioku.Worker.Failure.isTransientStoreError` now classifies `TransientTransactionFailure` as
-  transient and `HistoryRetentionActive` as permanent. Both arms were absent: the first because
-  the constructor is new in `kiroku-store` 0.8.0.0, the second since 0.7.0.0. Before 0.8.0.0
-  PostgreSQL's `40001`/`40P01` reached this function as `UnexpectedServerError` and were called
-  permanent, so a serialization failure or deadlock halted the embedding worker instead of
-  retrying it.
 
 - Kioku's projections now live in the `kioku` PostgreSQL schema instead of `kiroku`, and every
   statement names them explicitly through the new internal `Kioku.Database.Schema` rather than
@@ -38,6 +29,15 @@
 - pgvector capability detection now probes schema `kioku`, table `memories`. The `to_regtype`
   check for the `vector` type still resolves against the connection's search path, because the
   extension was deliberately not moved.
+
+### Fixed
+
+- `Kioku.Worker.Failure.isTransientStoreError` now classifies `TransientTransactionFailure` as
+  transient and `HistoryRetentionActive` as permanent. Both arms were absent: the first because
+  the constructor is new in `kiroku-store` 0.8.0.0, the second since 0.7.0.0. Before 0.8.0.0
+  PostgreSQL's `40001`/`40P01` reached this function as `UnexpectedServerError` and were called
+  permanent, so a serialization failure or deadlock halted the embedding worker instead of
+  retrying it.
 
 
 ### Breaking Changes
