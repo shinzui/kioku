@@ -79,7 +79,7 @@ tests =
       testCase "the full migration chain applies to a fresh database" testFreshDatabase,
       testCase "the migration manifest is complete and valid" testManifestIntegrity,
       testCase "the pinned Codd history maps 30 known plan targets" testHistoryMappings,
-      testCase "the pre-cutover Codd cohort imports 30 rows and applies only ten forward migrations" testCoddCohortImport,
+      testCase "the pre-cutover Codd cohort imports 30 rows and applies only the forward migrations" testCoddCohortImport,
       testGroup
         "the memory-space partition migration"
         [ testCase "backfills every pre-partition row into the legacy space" testMemorySpaceBackfill,
@@ -549,13 +549,13 @@ testKirokuOnlyAdoption =
     full <- either (fail . show) pure kiokuMigrationPlan
 
     kirokuReport <- runMigrationPlan defaultRunOptions settings kirokuOnly >>= either (assertFailure . show) pure
-    length (appliedNow kirokuReport) @?= 8
+    length (appliedNow kirokuReport) @?= 11
     ledgerBefore <- query connStr kirokuLedgerSnapshot
 
     adoption <- runMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let MigrationReport {results = adoptionResults} = adoption
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 8
-    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 32
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 11
+    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 42
 
     -- Verified and skipped, never re-executed: the stored rows keep their checksums and their
     -- original application timestamps.
@@ -568,7 +568,7 @@ testKirokuOnlyAdoption =
     verification <- verifyMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let VerificationReport {issues = adoptionIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     adoptionIssues @?= []
-    length appliedMigrations @?= 40
+    length appliedMigrations @?= 53
     pendingMigrations @?= []
     unknownMigrations @?= []
 
@@ -919,13 +919,13 @@ testCoddCohortImport =
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 40
+    length appliedMigrations @?= 53
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 40
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 53
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 fixtureMigrationNames :: Text -> [FilePath]
@@ -993,12 +993,25 @@ expectedForwardMigrationIds =
   expectRight
     <$> [ migrationId "kiroku" "0007-stream-truncate-before",
           migrationId "kiroku" "0008-schema-management-comment",
+          migrationId "kiroku" "0009",
+          migrationId "kiroku" "0010",
+          migrationId "kiroku" "0011",
           migrationId "keiro" "0015-keiro-outbox-claim-order-index",
           migrationId "keiro" "0016-keiro-inbox-drop-received-idx",
           migrationId "keiro" "0017-schema-management-comment",
           migrationId "keiro" "0018",
           migrationId "keiro" "0019-keiro-snapshots-state-shape-hash",
           migrationId "keiro" "0020-keiro-workflow-children-failure-reason",
+          migrationId "keiro" "0021-keiro-workflows-exact-discovery",
+          migrationId "keiro" "0022",
+          migrationId "keiro" "0023",
+          migrationId "keiro" "0024",
+          migrationId "keiro" "0025",
+          migrationId "keiro" "0026",
+          migrationId "keiro" "0027",
+          migrationId "keiro" "0028",
+          migrationId "keiro" "0029",
+          migrationId "keiro" "0030",
           migrationId "kioku" "0011-kioku-memory-space-partition",
           migrationId "kioku" "0012-relocate-projections-to-kioku-schema"
         ]
@@ -1045,7 +1058,7 @@ forwardMigrationEffectCountStatement =
       (EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'kiroku' AND table_name = 'streams' AND column_name = 'truncate_before'))::int
       + (coalesce(obj_description(to_regnamespace('kiroku'), 'pg_namespace'), '') =
-          'Managed by pg-migrate component kiroku through 0008-schema-management-comment')::int
+          'Managed by pg-migrate component kiroku through 0011')::int
       + (to_regclass('keiro.keiro_outbox_claim_order_idx') IS NOT NULL)::int
       + (to_regclass('keiro.keiro_inbox_received_idx') IS NULL)::int
       + (coalesce(obj_description(to_regnamespace('keiro'), 'pg_namespace'), '') =

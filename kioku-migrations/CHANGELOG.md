@@ -16,7 +16,20 @@
   It is transactional, so a refusal leaves the catalog exactly as it was found. There are no
   compatibility views: run it with writers stopped, before the new binary starts, and see
   `docs/user/upgrading-to-the-kioku-schema.md`.
-- The composed fresh-install plan is now 40 migrations: kiroku 8, keiro 20, kioku 12.
+- The composed fresh-install plan is now 53 migrations: kiroku 11, keiro 30, kioku 12.
+- Moved to `keiro-migrations ^>=0.13.0.0` and `kiroku-store-migrations ^>=0.4.0.0`. Those bring
+  eleven new framework migrations that Kioku composes but does not own: kiroku `0009` (the frozen
+  `kiroku.subscription_checkpoints_v1` view), `0010` (replay-history retention leases) and `0011`,
+  and keiro `0021`–`0030` (exact workflow discovery, then the schema-versioned projection rebuild,
+  promotion, and external-read-guard machinery). Keiro `0024` renames a rebuild-group column, so
+  complete or abandon any active catalog rebuild **before** upgrading.
+- `kiroku-store-migrations` 0.4.0.0 corrects the payload of kiroku `0010`, which changes its
+  checksum. A database that already applied `0010` from the withdrawn 0.3.2.0 or 0.3.2.1 fails
+  every `up` and `verify` with `MigrationChecksumMismatch` until its ledger row is re-baselined
+  with that package's `ledger-fixups/2026-08-16-rebaseline-0010-checksum.sql`; kiroku `0011` then
+  converges its schema. A database that never reached `0010` — which is every database blocked by
+  the PostgreSQL 17 defect this release fixes — needs neither, and applies the corrected `0010`
+  as an ordinary pending migration.
 
 
 ### Added

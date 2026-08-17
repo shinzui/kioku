@@ -4,6 +4,25 @@
 
 ### Breaking Changes
 
+- Moved onto the Keiro 0.13 / Kiroku 0.8 / Shibuya 0.9 cohort: `keiro ^>=0.13.0.0`,
+  `keiro-core ^>=0.13.0.0`, `kiroku-store ^>=0.8.0.0`, `shibuya-core ^>=0.9.0.0`, and
+  `shibuya-kiroku-adapter ^>=0.5.1.1`. A consumer that writes its own `Store` interpreter must
+  handle Kiroku's new retention, checkpoint-initialization and visible-head constructors; one that
+  matches exhaustively on `Kiroku.Store.Error.StoreError` must add arms for
+  `TransientTransactionFailure` and `HistoryRetentionActive`; and one that matches on
+  `Shibuya.Core.Ack.DeadLetterReason` must handle the new `ApplicationFailure` arm.
+- The library now builds with `-Werror=incomplete-patterns`. This is breaking only for a fork
+  carrying its own partial matches; `kioku-core` itself was already clean.
+
+### Fixed
+
+- `Kioku.Worker.Failure.isTransientStoreError` now classifies `TransientTransactionFailure` as
+  transient and `HistoryRetentionActive` as permanent. Both arms were absent: the first because
+  the constructor is new in `kiroku-store` 0.8.0.0, the second since 0.7.0.0. Before 0.8.0.0
+  PostgreSQL's `40001`/`40P01` reached this function as `UnexpectedServerError` and were called
+  permanent, so a serialization failure or deadlock halted the embedding worker instead of
+  retrying it.
+
 - Kioku's projections now live in the `kioku` PostgreSQL schema instead of `kiroku`, and every
   statement names them explicitly through the new internal `Kioku.Database.Schema` rather than
   resolving them through `search_path`. The event store is unchanged; Kioku still appends to the

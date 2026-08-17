@@ -32,9 +32,21 @@ isTransientStoreError = \case
   PoolAcquisitionTimeout -> True
   ConnectionLost _ -> True
   ConnectionError _ -> True
+  -- PostgreSQL's class-40 rollback codes (40001 serialization_failure, 40P01
+  -- deadlock_detected). Kiroku documents these as retryable: the transaction
+  -- rolled back completely and nothing was committed. Before kiroku-store
+  -- 0.8.0.0 they arrived as 'UnexpectedServerError' and this function called
+  -- them permanent, which halted the worker on a conflict it should have
+  -- retried.
+  TransientTransactionFailure {} -> True
   WrongExpectedVersion {} -> False
   EmptyAppendBatch _ -> False
   StreamNotFound _ -> False
+  -- An operator-policy refusal, not an infrastructure fault: a supported hard
+  -- delete found an active replay-history lease and committed nothing. It fails
+  -- identically until the lease is released or expires, so redelivery cannot
+  -- clear it. Kioku's workers never hard-delete, so this is unreachable today.
+  HistoryRetentionActive {} -> False
   ReservedStreamName _ -> False
   StreamNameTooLong _ _ -> False
   StreamAlreadyExists _ -> False

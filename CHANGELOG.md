@@ -16,7 +16,7 @@ the reasoning is in [ADR-10](docs/adr/projections-live-in-the-kioku-schema.md).
   metadata only — `ALTER TABLE ... SET SCHEMA` plus `... RENAME TO` keep every table's OID, rows,
   indexes, constraints, owner, and grants, and index and constraint names are left alone. It
   accepts exactly two catalog states and raises transactionally on any other, so a partial upgrade
-  or a name collision changes nothing. The composed plan is now 40 migrations (kiroku 8, keiro 20,
+  or a name collision changes nothing. The composed plan is now 53 migrations (kiroku 11, keiro 30,
   kioku 12).
 - **kioku-core:** Every statement names its relation explicitly through the new internal
   `Kioku.Database.Schema` instead of resolving it through `search_path`. Read-model identities
@@ -33,6 +33,43 @@ the reasoning is in [ADR-10](docs/adr/projections-live-in-the-kioku-schema.md).
 - The `vector` extension is deliberately not moved: it is a database-wide object the host may
   share. pgvector capability detection probes `kioku.memories`, while the `vector` type itself
   still resolves against the connection's search path.
+- **Cohort:** moved onto Keiro 0.13, Kiroku 0.8, and Shibuya 0.9 —
+  `keiro`/`keiro-core` `^>=0.13.0.0`, `keiro-migrations ^>=0.13.0.0`, `kiroku-store ^>=0.8.0.0`,
+  `kiroku-store-migrations ^>=0.4.0.0`, `shibuya-core ^>=0.9.0.0`, and
+  `shibuya-kiroku-adapter ^>=0.5.1.1`. Kioku uses none of the surfaces Keiro 0.12 or 0.13 broke —
+  it has no workflows and no `keiro-dsl` dependency, it registers no custom or mock `Store`
+  interpreter that Kiroku's new effect constructors would make partial, and it only constructs
+  `DeadLetterReason` rather than matching on it, so Shibuya 0.9's `ApplicationFailure` arm does not
+  reach it. One classifier did have to change; see below.
+
+### Fixed
+
+- **kioku-core:** `Kioku.Worker.Failure.isTransientStoreError` was missing two `StoreError`
+  constructors, and classified one of them wrongly by omission. `TransientTransactionFailure`
+  (new in `kiroku-store` 0.8.0.0, carrying PostgreSQL's class-40 rollback codes `40001` and
+  `40P01`) is now **transient**: Kiroku documents it as retryable — the transaction rolled back
+  completely and nothing was committed — and until 0.8.0.0 those codes arrived as
+  `UnexpectedServerError`, which this function called permanent, so a serialization failure or
+  deadlock halted the embedding worker on a conflict it should have retried.
+  `HistoryRetentionActive` (new in `kiroku-store` 0.7.0.0) is **not** transient: it is an
+  operator-policy refusal that fails identically until the lease is released, and Kioku's workers
+  never hard-delete, so it is unreachable today.
+
+  The function deliberately carries no wildcard so that a new upstream constructor forces a
+  classification decision. That only worked as a warning, and `HistoryRetentionActive` slipped
+  through a whole release cycle unnoticed, leaving a partial function that would have raised a
+  pattern-match failure at runtime. `kioku-core`, `kioku-api`, and `kioku-cli` therefore now build
+  with `-Werror=incomplete-patterns`, which they already do cleanly.
+
+### Deprecated
+
+- Keiro deprecates `Keiro.ReadModel.runQueryWith`, the `Eventual` constructor of
+  `ConsistencyMode`, and the `defaultConsistency` record field, in favour of
+  `runQueryWithFreshness` and `QueryFreshness`/`Immediate`. Their 0.12 notices said "removed in
+  0.13"; 0.13 kept them as compatibility surface, so the removal release is still ahead. Kioku
+  calls the old surface at 25 sites across `Kioku.Recall`, `Kioku.Memory`, and `Kioku.Session`,
+  plus 28 `defaultConsistency = Eventual` read-model fields — 135 deprecation warnings in all.
+  This still builds, and still must be migrated before Keiro drops the surface.
 
 ## 0.3.0.0 — 2026-08-05
 

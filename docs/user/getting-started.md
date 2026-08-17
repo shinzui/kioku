@@ -51,7 +51,7 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 The migration ledger records the stable `component/name` identity and SHA-256 checksum of all
-40 migrations (kiroku 8, keiro 20, kioku 12). `verify` is read-only and fails if applied SQL no
+53 migrations (kiroku 11, keiro 30, kioku 12). `verify` is read-only and fails if applied SQL no
 longer matches the bytes compiled into the executable.
 
 The migrations create three things you care about:
