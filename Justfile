@@ -45,3 +45,9 @@ new-migration name="":
       --manifest "$manifest" \
       --description "{{name}}" \
       --name "$basename"
+
+# Move kioku-core's Baikai-cohort bounds to the newest releases Hackage prefers,
+# prove the result builds and passes every suite, and commit. Entrypoint for the
+# `upgrade-baikai-cohort` mori reaction; also runnable by hand.
+upgrade-baikai:
+    ./scripts/upgrade-baikai.sh
