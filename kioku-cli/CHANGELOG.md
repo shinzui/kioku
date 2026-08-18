@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1.0 — 2026-08-18
+
+### Changed
+
+- Version bump only, to stay on the shared Kioku version. The release moves `kioku-core` onto the
+  Baikai 0.5 cohort; this package is unchanged apart from its internal dependency bounds.
+
 ## 0.4.0.0 — 2026-08-17
 
 ### Changed

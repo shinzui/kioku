@@ -140,7 +140,7 @@ Set `version: <new-version>` in all five cabal files:
 
 #### b. Internal dependency bounds
 
-Set every internal dep to `^>=<new-version>`. There are **17** sites, by file and stanza:
+Set every internal dep to `^>=<new-version>`. There are **16** bindable sites, by file and stanza:
 
 | File | Stanza | Internal deps to bound |
 |---|---|---|
@@ -148,7 +148,7 @@ Set every internal dep to `^>=<new-version>`. There are **17** sites, by file an
 | `kioku-core.cabal` | `library` | `kioku-api` |
 | `kioku-core.cabal` | `test-suite kioku-test` | `kioku-api`, `kioku-core`, `kioku-migrations:test-support` |
 | `kioku-migrations.cabal` | `library test-support` | `kioku-migrations` |
-| `kioku-migrations.cabal` | `test-suite kioku-migrations-test` | `kioku-migrations`, `kioku-migrations:test-support` |
+| `kioku-migrations.cabal` | `test-suite kioku-migrations-test` | `kioku-migrations` (`kioku-migrations:test-support` stays bare — see below) |
 | `kioku-cli.cabal` | `library` | `kioku-api`, `kioku-core` |
 | `kioku-cli.cabal` | `executable kioku` | `kioku-cli` |
 | `kioku-cli.cabal` | `test-suite kioku-cli-test` | `kioku-api`, `kioku-cli`, `kioku-core`, `kioku-migrations:test-support` |
@@ -156,19 +156,20 @@ Set every internal dep to `^>=<new-version>`. There are **17** sites, by file an
 
 A stanza that depends on *its own* package's library or sublibrary (`kioku-api-test` on `kioku-api`, `kioku-cli`'s executable on `kioku-cli`, `kioku-migrations-test` on `kioku-migrations:test-support`) still needs the bound bumped. Cabal resolves same-package deps internally, so the bound never changes resolution — but a **stale** one is unsatisfiable against the new version and breaks `cabal build all`.
 
-**Known outstanding:** `kioku-migrations.cabal:95`, `, kioku-migrations:test-support`, shipped **bare** in 0.4.0.0. It is harmless (same-package sublibrary, resolved internally, `cabal check` passes) and was left alone so master's 0.4.0.0 matches the published tarball. Bound it as part of the next sweep.
+**One site is permanently bare, by design.** `kioku-migrations.cabal:95`, `, kioku-migrations:test-support` — the `kioku-migrations-test` suite depending on its own package's sublibrary — **cannot** carry a bound: `cabal-fmt` strips the constraint off a same-package sublibrary self-dep, so `nix fmt` in step 5 silently reverts any bound you add. This was verified in 0.4.1.0 by adding the bound and watching two consecutive `nix fmt` runs delete it. It is harmless — Cabal resolves same-package deps internally and `cabal check` passes — so leave it bare and do not fight the formatter. Earlier revisions of this skill called it an oversight to fix on the next sweep; it is not.
 
-Verify with **all three** commands. Note that both greps must allow a `:sublibrary` suffix — an earlier version of this skill omitted it and silently missed the bare site above:
+That makes **16** bounded sites out of 17 dep entries. Verify with **all three** commands. Note that both greps must allow a `:sublibrary` suffix — an earlier version of this skill omitted it and silently missed the bare site:
 
 ```bash
-# (1) no bare internal dep — must print nothing
+# (1) no bare internal dep — must print ONLY the known-bare
+#     kioku-migrations:test-support self-dep at kioku-migrations.cabal:95
 grep -rnE '^\s*,\s*kioku-(api|core|cli|migrations|migrate)(:[a-z-]+)?\s*$' kioku-*/*.cabal
 
 # (2) every internal bound is at the NEW version — must print nothing
 grep -rnE ',\s*kioku-(api|core|cli|migrations|migrate)(:[a-z-]+)?\s+\^>=' kioku-*/*.cabal \
   | grep -v '\^>=<new-version>'
 
-# (3) all 17 sites are bounded — must print 17
+# (3) all bindable sites are bounded — must print 16
 grep -rhE ',\s*kioku-[a-z:-]+\s+\^>=' kioku-*/*.cabal | wc -l
 ```
 
@@ -356,7 +357,7 @@ Report the GitHub release URL when done.
 - Never skip `cabal check`, the test suites, or `nix flake check`. Run `cabal check` **before** tagging.
 - A test suite that fails to reach Postgres is a **failure**, not a skip. Start Postgres and re-run — over a unix socket (`-U -u "$PC_SOCK"`), never a TCP port. Tear the stack down with `process-compose down -U -u "$PC_SOCK"` when the release is finished.
 - Confirm all four test suites reported PASS, not just the one at the end of the output.
-- Internal bounds must be swept to the new version at **all 17 sites**, including same-package self-deps and `:sublibrary` deps. A stale self-dep bound breaks the build.
+- Internal bounds must be swept to the new version at **all 16 bindable sites**, including same-package self-deps. A stale self-dep bound breaks the build. The 17th, `kioku-migrations:test-support` in `kioku-migrations-test`, stays bare — `cabal-fmt` strips that bound every time.
 - If any step fails, stop and report the error rather than continuing.
 - If a Hackage *package* upload fails, do **not** continue uploading packages that depend on it. A *docs* upload failure does not block downstream.
 - `kioku-migrations` docs always need a hand-repack (ustar, main-library tree). `kioku-migrate` has no docs at all.

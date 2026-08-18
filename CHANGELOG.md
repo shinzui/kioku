@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.4.1.0 — 2026-08-18
+
+A cohort release. `kioku-core` moves onto Baikai 0.5; no Kioku source changed, and nothing any
+package exports moved. The other four packages are version bumps only, carried along by the shared
+version.
 
 ### Changed
 
-- **Cohort:** moved onto Baikai 0.5 — `baikai ^>=0.5.0.0`, `baikai-claude ^>=0.5.0.0`,
+- **kioku-core:** moved onto Baikai 0.5 — `baikai ^>=0.5.0.0`, `baikai-claude ^>=0.5.0.0`,
   `baikai-effectful ^>=0.3.0.3`, and with them `shikumi ^>=0.3.0.2` and
   `shikumi-trace ^>=0.2.0.2`, the patches that carry the Baikai 0.5 bounds.
   `baikai-effectful` has no 0.5 release and never had a 0.4 one; 0.3.0.3 is the
@@ -21,6 +25,12 @@
   `TraceEvent`, so the hand-written `FromJSON` is not a concern; and it stores no
   Baikai call identifier, so `newCallId`'s widening from 16 to 32 characters
   crosses no schema.
+
+- Repository tooling only, shipping in no package: the release skill now drives
+  `process-compose` over a unix socket, a `just` target upgrades the Baikai cohort
+  automatically at release time, and the skill records that `cabal-fmt` strips the version
+  bound off a same-package sublibrary self-dep, so `kioku-migrations-test`'s dependency on
+  `kioku-migrations:test-support` stays deliberately bare.
 
 ## 0.4.0.0 — 2026-08-17
 

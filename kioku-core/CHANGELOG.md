@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.1.0 — 2026-08-18
+
+### Changed
+
+- Moved onto the Baikai 0.5 cohort: `baikai ^>=0.5.0.0`, `baikai-claude ^>=0.5.0.0`,
+  `baikai-effectful ^>=0.3.0.3`, `shikumi ^>=0.3.0.2`, and `shikumi-trace ^>=0.2.0.2`. This is a
+  bounds-only change — no `kioku-core` source changed and nothing it exports moved. Consumers
+  pinned to Baikai 0.4 must move with it.
+
+  `baikai-effectful` has no 0.5 release and never had a 0.4 one; 0.3.0.3 is the patch that widened
+  its own `baikai` bound, so its version lags the rest of the cohort by design. `shikumi` and
+  `shikumi-trace` are pinned at their newest patch rather than their series floor, because only
+  those patches carry the Baikai 0.5 bounds; the earlier ones are tied to Baikai 0.4 and would
+  give the solver a way to silently fall off the cohort.
+
+  None of Baikai 0.5's breaking changes reach `kioku-core`. It touches only `Baikai.Auth`,
+  `Baikai.Embedding`, `Baikai.Model`, `Baikai.Models.Generated`, `Baikai.Provider.Claude.Api`, and
+  `Baikai.Provider.Registry`, none of which changed. `Response` gained an `evidence` field, but
+  `kioku-core` only ever builds one in tests through the exported empty value rather than the
+  record constructor, so the new field defaults in. It implements no provider, so the
+  `doneTerminal`/`errorTerminal` signature change is unreachable; it decodes no `TraceEvent`, so
+  the hand-written `FromJSON` is not a concern; and it stores no Baikai call identifier, so
+  `newCallId`'s widening from 16 to 32 characters crosses no schema.
+
 ## 0.4.0.0 — 2026-08-17
 
 ### Breaking Changes
