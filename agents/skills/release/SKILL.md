@@ -211,11 +211,20 @@ Notes:
 - **`cabal test all` needs a live Postgres.** The test suites spin up ephemeral databases via `kioku-migrations:test-support`. Do **not** interpret a connection failure as a passing suite. Check and start it with:
 
   ```bash
+  PC_SOCK="${TMPDIR}kioku-pc.sock"
+
   pg_isready
-  process-compose up -t=false --port 8199   # run in background
+  process-compose up -t=false -U -u "$PC_SOCK"   # run in background
   ```
 
-  `process-compose up -d` (as this skill used to say) does **not** detach — it tries to start the TUI and dies with `open /dev/tty: device not configured` under an agent. Use `-t=false` and run the command in the background instead. The default admin port 8080 is often already taken on this machine by an unrelated service, which surfaces as `bind: address already in use` or a bogus `invalid character '<'` from `process-compose process list`; pass `--port` to sidestep it. Postgres is usually ready within a second or two.
+  **Always talk to process-compose over a unix socket, never a TCP port.** `-U/--use-uds` makes the server bind `$PC_SOCK` and skip the HTTP listener entirely, so there is no port to collide with — the default admin port 8080 is already taken on this machine by an unrelated service, and chasing that costs a round of debugging every time. Pass `-U -u "$PC_SOCK"` to **every** client command too; the default socket path embeds the client's own PID, so a bare `process-compose process list` will not find the server:
+
+  ```bash
+  process-compose process list -U -u "$PC_SOCK"   # create_schema, postgres, sanity_check
+  process-compose down -U -u "$PC_SOCK"           # tears down and removes the socket
+  ```
+
+  Two other traps: `process-compose up -d` does **not** detach — `-d` is `--hide-disabled`; it tries to start the TUI and dies with `open /dev/tty: device not configured` under an agent, so use `-t=false` and background the command. And a client pointed at the wrong endpoint reports a bogus `invalid character '<'` rather than a connection error. Postgres is usually ready within a second or two; poll `process-compose process list` until it answers rather than sleeping blindly.
 
 - **Confirm every suite, not just the last one.** `cabal test all` output is long and the tail shows only the final package. There are four suites — `kioku-api-test`, `kioku-migrations-test`, `kioku-cli-test`, `kioku-test` (core); `kioku-migrate` has none. Summarize with:
 
@@ -345,7 +354,7 @@ Report the GitHub release URL when done.
 - Always ask the user to confirm the version bump and the changelogs before committing.
 - Always publish in dependency order: `kioku-api` → `kioku-migrations` → `kioku-core` → `kioku-cli` → `kioku-migrate`.
 - Never skip `cabal check`, the test suites, or `nix flake check`. Run `cabal check` **before** tagging.
-- A test suite that fails to reach Postgres is a **failure**, not a skip. Start Postgres and re-run.
+- A test suite that fails to reach Postgres is a **failure**, not a skip. Start Postgres and re-run — over a unix socket (`-U -u "$PC_SOCK"`), never a TCP port. Tear the stack down with `process-compose down -U -u "$PC_SOCK"` when the release is finished.
 - Confirm all four test suites reported PASS, not just the one at the end of the output.
 - Internal bounds must be swept to the new version at **all 17 sites**, including same-package self-deps and `:sublibrary` deps. A stale self-dep bound breaks the build.
 - If any step fails, stop and report the error rather than continuing.
