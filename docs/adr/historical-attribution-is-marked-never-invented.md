@@ -74,6 +74,39 @@ write (`memoryContextRecordedActor`), and a payload naming anybody else is refus
 type-level care above would be undone by a caller who simply writes a different name into the
 field.
 
+`LegacyPrincipal` and `UnattributedPrincipal` are therefore decode-side only. Both describe events
+written before memory spaces existed, and neither is reachable through the memory-space write API:
+`memoryContextRecordedActor` returns `KnownPrincipal` unconditionally, and a context can only be
+minted from a `MemoryActor`, which wraps a `PrincipalRef`. The deprecated pre-context wrappers can
+still write either, because they bypass the context gate — that is an artifact of their being
+wrappers, not a capability being preserved. When they are removed, every new write names a
+principal, which is what this record has said all along.
+
+**What `KnownPrincipal` asserts is that a principal was vouched for, not that a directory did the
+vouching.** Two contexts produce it and they differ in who stands behind the claim.
+`authorizeMemoryAccess` resolves a subject through a `PrincipalDirectory`, so the directory
+vouched. `assumeAuthorizedMemoryContext` — the embedded-host escape hatch, for a single-tenant
+in-process host that has already authorized its user by other means — has no directory to consult,
+so the host itself vouches, and the `PrincipalRef` it supplies is an assertion it is accountable
+for. That is a real assurance because the escape hatch is named to be unmissable in review: a host
+reaching for it is declaring that it owns its database and its authentication boundary.
+
+A directory-less host therefore mints a `PrincipalRef` from whatever stable identifier it has and
+records it as `KnownPrincipal`. It does not mark the write as unvouched, because there is no such
+forward state and adding one would misdescribe it: a `kioku:legacy:` marker on an event written
+today would claim the event predates memory spaces, which is false, and `UnattributedPrincipal`
+would claim nobody acted, which is also false. The distinction the three cases protect is between
+history that genuinely lacks attribution and writes that have it — not between grades of
+confidence in a live principal.
+
+The residual cost is that an audit trail cannot, from the stored value alone, separate a
+directory-resolved principal from a host-asserted one. That is accepted here and bounded by
+deployment rather than by type: a deployment either has a directory or does not, and one that
+does not has no second kind of principal to confuse it with. A deployment that runs both paths
+against one space and needs to tell them apart should carry that in the `PrincipalRef`'s own kind
+prefix, which is the field that names what a principal is, rather than in `RecordedPrincipal`,
+which names how much history knows.
+
 ## Alternatives rejected
 
 **Prefix legacy labels into principal ids.** Rejected: it fabricates identities and destroys the
@@ -85,6 +118,20 @@ omit the actor rather than being unable to.
 
 **Backfill a placeholder actor during migration.** Rejected: it writes a claim about who acted into
 records that never made one.
+
+**Let a trusted context carry a `RecordedPrincipal`, so a directory-less host can keep writing
+`LegacyPrincipal` or `UnattributedPrincipal` after the deprecated wrappers are removed**
+— proposed as `assumeAuthorizedMemoryContextAs :: MemorySpaceId -> RecordedPrincipal ->
+MemoryAccessContext`, with `memoryContextRecordedActor` returning it verbatim and the existing
+constructor becoming the `KnownPrincipal` case. Rejected, though it is a small and otherwise
+well-shaped change: it preserves the two gates that carry weight and is scoped to the trusted
+path, but it makes both historical constructors writable forward, and their meaning is
+specifically historical. An event stamped `kioku:legacy:<label>` today would assert it predates
+memory spaces; `UnattributedPrincipal` on a write whose actor is standing right there would assert
+nobody acted. The distinction would stop meaning what this record says it means — the same failure
+the proposal set out to prevent, arrived at from the other side. A host that wants to record that
+its principal is self-asserted has a place to say so already: the kind prefix of the
+`PrincipalRef` it mints.
 
 ## References
 

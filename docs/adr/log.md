@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-08-18
+* **Update**: ADR-5 records that `LegacyPrincipal` and `UnattributedPrincipal` are decode-side only and unreachable through the memory-space write API, that `KnownPrincipal` asserts a principal was vouched for rather than that a directory vouched — the embedded-host escape hatch makes the host itself accountable for the ref it supplies — and that a deployment needing to tell a host-asserted principal from a directory-resolved one carries that in the `PrincipalRef` kind prefix rather than in `RecordedPrincipal`. Rejects a trusted context constructor carrying a whole `RecordedPrincipal`, because it would make both historical constructors writable forward and misdescribe new events as pre-memory-space or unattributed.
+
 ## 2026-08-07
 * **Update**: ADR-10 records what the acceptance run proved and the trap it leaves behind: the relocation preserves every table OID, so "where the table is" and "where the `vector` type resolves from" stay two separate questions, and a suite run outside the dev shell skips every case that would notice them being conflated.
 * **Addition**: ADR-10 records that Kioku keeps sharing the host's Kiroku event store while every relation it owns moves into a dedicated `kioku` schema, that the seven tables drop their now-redundant name prefix but keep their index and constraint names, that the qualification is explicit rather than a search-path effect, and that the read-model version bump is what makes an old binary fail closed instead of querying relations that moved.
