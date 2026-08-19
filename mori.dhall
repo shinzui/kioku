@@ -1,6 +1,6 @@
 let Schema =
-      https://raw.githubusercontent.com/shinzui/mori-schema/026ae74331e5c516542af1dd96f041c658ed4621/package.dhall
-        sha256:18258ef583580a897f4af3e7c86db0342afb42fb40efc535b217ba1089230141
+      https://raw.githubusercontent.com/shinzui/mori-schema/e4899c15b6a7c36f5d6f2619c8a36ceabe58fc41/package.dhall
+        sha256:f33943bf2a160e4dc2087e482a3e784d39e79ff58d5ec67c1f53bcee3389e323
 
 let testDep =
       \(name : Text) ->
@@ -36,7 +36,7 @@ in  Schema.Project::{
         , dependencies =
           [ Schema.Dependency.ByName "haskell/aeson:aeson"
           , Schema.Dependency.ByName "ekmett/lens:lens"
-          , Schema.Dependency.ByName "MMZK1526/mmzk-typeid"
+          , Schema.Dependency.ByName "MMZK1526/mmzk-typeid:mmzk-typeid"
           , testDep "UnkindPartition/tasty:tasty"
           , testDep "UnkindPartition/tasty:tasty-hunit"
           ]
@@ -52,8 +52,9 @@ in  Schema.Project::{
           , Schema.Dependency.ByName "shinzui/baikai:baikai"
           , Schema.Dependency.ByName "shinzui/baikai:baikai-claude"
           , Schema.Dependency.ByName "shinzui/baikai:baikai-effectful"
-          , Schema.Dependency.ByName "nikita-volkov/contravariant-extras"
-          , Schema.Dependency.ByName "kazu-yamamoto/crypton"
+          , Schema.Dependency.ByName
+              "nikita-volkov/contravariant-extras:contravariant-extras"
+          , Schema.Dependency.ByName "kazu-yamamoto/crypton:crypton"
           , Schema.Dependency.ByName "effectful/effectful:effectful"
           , Schema.Dependency.ByName "effectful/effectful:effectful-core"
           , Schema.Dependency.ByName "ekmett/lens:lens"
@@ -63,12 +64,12 @@ in  Schema.Project::{
           , Schema.Dependency.ByName "hasql/hasql:hasql-transaction"
           , Schema.Dependency.ByName
               "iand675/hs-opentelemetry:hs-opentelemetry-api"
-          , Schema.Dependency.ByName "shinzui/keiki"
+          , Schema.Dependency.ByName "shinzui/keiki:keiki"
           , Schema.Dependency.ByName "shinzui/keiro:keiro"
           , Schema.Dependency.ByName "shinzui/keiro:keiro-core"
           , Schema.Dependency.ByName "shinzui/kiroku:kiroku-store"
           , Schema.Dependency.ByName "shinzui/kiroku:shibuya-kiroku-adapter"
-          , Schema.Dependency.ByName "MMZK1526/mmzk-typeid"
+          , Schema.Dependency.ByName "MMZK1526/mmzk-typeid:mmzk-typeid"
           , Schema.Dependency.ByName "shinzui/shibuya:shibuya-core"
           , Schema.Dependency.ByName "shinzui/shikumi:shikumi"
           , Schema.Dependency.ByName "shinzui/shikumi:shikumi-trace"
@@ -86,7 +87,8 @@ in  Schema.Project::{
         , dependencies =
           [ Schema.Dependency.ByName "effectful/effectful:effectful"
           , Schema.Dependency.ByName "shinzui/kiroku:kiroku-store"
-          , Schema.Dependency.ByName "pcapriotti/optparse-applicative"
+          , Schema.Dependency.ByName
+              "pcapriotti/optparse-applicative:optparse-applicative"
           , testDep "UnkindPartition/tasty:tasty"
           , testDep "UnkindPartition/tasty:tasty-hunit"
           ]
@@ -99,7 +101,7 @@ in  Schema.Project::{
         , description = Some "Schema migrations for kioku"
         , dependencies =
           [ Schema.Dependency.ByName "haskell/aeson:aeson"
-          , Schema.Dependency.ByName "shinzui/ephemeral-pg"
+          , Schema.Dependency.ByName "shinzui/ephemeral-pg:ephemeral-pg"
           , Schema.Dependency.ByName "hasql/hasql:hasql"
           , Schema.Dependency.ByName "hasql/hasql:hasql-transaction"
           , Schema.Dependency.ByName "shinzui/keiro:keiro-migrations"
@@ -123,7 +125,8 @@ in  Schema.Project::{
           [ Schema.Dependency.ByName "haskell/aeson:aeson"
           , Schema.Dependency.ByName "hasql/hasql:hasql"
           , Schema.Dependency.ByName "shinzui/kiroku:kiroku-store"
-          , Schema.Dependency.ByName "pcapriotti/optparse-applicative"
+          , Schema.Dependency.ByName
+              "pcapriotti/optparse-applicative:optparse-applicative"
           , Schema.Dependency.ByName "shinzui/pg-migrate:pg-migrate"
           , Schema.Dependency.ByName "shinzui/pg-migrate:pg-migrate-cli"
           , Schema.Dependency.ByName "shinzui/pg-migrate:pg-migrate-import-codd"
@@ -131,7 +134,7 @@ in  Schema.Project::{
         }
       ]
     , dependencies =
-      [ "MMZK1526/mmzk-typeid"
+      [ "MMZK1526/mmzk-typeid:mmzk-typeid"
       , "UnkindPartition/tasty:tasty"
       , "UnkindPartition/tasty:tasty-hunit"
       , "effectful/effectful:effectful"
@@ -144,14 +147,14 @@ in  Schema.Project::{
       , "hasql/hasql:hasql-pool"
       , "hasql/hasql:hasql-transaction"
       , "iand675/hs-opentelemetry:hs-opentelemetry-api"
-      , "kazu-yamamoto/crypton"
-      , "nikita-volkov/contravariant-extras"
-      , "pcapriotti/optparse-applicative"
+      , "kazu-yamamoto/crypton:crypton"
+      , "nikita-volkov/contravariant-extras:contravariant-extras"
+      , "pcapriotti/optparse-applicative:optparse-applicative"
       , "shinzui/baikai:baikai"
       , "shinzui/baikai:baikai-claude"
       , "shinzui/baikai:baikai-effectful"
-      , "shinzui/ephemeral-pg"
-      , "shinzui/keiki"
+      , "shinzui/ephemeral-pg:ephemeral-pg"
+      , "shinzui/keiki:keiki"
       , "shinzui/keiro:keiro"
       , "shinzui/keiro:keiro-core"
       , "shinzui/keiro:keiro-migrations"
@@ -168,7 +171,12 @@ in  Schema.Project::{
       , "shinzui/shikumi:shikumi-trace"
       ]
     , dependencyRefs =
-      [ Schema.MoriRef::{ namespace = "MMZK1526", name = "mmzk-typeid" }
+      [ Schema.MoriRef::{
+        , namespace = "MMZK1526"
+        , name = "mmzk-typeid"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "mmzk-typeid"
+        }
       , Schema.MoriRef::{
         , namespace = "UnkindPartition"
         , name = "tasty"
@@ -241,14 +249,23 @@ in  Schema.Project::{
         , kind = Some Schema.MoriArtifactKind.Package
         , key = Some "hs-opentelemetry-api"
         }
-      , Schema.MoriRef::{ namespace = "kazu-yamamoto", name = "crypton" }
+      , Schema.MoriRef::{
+        , namespace = "kazu-yamamoto"
+        , name = "crypton"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "crypton"
+        }
       , Schema.MoriRef::{
         , namespace = "nikita-volkov"
         , name = "contravariant-extras"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "contravariant-extras"
         }
       , Schema.MoriRef::{
         , namespace = "pcapriotti"
         , name = "optparse-applicative"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "optparse-applicative"
         }
       , Schema.MoriRef::{
         , namespace = "shinzui"
@@ -268,8 +285,18 @@ in  Schema.Project::{
         , kind = Some Schema.MoriArtifactKind.Package
         , key = Some "baikai-effectful"
         }
-      , Schema.MoriRef::{ namespace = "shinzui", name = "ephemeral-pg" }
-      , Schema.MoriRef::{ namespace = "shinzui", name = "keiki" }
+      , Schema.MoriRef::{
+        , namespace = "shinzui"
+        , name = "ephemeral-pg"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "ephemeral-pg"
+        }
+      , Schema.MoriRef::{
+        , namespace = "shinzui"
+        , name = "keiki"
+        , kind = Some Schema.MoriArtifactKind.Package
+        , key = Some "keiki"
+        }
       , Schema.MoriRef::{
         , namespace = "shinzui"
         , name = "keiro"
