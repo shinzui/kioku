@@ -363,5 +363,13 @@ in  Schema.Project::{
         , okfVersion = "0.1"
         , description = Some "Kioku-owned improvement requests"
         }
+      , Schema.OkfBundle::{
+        , name = "bug-reports"
+        , path = "docs/bug-reports"
+        , profile = Some "docs/bug-reports/profile.dhall"
+        , okfVersion = "0.2"
+        , description = Some
+            "Defects in behavior Kioku already provides, one reproduction per report"
+        }
       ]
     }
