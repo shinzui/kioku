@@ -34,7 +34,16 @@ version.
 
 ## 0.4.0.0 — 2026-08-17
 
-Kioku's projections move into a schema of their own. Kioku keeps sharing the host application's
+Two changes ship together, and a consumer upgrading from 0.2.0.0 or 0.3.0.0 meets both at once.
+
+**Memory spaces and principals become mandatory across the command and query API.** Every command
+names the memory space it writes into and the principal responsible for the write; every read takes
+the space it reads from. A single-tenant deployment keeps all of its data — it lands in one explicit
+space named `kioku_legacy` — but it does not keep compiling: this is a type-level change at every
+call site. The full rollout, including what to pass at each one, is in
+[docs/user/upgrading-to-memory-spaces.md](docs/user/upgrading-to-memory-spaces.md).
+
+**Kioku's projections move into a schema of their own.** Kioku keeps sharing the host application's
 Kiroku event store — that sharing is the integration boundary and it is unchanged — but the seven
 relations Kioku alone reads and writes leave `kiroku` for a dedicated `kioku` schema, dropping the
 now-redundant name prefix: `kiroku.kioku_memories` becomes `kioku.memories`, and likewise for
@@ -42,8 +51,34 @@ now-redundant name prefix: `kiroku.kioku_memories` becomes `kioku.memories`, and
 full rollout is in [docs/user/upgrading-to-the-kioku-schema.md](docs/user/upgrading-to-the-kioku-schema.md);
 the reasoning is in [ADR-10](docs/adr/projections-live-in-the-kioku-schema.md).
 
+Migration order matters: `0011` backfills the partition, `0012` relocates the schema, and they
+apply in that order in one planned outage. `kioku-core`'s own changelog carries the full
+API-by-API detail.
+
 ### Breaking Changes
 
+- **kioku-core:** Memory spaces and principals are mandatory. Every session and memory command
+  record grew a required `memorySpaceId` and `actorPrincipal`; `StartSessionData` and
+  `RecordMemoryData` also grew `ownerPrincipal`. Every read grew a leading `MemorySpaceId`
+  argument — `Session.getById`, `Session.getByScope`, `Session.getTurns`,
+  `Session.getDelegationChildren`, `Memory.getRowsBySession`, and `Recall.getActiveByScope`.
+  A consumer gets a type error at every call site rather than a silent behavior change, which is
+  the intended direction. What to pass is a decision, not a mechanical substitution: a host with
+  no principal directory records `LegacyPrincipal`, and one with a directory records a
+  `KnownPrincipal`. Minting a `KnownPrincipal` from a free-text agent name fabricates the
+  directory vouching that
+  [ADR-5](docs/adr/historical-attribution-is-marked-never-invented.md) exists to prevent.
+  `Kioku.Api.Access` is the module to read first; see also
+  [docs/user/upgrading-to-memory-spaces.md](docs/user/upgrading-to-memory-spaces.md) and
+  [ADR-1](docs/adr/kioku-owns-memory-not-identity.md).
+- **kioku-core:** `Recall.recall` changed shape entirely. It takes a `MemoryAccessContext` and a
+  new `RecallQuery` instead of a `RecallRequest`, and returns `Either RecallError [RecallHit]`
+  where it previously returned the list. The space comes from the context and nothing in the query
+  can widen it. `legacyRecall` is a deprecated wrapper preserving the old request shape for one
+  release.
+- **kioku-migrations:** New migration `0011-kioku-memory-space-partition.sql`, which adds a
+  non-null `memory_space_id` to every read-model table and backfills it to `kioku_legacy`. It
+  applies **before** `0012`. Nothing moves between spaces and nothing is deleted.
 - **kioku-migrations:** New migration `0012-relocate-projections-to-kioku-schema.sql`. The move is
   metadata only — `ALTER TABLE ... SET SCHEMA` plus `... RENAME TO` keep every table's OID, rows,
   indexes, constraints, owner, and grants, and index and constraint names are left alone. It
