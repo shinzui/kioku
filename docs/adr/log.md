@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-08-19
+* **Update**: ADR-10 records the narrow exception to released-migration immutability: a payload whose successful execution is itself unsafe may be corrected as an explicit breaking change only with known withdrawn/corrected checksums, equivalent or converged durable outcomes, and a guarded operator re-baseline. ExecPlan 32 applies the rule to migration `0011`'s leaked session `search_path` while preserving the Codd evidence for `0001` through `0010`.
+
 ## 2026-08-18
 * **Update**: ADR-5 records that `LegacyPrincipal` and `UnattributedPrincipal` are decode-side only and unreachable through the memory-space write API, that `KnownPrincipal` asserts a principal was vouched for rather than that a directory vouched — the embedded-host escape hatch makes the host itself accountable for the ref it supplies — and that a deployment needing to tell a host-asserted principal from a directory-resolved one carries that in the `PrincipalRef` kind prefix rather than in `RecordedPrincipal`. Rejects a trusted context constructor carrying a whole `RecordedPrincipal`, because it would make both historical constructors writable forward and misdescribe new events as pre-memory-space or unattributed.
 

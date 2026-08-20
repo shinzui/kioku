@@ -23,32 +23,78 @@ to `kiroku, pg_catalog`, so an unqualified host table that exists in the host's 
 appears not to exist. The confirmed report is
 [BUG-1](../bug-reports/migration-0011-session-search-path-leaks-into-later-migrations.md).
 
-After this change, Kioku's final migration restores PostgreSQL's configured default search path
-before the next component runs. A host can apply `kiroku -> keiro -> kioku -> host` in one run,
-and a later host migration such as `ALTER TABLE host_table ...` resolves `host_table` exactly as
-it did when the migration connection opened. This is observable in a new ephemeral-database test
-whose database default is `host_app, pg_catalog`: the current tree fails with SQLSTATE `42P01`,
-while the completed tree applies all 54 migrations (Kiroku 11, Keiro 30, Kioku 13) plus the host
-migration in one run. Existing released checksums remain unchanged, and no application-facing
-Haskell API changes.
+After this change, migration `0011-kioku-memory-space-partition.sql` restores PostgreSQL's
+configured default search path before it commits. The correction is intentionally made inside the
+offending migration instead of delegated to a later cleanup migration: `0011` cannot reach an
+applied state while leaving the shared connection poisoned. A host can apply
+`kiroku -> keiro -> kioku -> host` in one run, and a later host migration such as
+`ALTER TABLE host_table ...` resolves `host_table` exactly as it did when the migration connection
+opened. This is observable in a new ephemeral-database test whose database default is
+`host_app, pg_catalog`: the current tree fails with SQLSTATE `42P01`, while the completed tree
+applies the existing 53 migrations (Kiroku 11, Keiro 30, Kioku 12) plus the host migration in one
+run.
+
+Correcting released migration `0011` changes its exact-byte SHA-256 checksum and is therefore a
+deliberate breaking change for databases that applied Kioku 0.4.0.0 or 0.4.1.0. The release ships
+an idempotent, exact-checksum ledger re-baseline for those databases, modelled on the established
+Kiroku BUG-1 precedent at `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-1`. Databases still at
+Kioku 0.3.x have no `0011` row and apply the corrected payload normally. Fresh databases need no
+special handling. No new forward migration is added, the Codd cutover evidence remains unchanged,
+and no application-facing Haskell API changes.
 
 
 ## Progress
 
 - [ ] Add a composed-plan regression that gives the database a nonstandard default
       `search_path`, runs Kioku before a host component, and captures the current `42P01` failure.
-- [ ] Append migration `0013-restore-host-search-path.sql` without changing migrations
-      `0001` through `0012`, then make the composed-plan regression pass.
-- [ ] Update migration-count assertions and the Codd cutover rehearsal for the 54-row plan.
+- [ ] Correct migration `0011-kioku-memory-space-partition.sql` so it resets the session before
+      commit, then make the composed-plan regression pass without adding migration `0013`.
+- [ ] Add and test the exact-checksum ledger re-baseline for databases that applied the withdrawn
+      0.4.x payload, while preserving the 53-row plan and the pinned Codd import evidence.
 - [ ] Close BUG-1 as fixed on the default branch, update current user documentation and
       changelogs, regenerate the bug-report index/log, and validate the OKF bundle.
-- [ ] Run focused and repository-wide validation, perform the ADR distillation pass, and record
-      the results in this plan.
+- [ ] Validate and record the durable migration-correction policy in ADR-10, run focused and
+      repository-wide validation, perform the final ADR distillation pass, and record the results
+      in this plan.
 
 
 ## Surprises & Discoveries
 
-(None yet.)
+- Observation: `0011` is the final offender, but not the source of all leaked state. Migrations
+  `0001` through `0005` and `0007` through `0011` all contain bare session-scoped `SET search_path`.
+  Replacing only `0011`'s opening statement with `SET LOCAL` would restore the already-leaked value
+  from `0010` when `0011` commits and would therefore leave BUG-1 unfixed.
+  Evidence: `rg -n 'SET( LOCAL)? search_path|RESET search_path' kioku-migrations/migrations` found
+  ten bare `SET` statements and no reset.
+
+- Observation: Rewriting all ten historical offenders is incompatible with the active Codd
+  cutover bridge, not merely expensive for pg-migrate ledgers. `Kioku.Migrations.History.Codd`
+  proves nine of the first ten Kioku migrations with `SamePayload`, using the current embedded SQL
+  bytes against `kioku-migrations/migrations.lock`; changing those files would invalidate that
+  exact-payload evidence. Correcting only post-pin migration `0011` leaves that bridge intact.
+  Evidence: `samePayloadSourcePayloads` in
+  `kioku-migrations/src/Kioku/Migrations/History/Codd.hs` is built from
+  `embeddedMigrationEntries`, while the Codd cohort imports only Kioku `0001` through `0010`.
+
+- Observation: pg-migrate's public `repair` operation repairs ambiguous nontransactional states;
+  it does not authorize checksum replacement for an applied transactional migration. A deliberate
+  released-payload correction therefore needs a narrowly guarded operator SQL script, as Kiroku
+  already used for its own BUG-1.
+  Evidence: `mori://shinzui/pg-migrate/docs/operations` says checksum mismatches must never be
+  bypassed, and `mori://shinzui/kiroku/okf/bug-reports/concepts/BUG-1` documents its exact-checksum
+  re-baseline precedent.
+
+- Observation: The released 0.4.0.0 and 0.4.1.0 payloads of Kioku `0011` are byte-identical and
+  have SHA-256 `eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192`.
+  Evidence: both release-tag payloads and the current file produced that digest with
+  `shasum -a 256`.
+
+- Observation: `docs/adr` is neither a profiled bundle in `mori.dhall` nor covered by a repository
+  ADR validation recipe; `just check-adr` does not exist here. ADR updates must preserve the
+  established filesystem convention directly: stable existing `docId`, advanced `timestamp`, a
+  matching `docs/adr/log.md` entry, valid links, and a clean whitespace diff.
+  Evidence: `mori show --full` lists only the improvement-request and bug-report OKF bundles, and
+  `just --list` exposes no ADR recipe.
 
 
 ## Decision Log
@@ -61,26 +107,47 @@ Haskell API changes.
   does not restore the setting. There is no released last-working pg-migrate component.
   Date: 2026-08-19
 
-- Decision: Repair the session with a new final migration containing `RESET search_path;`.
+- Decision: Correct released migration `0011` by adding `RESET search_path;` at its end; do not add
+  migration `0013`.
   Rationale: A plain `SET` inside a committed transaction persists on the connection, while
-  `RESET` restores the database, role, or connection-startup default when its own transaction
-  commits. A proof run inserted exactly that migration between Kioku and a host component and
-  made the otherwise identical failing plan succeed.
+  `RESET` restores the database, role, or connection-startup default when the transaction commits.
+  Keeping setup and cleanup in `0011` makes session isolation part of the offending migration's
+  own correctness: there is no successfully applied `0011` state in the corrected component that
+  still relies on a later compensating migration. This deliberately prefers correctness over
+  checksum compatibility.
   Date: 2026-08-19
 
-- Decision: Do not edit migrations `0001` through `0012`, and do not re-baseline their ledger
-  checksums.
-  Rationale: All historical DDL applies correctly. The defect is only the session state handed to
-  the next component, so an append-only repair is sufficient and preserves pg-migrate's durable
-  exact-byte history contract.
+- Decision: Keep `0011`'s opening `SET search_path` and add a persistent reset at the end instead
+  of changing that opening statement to `SET LOCAL`.
+  Rationale: The connection can already carry `kiroku, pg_catalog` from `0010` before `0011`
+  starts. `SET LOCAL` would disappear at commit and reveal that prior leaked value. A final plain
+  `RESET` changes the session value that survives commit and restores the configured default.
+  Date: 2026-08-19
+
+- Decision: Do not rewrite migrations `0001` through `0010` as part of this fix.
+  Rationale: Correcting `0011`, the last pending offender in every current full plan, restores the
+  boundary before `0012` and every host component. Rewriting the earlier files would expand one
+  controlled 0.4.x checksum break into up to ten per database and would invalidate the exact-byte
+  `SamePayload` evidence that keeps the deprecated but still-supported Codd cutover safe. This
+  scope preserves that evidence without delegating `0011`'s own cleanup to another migration.
+  Date: 2026-08-19
+
+- Decision: Ship a one-time, idempotent ledger re-baseline for the withdrawn `0011` checksum and
+  treat the next `kioku-migrations` release as 0.5.0.0-level breaking work.
+  Rationale: pg-migrate correctly rejects a changed applied payload. Databases on 0.4.0.0 or
+  0.4.1.0 therefore need an explicit operator action before `up` or `verify` can accept the
+  corrected plan. The script will match only component `kioku`, migration `0011`, and the known
+  withdrawn checksum, replace it with the corrected checksum, and be a no-op otherwise. The old
+  and corrected payloads produce the same durable schema and data, so no forward schema
+  convergence migration is required.
   Date: 2026-08-19
 
 - Decision: Test behavior at the component boundary instead of adding a text-only ban on
   `SET search_path`.
   Rationale: A full-chain test catches any future Kioku migration that leaks session state after
-  `0013`, regardless of spelling, and proves the host-visible effect. Historical files must keep
-  their bare `SET` bytes, so a blanket source grep would either fail forever or require a brittle
-  allowlist without proving runtime isolation.
+  corrected `0011`, regardless of spelling, and proves the host-visible effect. Historical files
+  before `0011` keep their bare `SET` bytes, so a blanket source grep would either fail forever or
+  require a brittle allowlist without proving runtime isolation.
   Date: 2026-08-19
 
 - Decision: Use a nonstandard database default (`host_app, pg_catalog`) in the regression rather
@@ -89,18 +156,21 @@ Haskell API changes.
   path that happens to work for the reproducer.
   Date: 2026-08-19
 
-- Decision: Do not create a new ADR during plan creation.
-  Rationale: [ADR-10](../adr/projections-live-in-the-kioku-schema.md) already establishes both
-  explicit schema qualification and forward-only treatment of released migrations. The fix
-  enforces those existing constraints at a component boundary rather than introducing a new
-  architecture. The implementation must still perform the required ADR distillation pass at
-  completion.
+- Decision: Update ADR-10 rather than create a second migration-policy ADR.
+  Rationale: [ADR-10](../adr/projections-live-in-the-kioku-schema.md) already owns the relevant
+  rules: schema qualification, migration-first deployment, forward recovery, and the rejection of
+  broad historical DDL rewrites. It must now distinguish that normal rule from the narrow,
+  breaking correction of a known-unsafe released payload with an exact-checksum re-baseline. A
+  second ADR would split one migration-governance boundary across two records.
   Date: 2026-08-19
 
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+Planning revision, 2026-08-19: the append-only `0013` design was retired before implementation.
+The replacement deliberately corrects `0011`, bounds the break to 0.4.x ledgers with one guarded
+checksum re-baseline, and preserves the Codd evidence and 53-row plan. No implementation milestone
+has started; complete this section with behavioral and validation evidence as the work lands.
 
 
 ## Context and Orientation
@@ -128,8 +198,11 @@ the `kioku` component through `Kioku.Migrations.kiokuMigrations`. The first ten 
 as the initial pg-migrate component. Migrations `0001` through `0005` and `0007` through `0011`
 each contain `SET search_path TO kiroku, pg_catalog`; `0006` and `0012` do not. Migration `0012`
 fully qualifies its DDL but inherits the value left by `0011`, so the runner reaches the next
-component with `kiroku, pg_catalog` still active. These files are released exact-byte history and
-must not be edited.
+component with `kiroku, pg_catalog` still active. Released migration bytes are normally immutable.
+This plan makes a deliberate exception for `0011` because the migration's own successful outcome
+is unsafe; the change is breaking and carries an explicit ledger re-baseline. Migrations `0001`
+through `0010`, `0012`, the manifest, and `kioku-migrations/migrations.lock` remain byte-for-byte
+unchanged.
 
 `kioku-migrations/test/Main.hs` owns database-backed migration tests. Its
 `testFreshDatabase`, `testKirokuOnlyAdoption`, and `testCoddCohortImport` paths already exercise
@@ -145,25 +218,43 @@ component but not the public Keiro component or `Data.Set`. To assemble
 `kiroku -> keiro -> kioku -> host` using only supported APIs, its direct test dependencies need
 `keiro-migrations ^>=0.13.0.0` and `containers >=0.6 && <0.8`. The host SQL bytes can be produced
 with the already available `Data.Text.Encoding.encodeUtf8`, so no new `bytestring` test dependency
-is necessary.
+is necessary. This bound was verified against both Hackage's current preferred-version registry
+and the upstream `keiro-migrations-0.13.0.0` tag. The existing pg-migrate 1.1.0.0 bound was likewise
+verified against Hackage and upstream tag `v1.1.0.0`.
 
-Adding one Kioku migration changes current plan totals from 53 to 54. The exact assertions at
-`kioku-migrations/test/Main.hs` in the Kiroku-adoption and Codd-import tests must move to 54;
-`expectedForwardMigrationIds` must gain `kioku/0013-restore-host-search-path`; and the repeated
-run must observe 54 `AlreadyApplied` results. `forwardMigrationEffectCountStatement` remains six
-because it intentionally counts durable schema/catalog effects and `RESET search_path` has none.
-Current counts also appear in `docs/user/getting-started.md` and
-`docs/user/upgrading-to-the-kioku-schema.md`. The Codd cutover guide at
-`docs/user/upgrading-to-pg-migrate.md` must describe the actual 24-row forward suffix: five Kiroku
-rows (`0007` through `0011`), sixteen Keiro rows (`0015` through `0030`), and three Kioku rows
-(`0011` through `0013`), ending at 54 total. Historical release sections in changelogs remain
-historical and are not rewritten; new facts go under an `Unreleased` heading.
+No migration identity is added, so all current totals remain unchanged: 53 rows in the full plan,
+12 in the Kioku component, 23 in the post-Codd-pin forward suffix, and 53 `AlreadyApplied` results
+on a repeated run. `expectedForwardMigrationIds` continues to end at
+`kioku/0012-relocate-projections-to-kioku-schema`, and
+`forwardMigrationEffectCountStatement` remains six. The Codd cutover guide at
+`docs/user/upgrading-to-pg-migrate.md` is already stale and must describe the actual 23-row suffix:
+five Kiroku rows (`0007` through `0011`), sixteen Keiro rows (`0015` through `0030`), and two Kioku
+rows (`0011` and `0012`), ending at 53 total. `docs/user/getting-started.md` and
+`docs/user/upgrading-to-the-kioku-schema.md` keep their existing 11/30/12 and 53-row counts.
+Historical release sections in changelogs remain historical; the correction and operator action
+go under a new `Unreleased` heading.
+
+The released 0.4.x `0011` checksum is
+`eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192`. After editing `0011`, compute
+the corrected exact-byte checksum and place both values in a new guarded script at
+`kioku-migrations/ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql`. Add
+`ledger-fixups/*.sql` to the package's `extra-source-files` so the operator artifact is published.
+The script changes only an applied `pgmigrate.migrations` row whose component, migration name, and
+checksum all match the withdrawn payload. It must reject a missing default ledger table with a
+clear message, be safe to run twice, and explain how to adapt the schema name when the host uses a
+nondefault `LedgerConfig`. Unlike the Kiroku precedent, no forward convergence migration is needed:
+old and corrected `0011` produce the same durable catalog and data, and the withdrawn session value
+ceased to exist when its runner connection closed.
 
 The relevant local architecture decision is
 [ADR-10](../adr/projections-live-in-the-kioku-schema.md). It says Kioku-owned runtime SQL names
-relations explicitly rather than relying on host connection search paths, and it explicitly
-rejects rewriting migrations `0001` through `0011` because released migrations are immutable
-history. No other local ADR governs this narrower session-cleanup defect.
+relations explicitly rather than relying on host connection search paths, requires migration-first
+deployment and forward recovery, and rejects broadly rewriting `0001` through `0011` to change the
+schema layout. This plan revision updates ADR-10 to distinguish that normal immutability rule from
+one narrow exception: a released migration whose successful execution is itself unsafe may be
+corrected as an explicit breaking change when the exact withdrawn checksum is known, the durable
+old and corrected outcomes are equivalent or converged, and operators receive a guarded
+re-baseline. No other local ADR governs this session-cleanup defect.
 
 
 ## Plan of Work
@@ -191,50 +282,87 @@ migration with `AppliedNow`, and a qualified catalog query sees the new column. 
 the host-visible contract; merely querying `current_setting('search_path')` on a later fresh
 connection would not test the runner session.
 
-Before adding the fix migration, run this focused test once and record the negative proof in this
+Before correcting `0011`, run this focused test once and record the negative proof in this
 plan's Surprises & Discoveries section. It must fail with `DatabaseSessionFailed`, SQLSTATE
-`42P01`, and `relation "host_table" does not exist`. Do not commit that red state. Then run
-`just new-migration restore-host-search-path`. The recipe must create
-`kioku-migrations/migrations/0013-restore-host-search-path.sql` and append it to the manifest.
-Replace the scaffold body with explanatory comments and the single executable statement `RESET
-search_path;`. Explain in the SQL comments that plain `SET` in historical transactional migrations
-survives commit, pg-migrate deliberately reuses one connection, and the reset restores the
-database/role default for later components. Do not use `SET LOCAL` here: a local reset would vanish
-at commit and leave the leaked session value active. Do not modify `kioku-migrations/migrations.lock`,
-which records the pre-cutover Codd evidence rather than forward migrations.
+`42P01`, and `relation "host_table" does not exist`. Do not commit that red state. Then edit
+`kioku-migrations/migrations/0011-kioku-memory-space-partition.sql` itself. Keep its opening
+session-scoped `SET`, because it supplies the unqualified names inside the migration, and append an
+explanatory comment plus `RESET search_path;` after its final DDL statement. The comment must say
+that plain `SET` survives transaction commit on pg-migrate's reused connection, that `0010` may
+already have supplied the same leaked value, and that this final reset restores the database/role
+default for `0012` and later components. Do not replace the opening statement with `SET LOCAL`, do
+not add `0013`, and do not edit the manifest or `migrations.lock`.
 
-Update `testKirokuOnlyAdoption`, `testCoddCohortImport`, and `expectedForwardMigrationIds` for the
-new plan row while preserving the six-effect catalog assertion. The milestone is complete when
-the same composed-plan regression that failed before now succeeds, the manifest integrity test
-passes, the Codd rehearsal imports 30 historical rows then applies the 24-row forward suffix, and
-the migration test suite ends green.
+Rerun the exact composed-plan case and the full `kioku-migrations` suite. The same case that failed
+must now pass. The existing plan-count, Kiroku-adoption, Codd-import, expected-forward-ID, and
+six-effect assertions remain unchanged. The milestone is complete when the regression passes,
+the manifest integrity test still reports 12 Kioku migrations, the Codd rehearsal still imports 30
+historical rows and applies the 23-row forward suffix, and the suite ends green.
 
-### Milestone 2: publish the fixed contract and validate the repository
+### Milestone 2: make the checksum break explicit and recoverable
 
-Add an `Unreleased` / `Fixed` entry to `CHANGELOG.md`, `kioku-migrations/CHANGELOG.md`, and
-`kioku-migrate/CHANGELOG.md`. State that `kioku/0013-restore-host-search-path` restores the host's
-configured schema resolution before later components, that no released checksum changes, and that
-the composed plan now has 54 rows. Leave the 0.4.0.0 and 0.4.1.0 release sections untouched.
+Compute the corrected SHA-256 only after the final SQL comments and reset are stable. Create
+`kioku-migrations/ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql`, modelled on the Kiroku
+BUG-1 precedent but self-contained for Kioku. The script runs in one transaction, resolves the
+default `pgmigrate.migrations` table with `to_regclass`, raises if the table is absent, and updates
+only the row satisfying all of these facts: component `kioku`, migration
+`0011-kioku-memory-space-partition`, status `applied`, and checksum equal to the withdrawn digest
+recorded above. It replaces that checksum with the corrected digest. Zero matching rows is an
+informative no-op, one matching row is success, and more than one is impossible under the ledger's
+primary key. The header explains who must run it, how a custom ledger schema changes the script,
+why schema convergence is unnecessary, and why this narrow script is not permission to bypass
+other checksum mismatches. Add `ledger-fixups/*.sql` to `extra-source-files`.
 
-Update the three current user documents named in Context and Orientation. The getting-started and
-schema-upgrade pages should say 54 migrations (Kiroku 11, Keiro 30, Kioku 13). The Codd cutover
-guide should say 24 post-pin migrations, enumerate the current ranges, include Kioku `0013` as the
-session cleanup after the partition and relocation, and show the final 11/30/13 component counts.
+Extend `kioku-migrations/test/Main.hs` with a ledger re-baseline case that uses the actual script,
+not a reimplementation. Apply the corrected plan to an ephemeral database, replace only its
+`kioku/0011-kioku-memory-space-partition` ledger checksum with the known withdrawn digest to model
+a 0.4.x database, and prove strict verification reports `MigrationChecksumMismatch`. Execute the
+checked-in script, prove strict verification succeeds without applying any migration, execute the
+script again, and prove it is a no-op. Assert the 53 ledger rows and the qualified Kioku catalog are
+unchanged throughout. Also test that the script fails clearly when the expected ledger table does
+not exist. Read the file as text with existing `text` APIs; no new test dependency is needed.
+
+The milestone is complete when the source-distribution file list contains the fixup, the focused
+suite proves the mismatch-before/success-after/idempotent sequence, the manifest still contains 12
+Kioku migrations, and `migrations.lock` still has no diff.
+
+### Milestone 3: publish the breaking contract and validate the repository
+
+Add an `Unreleased` / `Breaking Changes` and `Fixed` entry as appropriate to `CHANGELOG.md`,
+`kioku-migrations/CHANGELOG.md`, and `kioku-migrate/CHANGELOG.md`. State that the corrected
+`kioku/0011-kioku-memory-space-partition` now restores the configured host search path inside its
+own transaction, that its checksum changed from the withdrawn digest, that 0.4.0.0/0.4.1.0
+databases must run the shipped ledger re-baseline before `up` or `verify`, and that databases with
+`0011` still pending need no special action. State that the next release must use the breaking
+0.5.0.0 series. Leave historical 0.4.x sections untouched and do not change package versions as
+part of this implementation-only plan.
+
+Update `docs/user/upgrading-to-the-kioku-schema.md` with the 0.4.x-to-corrected-payload preflight
+and the exact command for the re-baseline. Keep its existing 53-row total. Bring
+`docs/user/upgrading-to-pg-migrate.md` up to the current 23-row forward suffix and 53-row total;
+make clear that a Codd-era database has no applied Kioku `0011` before the cutover and therefore
+does not run the re-baseline before its first corrected `up`. `docs/user/getting-started.md` needs
+no count change, but add a short pointer to the upgrade guide near its checksum explanation so an
+operator with a 0.4.x ledger does not mistake the intentional mismatch for corruption.
 
 Move BUG-1 in
 `docs/bug-reports/migration-0011-session-search-path-leaks-into-later-migrations.md` from
 `confirmed` to `fixed`, set `fixedVersion: unreleased`, and add a `resolution` that names migration
-`0013` and the composed-plan regression. Update its current-content provenance and review metadata
-according to `docs/bug-reports/profile.dhall`, then regenerate `docs/bug-reports/index.md`, append a
-`Fix` entry to `docs/bug-reports/log.md`, and run strict profile enforcement.
+`0011`'s corrected payload, the breaking checksum, the ledger fixup, and the composed-plan
+regression. Replace the old append-`0013` fix direction throughout the body. Update its
+current-content provenance and review metadata according to `docs/bug-reports/profile.dhall`, then
+regenerate `docs/bug-reports/index.md`, append a `Fix` entry to `docs/bug-reports/log.md`, and run
+strict profile enforcement.
 
 Finish by running the focused migration suite, every repository test inside the Nix development
 shell, the flake checks, and whitespace validation. Update Progress, Surprises & Discoveries,
-Decision Log, and Outcomes & Retrospective with exact evidence. Review those living sections and
-ADR-10 for durable new context. Update an ADR only if implementation discovers a reusable
-architectural constraint not already captured by ADR-10; otherwise record that the distillation
-pass found no ADR change necessary. The milestone is complete when all checks pass and the only
-behavioral difference is the added forward reset and its documentation.
+Decision Log, and Outcomes & Retrospective with exact evidence. ADR-10 already records the narrow
+released-payload correction policy established by this revision; update it again only if
+implementation changes that policy. Because this repository's ADR directory is not a profiled Mori
+bundle and has no dedicated ADR recipe, validate its established filesystem convention by
+confirming ADR-10's stable `docId`, advanced timestamp, matching log entry, links, and whitespace.
+The milestone is complete when all checks pass, 0.4.x recovery is fully documented, and the only
+database behavior difference is that corrected `0011` no longer leaks session state.
 
 
 ## Concrete Steps
@@ -249,8 +377,8 @@ git status --short
 Preserve unrelated working-tree changes. In particular, never reset or rewrite a file merely
 because it was already modified before this plan began.
 
-After adding the test dependencies and the composed-plan regression, but before creating
-`0013`, run:
+After adding the test dependencies and the composed-plan regression, but before correcting
+`0011`, run:
 
 ```bash
 nix develop -c cabal test kioku-migrations:kioku-migrations-test \
@@ -266,37 +394,47 @@ DatabaseSessionFailed (ScriptSessionError
   (ServerError "42P01" "relation \"host_table\" does not exist" ...))
 ```
 
-Create the append-only repair through the repository's normal authoring path:
+Confirm the exact withdrawn checksum from both released tags before editing:
 
 ```bash
-just new-migration restore-host-search-path
-tail -n 3 kioku-migrations/migrations/manifest
+git show v0.4.0.0:kioku-migrations/migrations/0011-kioku-memory-space-partition.sql \
+  | shasum -a 256
+git show v0.4.1.0:kioku-migrations/migrations/0011-kioku-memory-space-partition.sql \
+  | shasum -a 256
 ```
 
-The manifest tail should be:
+Both commands must print:
 
 ```text
-0011-kioku-memory-space-partition.sql
-0012-relocate-projections-to-kioku-schema.sql
-0013-restore-host-search-path.sql
+eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192  -
 ```
 
-Edit only the newly created SQL file so its executable body is:
+Edit `0011` so its final executable statement is:
 
 ```sql
 RESET search_path;
 ```
 
-After updating the count assertions and expected forward IDs, rerun the focused suite:
+Do not run `just new-migration`. Compute the corrected checksum after the file is final, use it in
+the ledger fixup, and verify the migration inventory did not change:
+
+```bash
+shasum -a 256 kioku-migrations/migrations/0011-kioku-memory-space-partition.sql
+git diff --exit-code -- kioku-migrations/migrations/manifest
+git diff --exit-code -- kioku-migrations/migrations.lock
+git diff --name-only -- kioku-migrations/migrations
+```
+
+The final command must name only
+`kioku-migrations/migrations/0011-kioku-memory-space-partition.sql`. Then rerun the focused suite:
 
 ```bash
 nix develop -c cabal test kioku-migrations:kioku-migrations-test \
   --test-show-details=direct
-git diff --exit-code -- kioku-migrations/migrations.lock
 ```
 
-The first command must end with all `kioku-migrations` cases passing. The second command must emit
-nothing, proving the historical Codd lock was not changed.
+The command must end with all `kioku-migrations` cases passing, including the fresh composed-plan
+boundary and the exact-checksum ledger re-baseline sequence.
 
 After updating BUG-1, its index, and its log, validate the profiled bundle:
 
@@ -304,7 +442,7 @@ After updating BUG-1, its index, and its log, validate the profiled bundle:
 okf index docs/bug-reports --write
 okf log add docs/bug-reports \
   --kind Fix \
-  --message "BUG-1 is fixed by forward migration 0013 and a composed-plan regression." \
+  --message "BUG-1 is fixed by correcting migration 0011, shipping its ledger re-baseline, and adding a composed-plan regression." \
   --date 2026-08-19
 okf validate docs/bug-reports \
   --strict \
@@ -323,6 +461,8 @@ OK: 1 concepts (okf_version 0.2)
 Run final repository validation:
 
 ```bash
+rg -n '^timestamp:|^docId:' docs/adr/projections-live-in-the-kioku-schema.md
+rg -n 'ADR-10|ExecPlan 32' docs/adr/log.md docs/adr/projections-live-in-the-kioku-schema.md
 nix develop -c cabal build all
 nix develop -c cabal test all --test-show-details=direct
 nix flake check
@@ -334,7 +474,7 @@ At completion, a commit implementing this plan must use a Conventional Commit su
 required trailers. For example:
 
 ```text
-fix(migrations): restore host search path after kioku migrations
+fix(migrations)!: contain migration 0011 search path state
 
 ExecPlan: docs/plans/32-restore-host-search-path-after-kioku-migrations.md
 Intention: intention_01m0e0jgvzem4s6jb4xwwgcy5y
@@ -348,26 +488,32 @@ Acceptance is behavioral, not merely a source inspection.
 On a fresh ephemeral database whose default `search_path` is `host_app, pg_catalog`, the composed
 `kiroku -> keiro -> kioku -> host` test plan must finish in one invocation. The host migration
 must use the unqualified name `host_table`, and a qualified catalog assertion must show its new
-column. Removing `0013` from the manifest must make this exact test fail with SQLSTATE `42P01`;
-restoring `0013` must make it pass. This negative/positive pair proves the test detects the reported
-defect and that the repair restores configuration rather than hard-coding `public`.
+column. Reverting only the final reset from corrected `0011` must make this exact test fail with
+SQLSTATE `42P01`; restoring it must make the test pass. This negative/positive pair proves the test
+detects the reported defect and that the correction restores configuration rather than hard-coding
+`public`.
 
-The manifest must contain 13 Kioku migrations, and verification of a fresh full plan must report
-54 applied migrations with no pending, unknown, failed, or checksum-mismatched row. The
+The manifest must still contain 12 Kioku migrations, and verification of a fresh full plan must
+report 53 applied migrations with no pending, unknown, failed, or checksum-mismatched row. The
 Kiroku-only adoption test must still skip the 11 already-applied Kiroku rows and reach the same
-54-row verified plan. The Codd rehearsal must still import exactly 30 historical rows without
-executing them, apply exactly 24 forward migrations including Kioku `0013`, report 54 applied
-rows, and make its second `up` a 54-row no-op.
+53-row verified plan. The Codd rehearsal must still import exactly 30 historical rows without
+executing them, apply exactly 23 forward migrations ending at Kioku `0012`, report 53 applied
+rows, and make its second `up` a 53-row no-op.
 
-No file from `kioku-migrations/migrations/0001-kioku-base.sql` through
-`0012-relocate-projections-to-kioku-schema.sql` may change, and
-`kioku-migrations/migrations.lock` must have no diff. This proves the fix does not create a
-checksum repair obligation for any released database.
+Only `kioku-migrations/migrations/0011-kioku-memory-space-partition.sql` may change within the
+migration directory. Migrations `0001` through `0010`, migration `0012`, the manifest, and
+`kioku-migrations/migrations.lock` must have no diff. The corrected `0011` checksum must differ
+from the withdrawn digest. A database modelled with the withdrawn digest must fail strict
+verification before the fixup, pass after it without applying DDL, and remain verified after the
+fixup is run a second time. This proves the breaking checksum obligation is explicit and
+recoverable rather than silently bypassed.
 
 BUG-1 must validate with `status: fixed`, `fixedVersion: unreleased`, and a resolution naming the
-forward reset and regression. The generated bug-report index must carry the corrected description,
-and the bundle log must record the fix. Current user documentation must consistently report the
-11/30/13 component counts and 54 total.
+corrected `0011`, checksum re-baseline, and regression. The generated bug-report index must carry
+the corrected description, the bundle log must record the fix, and ADR-10 must contain the narrow
+released-payload correction policy. Current user documentation must consistently report the
+unchanged 11/30/12 component counts and 53 total, and must distinguish 0.4.x ledgers from
+pending/fresh `0011` paths.
 
 Finally, `nix develop -c cabal test all --test-show-details=direct`, `nix flake check`, and
 `git diff --check` must all exit zero. Record concise transcripts and the ADR distillation result
@@ -376,27 +522,28 @@ in this living plan before marking Progress complete.
 
 ## Idempotence and Recovery
 
-The migration is idempotent as session behavior: running `RESET search_path` when the path is
-already at its configured default makes no catalog or data change. pg-migrate applies `0013` once
-per ledger, but rerunning its body manually in an ephemeral test is harmless. The normal
-implementation path is forward-only; never delete a ledger row to force it to run again.
+The corrected migration is idempotent as session behavior: running `RESET search_path` when the
+path is already at its configured default makes no catalog or data change. For a database where
+`0011` is pending, pg-migrate applies the corrected payload normally and records only its corrected
+checksum. Never delete an applied ledger row to force `0011` to run again; a closed historical
+connection has no session state left to repair.
 
-`just new-migration restore-host-search-path` is not repeatable after it succeeds because the
-manifest will already contain `0013`. If authoring is interrupted before the new file is correct,
-edit that still-unreleased `0013` file and rerun the manifest test. Do not invoke the scaffold a
-second time, do not renumber it, and do not edit an earlier file as a shortcut.
+The ledger re-baseline is idempotent because it matches only the exact withdrawn checksum. Its
+second run changes zero rows. It must be run only after a verified backup and before the corrected
+binary's first `up` or `verify` on a database that already applied 0.4.x `0011`. If it reports a
+missing ledger table, check the configured ledger schema and adapt the explicit table reference;
+do not broaden the predicate. If it reports no matching row, determine whether `0011` is pending,
+already corrected, or carries an unexpected checksum before proceeding.
 
 Every database mutation in the regression happens in a dedicated ephemeral database. Its
 `ALTER DATABASE ... SET search_path` setting disappears with that database, even if the test fails.
-The production migration changes only connection-local state and writes its ordinary pg-migrate
-ledger row; it does not touch application data, schemas, tables, privileges, or database defaults.
-
-If a real deployment of `0013` fails, pg-migrate rolls back both the reset and its ledger insert.
-Correct the pending, unreleased migration if appropriate and rerun the complete plan. If `0013`
-has already shipped, recovery is another forward migration; never mutate the applied payload or
-ledger. The existing workaround for releases 0.1.0.0 through 0.4.1.0 remains to rerun the plan:
-on the second invocation the leaking Kioku migrations are already applied, so the pending host
-migration starts on a fresh connection with its configured default.
+The corrected statement changes only connection-local state; `0011`'s durable schema and data
+effects are otherwise identical. If corrected `0011` fails before commit, pg-migrate rolls back its
+DDL, reset, and ledger insert together. Once this corrected payload ships, treat its bytes as the
+new immutable history; any later defect is repaired forward rather than by changing `0011` again.
+The existing workaround for older uncorrected releases remains to rerun the plan: the leaking
+Kioku migrations are then already applied, so the pending host migration starts on a fresh
+connection. That workaround is recovery for old artifacts, not the corrected contract.
 
 
 ## Interfaces and Dependencies
@@ -404,8 +551,11 @@ migration starts on a fresh connection with its configured default.
 There is no new production Haskell interface and no production dependency change.
 `Kioku.Migrations.kiokuMigrations :: Either DefinitionError MigrationComponent` and
 `Kioku.Migrations.kiokuMigrationPlan :: Either PlanError MigrationPlan` retain their existing
-types. The observable production interface change is that the former contains one additional
-ordered SQL migration, `kioku/0013-restore-host-search-path`.
+types and the same migration identities. The observable production interface change is that
+`kioku/0011-kioku-memory-space-partition` has a corrected exact-byte payload and leaves the shared
+connection at its configured default `search_path`. The operator artifact
+`kioku-migrations/ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql` is new, but it is not part
+of the embedded migration plan and never runs automatically.
 
 The regression uses these public dependency interfaces:
 
@@ -429,5 +579,19 @@ execution, and assertions.
 Keep the test helper functions private to `kioku-migrations/test/Main.hs`. At minimum, the end
 state needs an assertion such as `testHostSearchPathRestored :: Assertion`, a helper that builds
 the four-component `MigrationPlan`, a statement returning `quote_ident(current_database())`, and
-a qualified statement that proves `host_app.host_table.migrated` exists. No test helper becomes a
-library export.
+a qualified statement that proves `host_app.host_table.migrated` exists. The ledger test also
+needs private statements that install the withdrawn checksum fixture, read back the `0011` ledger
+row, and prove the qualified Kioku catalog remains present. No test helper becomes a library
+export.
+
+
+## Revision Note
+
+Revised 2026-08-19 after reconsidering the long-term safety tradeoff. The original plan preserved
+all released checksums by appending cleanup migration `0013`. This revision instead makes the
+offending `0011` migration self-contained by restoring the host search path before its own commit,
+accepts the resulting 0.4.x checksum break, adds an exact-checksum ledger re-baseline and recovery
+test, preserves the still-supported Codd evidence for `0001` through `0010`, keeps the plan at 53
+rows, and records the narrow released-payload correction policy in ADR-10. The change prefers a
+correct migration boundary over compatibility with a known-unsafe payload while keeping the
+operator cost explicit and bounded.

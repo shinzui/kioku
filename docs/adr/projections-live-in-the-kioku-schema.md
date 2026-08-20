@@ -5,7 +5,7 @@ description: >-
   Kioku keeps appending to the host's Kiroku event store while every relation Kioku owns moves
   into a dedicated `kioku` PostgreSQL schema, named explicitly in SQL rather than resolved
   through the connection's search path.
-timestamp: 2026-08-07T18:00:00Z
+timestamp: 2026-08-19T22:50:57Z
 docId: ADR-10
 status: accepted
 date: 2026-08-07
@@ -95,6 +95,20 @@ names `kiroku.kioku_*`. Before any new write, recovery is a restore from the ver
 backup; after new writes, it is a reviewed forward repair. A reverse move must be a new migration,
 never an edit to `0012` or to the pg-migrate ledger.
 
+**Released migration payloads are immutable by default, but not at the cost of preserving a known
+unsafe successful execution.** The normal remedy remains a new forward migration. A historical
+payload may be corrected only as an explicit breaking change when the defect is in that payload's
+own execution contract, the withdrawn exact checksum is known, the old and corrected durable
+catalog/data outcomes are equivalent or a forward migration converges them, and operators receive
+a narrowly guarded ledger re-baseline. [ExecPlan 32](../plans/32-restore-host-search-path-after-kioku-migrations.md)
+uses that exception for `0011`: its released body commits the intended partition correctly but
+leaves a shared pg-migrate connection's `search_path` poisoned for later components. The corrected
+body resets the session before its own commit. Databases that already applied the withdrawn 0.4.x
+payload need only re-baseline that exact checksum because the leaked session ceased to exist when
+the old runner connection closed; no durable schema or data needs convergence. This is not a
+general checksum-bypass mechanism, and a checksum that does not match the named withdrawn digest
+still fails closed.
+
 **The pgvector extension does not move.** Extensions are database-wide and may be shared with the
 host, so `ALTER EXTENSION` is out of scope even as a recovery shortcut. The memory table keeps its
 `vector` column and HNSW index by object identity, and the `to_regtype('vector')` probe keeps
@@ -137,8 +151,11 @@ interface that would need its own migration, its own tests, and its own removal 
 planned outage yields one authoritative layout instead.
 
 **Rewriting migrations `0001`–`0011` to create the tables in `kioku` directly.** Rejected: released
-migrations and the pinned Codd cutover fixture are immutable history. A database that already
-applied them must be moved forward, not have its past rewritten.
+migrations and the pinned Codd cutover fixture are immutable history for this catalog move. A
+database that already applied them must be moved forward, not have its past rewritten. The narrow
+session-safety correction to `0011` above does not reopen this alternative: it changes no table,
+row, index, constraint, or schema outcome, preserves the exact Codd evidence for `0001` through
+`0010`, and carries its own breaking checksum re-baseline.
 
 ## References
 
@@ -148,6 +165,8 @@ applied them must be moved forward, not have its past rewritten.
   no-op rerun, and atomic rejection of every mixed layout
 - `kioku-core/src/Kioku/Database/Schema.hs` — the qualified relation constants
 - `kioku-core/test/Kioku/ReadModelReconcileSpec.hs` — the fail-closed guard and its repair
+- [ExecPlan 32](../plans/32-restore-host-search-path-after-kioku-migrations.md) — the narrow
+  released-payload correction policy and the `0011` session-isolation repair
 - [ADR-1](kioku-owns-memory-not-identity.md), [ADR-2](namespace-is-not-a-security-boundary.md),
   [ADR-6](the-partition-is-a-column-not-a-schema.md)
 - Kiroku's own `docs/adr/0003-dedicated-kiroku-schema.md`, which established that Kiroku-owned
