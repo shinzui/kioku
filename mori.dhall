@@ -398,5 +398,13 @@ in  Schema.Project::{
         , description = Some
             "Defects in behavior Kioku already provides, one reproduction per report"
         }
+      , Schema.OkfBundle::{
+        , name = "reviews"
+        , path = "docs/reviews"
+        , profile = Some "docs/reviews/profile.dhall"
+        , okfVersion = "0.2"
+        , description = Some
+            "Records of Kioku artifacts having been reviewed, one examination per record"
+        }
       ]
     }
