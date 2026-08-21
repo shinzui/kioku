@@ -12,16 +12,90 @@
 -- it.
 module Kioku.Distill.Timer.Outcome
   ( FireOutcome (..),
+    parsePartitionedScopeFields,
+    firePartitionedDistillTimer,
     fireRetryDelay,
     unknownTimerRetryDelay,
     timerMarkerEventId,
   )
 where
 
+import Data.Aeson.Types (Object, Parser, parseEither, withObject, (.:))
+import Data.Text qualified as Text
 import Data.Time (NominalDiffTime)
-import Keiro.Timer (TimerId (..))
+import Effectful (Eff)
+import Keiro.Timer (TimerId (..), TimerRow (..))
+import Kioku.Api.Access
+  ( MemoryContextProvider (..),
+    MemoryPermission (MemoryDistill),
+    MemorySpaceId,
+    memoryContextAllows,
+    memoryContextSpace,
+    memorySpaceIdText,
+  )
+import Kioku.Api.Scope (MemoryScope)
+import Kioku.Partition (parsePartitionSpace)
 import Kioku.Prelude
 import Kiroku.Store.Types (EventId (..))
+
+-- | Decode the partition and scope shared by L2 and L3 timer payloads.
+--
+-- 'parsePartitionSpace' deliberately keeps native pre-partition timers working by defaulting a
+-- missing @memorySpaceId@ into the legacy space.
+parsePartitionedScopeFields :: Object -> Parser (MemorySpaceId, MemoryScope)
+parsePartitionedScopeFields o =
+  (,) <$> parsePartitionSpace o <*> o .: "scope"
+
+-- | Run the common authorization and outcome pipeline for one derived-artifact timer.
+--
+-- Provider refusal, an under-scoped context, a context for the wrong space, and malformed input
+-- are configuration facts, so they dead-letter. Only a regeneration failure is retryable.
+firePartitionedDistillTimer ::
+  (Show err) =>
+  Text ->
+  String ->
+  MemoryContextProvider (Eff es) ->
+  TimerRow ->
+  (MemorySpaceId -> MemoryScope -> Eff es (Either err result)) ->
+  Eff es FireOutcome
+firePartitionedDistillTimer expectedProcessName payloadLabel contextProvider row regenerate
+  | row.processManagerName /= expectedProcessName =
+      pure FireNotMine
+  | otherwise =
+      case parseEither (withObject (payloadLabel <> " payload") parsePartitionedScopeFields) row.payload of
+        Left err ->
+          pure (FireFailedPermanently (label <> " payload is malformed: " <> Text.pack err))
+        Right (requestedSpace, scope) -> do
+          decision <- contextProvider.contextForSpace requestedSpace
+          case decision of
+            Left denial ->
+              pure
+                ( FireFailedPermanently
+                    (label <> " is not authorized for its memory space: " <> Text.pack (show denial))
+                )
+            Right context
+              | memoryContextSpace context /= requestedSpace ->
+                  pure
+                    ( FireFailedPermanently
+                        ( label
+                            <> " context provider returned memory space "
+                            <> memorySpaceIdText (memoryContextSpace context)
+                            <> " for requested space "
+                            <> memorySpaceIdText requestedSpace
+                        )
+                    )
+              | not (memoryContextAllows MemoryDistill context) ->
+                  pure
+                    ( FireFailedPermanently
+                        (label <> " context is missing required permission MemoryDistill")
+                    )
+              | otherwise -> do
+                  result <- regenerate (memoryContextSpace context) scope
+                  pure case result of
+                    Right _ -> FireCompleted (timerMarkerEventId row.timerId)
+                    Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
+  where
+    label = Text.pack payloadLabel
 
 -- | The verdict of one fire attempt.
 data FireOutcome

@@ -34,7 +34,7 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Add shared partition-scope, payload-parser, timer-fire, and mirror-removal primitives.
+- [x] (2026-08-21T17:35:10Z) Add shared partition-scope, payload-parser, timer-fire, and mirror-removal primitives.
 - [ ] Require all L1 permissions before work and `MemoryDistill` in both derived-artifact handlers.
 - [ ] Add denial regressions proving no LLM call, row change, or mirror write occurs.
 - [ ] Update authorization and distillation documentation; run API, core, and CLI suites.

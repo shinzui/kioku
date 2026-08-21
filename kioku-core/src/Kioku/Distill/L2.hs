@@ -21,7 +21,6 @@ import Control.Exception (IOException, try)
 import Crypto.Hash (Digest, SHA256)
 import Crypto.Hash qualified as Hash
 import Data.Aeson qualified as Aeson
-import Data.Aeson.Types (withObject, (.:))
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Foldable (for_, traverse_)
@@ -42,7 +41,7 @@ import Hasql.Transaction qualified as Tx
 import Keiro.Projection (InlineProjection (..))
 import Keiro.ReadModel (ReadModelError)
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
-import Kioku.Api.Access (MemoryContextProvider (..), MemorySpaceId, legacyMemorySpaceId, memoryContextSpace)
+import Kioku.Api.Access (MemoryContextProvider, MemorySpaceId, legacyMemorySpaceId)
 import Kioku.Api.Scope (MemoryScope, scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Database.Schema (memoriesTable, scenesTable)
@@ -50,7 +49,11 @@ import Kioku.Distill.L3 (partitionedCorrelationId, scheduleL3PersonaTimerTx)
 import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runSceneDistillation)
 import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..))
 import Kioku.Distill.ScopeIdentity (escapeScopeComponent, scopeIdentity, scopeSlugFromColumns)
-import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
+import Kioku.Distill.Timer.Outcome
+  ( FireOutcome,
+    firePartitionedDistillTimer,
+    parsePartitionedScopeFields,
+  )
 import Kioku.Id (MemoryId, idText)
 import Kioku.Memory.Domain
   ( MemoryArchivedData (..),
@@ -60,15 +63,21 @@ import Kioku.Memory.Domain
     MemoryRecordedData (..),
     MemorySupersededData (..),
   )
-import Kioku.Partition (memorySpaceColumn, memorySpaceParam, parsePartitionSpace)
+import Kioku.Partition
+  ( PartitionedScope,
+    memorySpaceColumn,
+    memorySpaceParam,
+    partitionedScope,
+    partitionedScopeEncoder,
+  )
 import Kioku.Prelude
 import Kioku.Recall qualified as Recall
-import Kioku.Workspace (legacySceneArtifactDir, sceneArtifactDir)
+import Kioku.Workspace (legacySceneArtifactDir, removeIfPresent, sceneArtifactDir)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
 import Kiroku.Store.Types (EventId (..), RecordedEvent (..))
 import Shikumi.Schema.Types (field, unField)
-import System.Directory (createDirectoryIfMissing, doesFileExist, getCurrentDirectory, removeFile)
+import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.FilePath ((</>))
 
 data L2Error
@@ -107,8 +116,8 @@ data SceneTimerPayload = SceneTimerPayload
 
 instance FromJSON SceneTimerPayload where
   parseJSON =
-    withObject "SceneTimerPayload" \o ->
-      SceneTimerPayload <$> parsePartitionSpace o <*> o .: "scope"
+    Aeson.withObject "SceneTimerPayload" \o ->
+      uncurry SceneTimerPayload <$> parsePartitionedScopeFields o
 
 l2SceneProcessManagerName :: Text
 l2SceneProcessManagerName = "kioku-l2-scene"
@@ -304,29 +313,13 @@ fireL2SceneTimer ::
   DistillRuntime ->
   TimerRow ->
   Eff es FireOutcome
-fireL2SceneTimer contexts rt row
-  | row.processManagerName /= l2SceneProcessManagerName =
-      pure FireNotMine
-  | otherwise =
-      case Aeson.fromJSON @SceneTimerPayload row.payload of
-        -- A payload this handler cannot parse will not parse on the next attempt
-        -- either. It used to be marked fired, which quietly lost the scene.
-        Aeson.Error err ->
-          pure (FireFailedPermanently ("L2 scene timer payload is malformed: " <> Text.pack err))
-        Aeson.Success payload -> do
-          decision <- contexts.contextForSpace payload.memorySpaceId
-          case decision of
-            Left denial ->
-              pure
-                ( FireFailedPermanently
-                    ("L2 scene timer is not authorized for its memory space: " <> Text.pack (show denial))
-                )
-            Right context -> do
-              result <- regenerateScene rt (memoryContextSpace context) payload.scope
-              pure $
-                case result of
-                  Right _ -> FireCompleted (timerMarkerEventId row.timerId)
-                  Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
+fireL2SceneTimer contextProvider rt row =
+  firePartitionedDistillTimer
+    l2SceneProcessManagerName
+    "L2 scene timer"
+    contextProvider
+    row
+    (regenerateScene rt)
 
 lookupScene ::
   (Store :> es) =>
@@ -337,7 +330,7 @@ lookupScene ::
 lookupScene memorySpaceId scope sceneKey = do
   result <-
     runTransaction $
-      Tx.statement (SceneScopeKey (scopeKey memorySpaceId scope) sceneKey) selectSceneByScopeKeyStmt
+      Tx.statement (SceneScopeKey (partitionedScope memorySpaceId scope) sceneKey) selectSceneByScopeKeyStmt
   pure (Right result)
 
 getScenesByScope ::
@@ -347,38 +340,13 @@ getScenesByScope ::
   Eff es [SceneRow]
 getScenesByScope memorySpaceId scope =
   runTransaction $
-    Tx.statement (scopeKey memorySpaceId scope) selectScenesByScopeStmt
-
--- | A scope lookup inside one memory space, as a record rather than a tuple so that the
--- partition cannot be transposed with the namespace it sits beside.
-data PartitionedScope = PartitionedScope
-  { memorySpaceId :: !MemorySpaceId,
-    namespace :: !Text,
-    scopeKind :: !(Maybe Text),
-    scopeRef :: !(Maybe Text)
-  }
+    Tx.statement (partitionedScope memorySpaceId scope) selectScenesByScopeStmt
 
 data SceneScopeKey = SceneScopeKey !PartitionedScope !Text
 
 data SceneKey = SceneKey !MemorySpaceId !Text
 
 data MemoryScopeLookup = MemoryScopeLookup !MemorySpaceId !Text
-
-scopeKey :: MemorySpaceId -> MemoryScope -> PartitionedScope
-scopeKey memorySpaceId scope =
-  PartitionedScope
-    { memorySpaceId,
-      namespace = scopeNamespaceText scope,
-      scopeKind = scopeKindText scope,
-      scopeRef = scopeRefText scope
-    }
-
-partitionedScopeEncoder :: E.Params PartitionedScope
-partitionedScopeEncoder =
-  ((\q -> q.memorySpaceId) >$< memorySpaceParam)
-    <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
-    <> ((\q -> q.scopeKind) >$< E.param (E.nullable E.text))
-    <> ((\q -> q.scopeRef) >$< E.param (E.nullable E.text))
 
 mirrorSceneToCurrentWorkspace :: SceneRow -> IO FilePath
 mirrorSceneToCurrentWorkspace row = do
@@ -436,11 +404,6 @@ bestEffortRemoveSceneMirror rt row = do
         traverse_ removeIfPresent (sceneMirrorPath workspace row : maybeToList (legacySceneMirrorPath workspace row))
   _ <- try remove :: IO (Either IOException ())
   pure ()
-
-removeIfPresent :: FilePath -> IO ()
-removeIfPresent path = do
-  exists <- doesFileExist path
-  when exists (removeFile path)
 
 renderSceneFile :: SceneRow -> Text
 renderSceneFile row =

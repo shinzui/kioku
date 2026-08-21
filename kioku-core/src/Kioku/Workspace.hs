@@ -53,6 +53,7 @@ module Kioku.Workspace
     personaArtifactDir,
     legacySceneArtifactDir,
     legacyPersonaArtifactDir,
+    removeIfPresent,
 
     -- * Migrating the pre-partition tree
     ArtifactMove (..),
@@ -104,6 +105,15 @@ legacySceneArtifactDir workspace = kiokuRoot workspace </> "scenes"
 -- | The pre-partition persona directory. Read for migration, never written.
 legacyPersonaArtifactDir :: FilePath -> FilePath
 legacyPersonaArtifactDir workspace = kiokuRoot workspace </> "persona"
+
+-- | Remove one file when present and otherwise do nothing.
+--
+-- Derived-artifact deletion is best-effort at its call sites; keeping the existence check here
+-- gives scene and persona cleanup one spelling without changing their exception handling.
+removeIfPresent :: FilePath -> IO ()
+removeIfPresent path = do
+  exists <- doesFileExist path
+  when exists (removeFile path)
 
 -- | A path-safe, collision-free directory name for one memory space.
 --

@@ -22,7 +22,6 @@ import Control.Exception (IOException, try)
 import Crypto.Hash (Digest, SHA256)
 import Crypto.Hash qualified as Hash
 import Data.Aeson qualified as Aeson
-import Data.Aeson.Types (withObject, (.:))
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Foldable (traverse_)
@@ -43,10 +42,9 @@ import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
 import Kioku.Api.Access
-  ( MemoryContextProvider (..),
+  ( MemoryContextProvider,
     MemorySpaceId,
     legacyMemorySpaceId,
-    memoryContextSpace,
     memorySpaceIdText,
   )
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
@@ -54,14 +52,24 @@ import Kioku.Database.Schema (personasTable, scenesTable)
 import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..))
 import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runPersonaDistillation)
 import Kioku.Distill.ScopeIdentity (scopeIdentity, scopeSlugFromColumns)
-import Kioku.Distill.Timer.Outcome (FireOutcome (..), fireRetryDelay, timerMarkerEventId)
-import Kioku.Partition (memorySpaceColumn, memorySpaceParam, parsePartitionSpace)
+import Kioku.Distill.Timer.Outcome
+  ( FireOutcome,
+    firePartitionedDistillTimer,
+    parsePartitionedScopeFields,
+  )
+import Kioku.Partition
+  ( PartitionedScope,
+    memorySpaceColumn,
+    memorySpaceParam,
+    partitionedScope,
+    partitionedScopeEncoder,
+  )
 import Kioku.Prelude
-import Kioku.Workspace (legacyPersonaArtifactDir, personaArtifactDir)
+import Kioku.Workspace (legacyPersonaArtifactDir, personaArtifactDir, removeIfPresent)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
 import Shikumi.Schema.Types (field, unField)
-import System.Directory (createDirectoryIfMissing, doesFileExist, getCurrentDirectory, removeFile)
+import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.FilePath ((</>))
 
 data L3Error
@@ -105,8 +113,8 @@ data PersonaTimerPayload = PersonaTimerPayload
 
 instance FromJSON PersonaTimerPayload where
   parseJSON =
-    withObject "PersonaTimerPayload" \o ->
-      PersonaTimerPayload <$> parsePartitionSpace o <*> o .: "scope"
+    Aeson.withObject "PersonaTimerPayload" \o ->
+      uncurry PersonaTimerPayload <$> parsePartitionedScopeFields o
 
 l3PersonaProcessManagerName :: Text
 l3PersonaProcessManagerName = "kioku-l3-persona"
@@ -225,29 +233,13 @@ fireL3PersonaTimer ::
   DistillRuntime ->
   TimerRow ->
   Eff es FireOutcome
-fireL3PersonaTimer contexts rt row
-  | row.processManagerName /= l3PersonaProcessManagerName =
-      pure FireNotMine
-  | otherwise =
-      case Aeson.fromJSON @PersonaTimerPayload row.payload of
-        -- Unparseable now, unparseable on every retry: dead-letter rather than
-        -- mark it fired and lose the persona silently.
-        Aeson.Error err ->
-          pure (FireFailedPermanently ("L3 persona timer payload is malformed: " <> Text.pack err))
-        Aeson.Success payload -> do
-          decision <- contexts.contextForSpace payload.memorySpaceId
-          case decision of
-            Left denial ->
-              pure
-                ( FireFailedPermanently
-                    ("L3 persona timer is not authorized for its memory space: " <> Text.pack (show denial))
-                )
-            Right context -> do
-              result <- regeneratePersona rt (memoryContextSpace context) payload.scope
-              pure $
-                case result of
-                  Right _ -> FireCompleted (timerMarkerEventId row.timerId)
-                  Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
+fireL3PersonaTimer contextProvider rt row =
+  firePartitionedDistillTimer
+    l3PersonaProcessManagerName
+    "L3 persona timer"
+    contextProvider
+    row
+    (regeneratePersona rt)
 
 getPersonaByScope ::
   (Store :> es) =>
@@ -256,7 +248,7 @@ getPersonaByScope ::
   Eff es (Maybe PersonaRow)
 getPersonaByScope memorySpaceId scope =
   runTransaction $
-    Tx.statement (scopeKey memorySpaceId scope) selectPersonaByScopeStmt
+    Tx.statement (partitionedScope memorySpaceId scope) selectPersonaByScopeStmt
 
 getPersonaScenesByScope ::
   (Store :> es) =>
@@ -265,34 +257,9 @@ getPersonaScenesByScope ::
   Eff es [PersonaSceneRow]
 getPersonaScenesByScope memorySpaceId scope =
   runTransaction $
-    Tx.statement (scopeKey memorySpaceId scope) selectScenesForPersonaStmt
-
--- | A scope lookup inside one memory space, as a record rather than a four-tuple so that the
--- partition cannot be transposed with the namespace it sits beside.
-data PartitionedScope = PartitionedScope
-  { memorySpaceId :: !MemorySpaceId,
-    namespace :: !Text,
-    scopeKind :: !(Maybe Text),
-    scopeRef :: !(Maybe Text)
-  }
+    Tx.statement (partitionedScope memorySpaceId scope) selectScenesForPersonaStmt
 
 data PersonaKey = PersonaKey !MemorySpaceId !Text
-
-scopeKey :: MemorySpaceId -> MemoryScope -> PartitionedScope
-scopeKey memorySpaceId scope =
-  PartitionedScope
-    { memorySpaceId,
-      namespace = scopeNamespaceText scope,
-      scopeKind = scopeKindText scope,
-      scopeRef = scopeRefText scope
-    }
-
-partitionedScopeEncoder :: E.Params PartitionedScope
-partitionedScopeEncoder =
-  ((\q -> q.memorySpaceId) >$< memorySpaceParam)
-    <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
-    <> ((\q -> q.scopeKind) >$< E.param (E.nullable E.text))
-    <> ((\q -> q.scopeRef) >$< E.param (E.nullable E.text))
 
 mirrorPersonaToCurrentWorkspace :: PersonaRow -> IO FilePath
 mirrorPersonaToCurrentWorkspace row = do
@@ -344,11 +311,6 @@ bestEffortRemovePersonaMirror rt row = do
           (personaMirrorPath workspace row : maybeToList (legacyPersonaMirrorPath workspace row))
   _ <- try remove :: IO (Either IOException ())
   pure ()
-
-removeIfPresent :: FilePath -> IO ()
-removeIfPresent path = do
-  exists <- doesFileExist path
-  when exists (removeFile path)
 
 personaScopeSlug :: PersonaRow -> Text
 personaScopeSlug row =

@@ -22,7 +22,10 @@
 -- @memory_space_id@ is a plain @text@ column, and exactly one pair of functions turns a
 -- 'MemorySpaceId' into it and back.
 module Kioku.Partition
-  ( parsePartitionSpace,
+  ( PartitionedScope (..),
+    partitionedScope,
+    partitionedScopeEncoder,
+    parsePartitionSpace,
     parseRecordedActor,
     parseRecordedActorFromAgent,
     parseRecordedOwner,
@@ -45,7 +48,38 @@ import Kioku.Api.Access
     memorySpaceIdText,
     mkMemorySpaceId,
   )
+import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Prelude
+
+-- | A scope lookup qualified by its memory space.
+--
+-- The record fixes the PostgreSQL parameter order used by every L2/L3 statement and makes the
+-- partition impossible to transpose with the namespace beside it.
+data PartitionedScope = PartitionedScope
+  { memorySpaceId :: !MemorySpaceId,
+    namespace :: !Text,
+    scopeKind :: !(Maybe Text),
+    scopeRef :: !(Maybe Text)
+  }
+  deriving stock (Generic, Eq, Show)
+
+-- | Qualify a public scope value with the memory space in which it is being queried.
+partitionedScope :: MemorySpaceId -> MemoryScope -> PartitionedScope
+partitionedScope memorySpaceId scope =
+  PartitionedScope
+    { memorySpaceId,
+      namespace = scopeNamespaceText scope,
+      scopeKind = scopeKindText scope,
+      scopeRef = scopeRefText scope
+    }
+
+-- | Encode @memory_space_id@, namespace, scope kind, and scope reference as @$1@ through @$4@.
+partitionedScopeEncoder :: E.Params PartitionedScope
+partitionedScopeEncoder =
+  ((\q -> q.memorySpaceId) >$< memorySpaceParam)
+    <> ((\q -> q.namespace) >$< E.param (E.nonNullable E.text))
+    <> ((\q -> q.scopeKind) >$< E.param (E.nullable E.text))
+    <> ((\q -> q.scopeRef) >$< E.param (E.nullable E.text))
 
 -- | The memory space a payload belongs to, defaulting an older payload into the legacy space.
 parsePartitionSpace :: Object -> Parser MemorySpaceId
