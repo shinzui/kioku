@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Breaking Changes
+
+- Corrected the released payload of `0011-kioku-memory-space-partition.sql` so its final statement
+  is `RESET search_path;`. Its exact-byte SHA-256 changes from
+  `eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192` to
+  `6c83d3f01f784d0d9395953d5bb1763b8eea6cd9439073df42f79775a85197a9`. Databases that
+  already applied `0011` under 0.4.0.0 or 0.4.1.0 must run
+  `ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql` once before the corrected `up` or
+  `verify`; databases where `0011` is pending apply it normally. The next release must use the
+  0.5.0.0 series.
+- Raised `keiro-migrations` to `^>=0.14.0.0`. Its appended `keiro/0031` migration adds bounded
+  terminal rejected-outbox audit fields and updates ordering indexes. The composed plan now
+  contains 55 migrations: Kiroku 11, Keiro 31, and Kioku 13.
+
 ### Added
 
 - Added `0013-partition-aware-fts-index.sql`. When `btree_gin` is installed or can be installed,
@@ -9,7 +23,15 @@
   `(memory_space_id, namespace, content_tsv)`, preventing one space's recall cost from growing
   with matching content in unrelated spaces. If extension installation is unavailable, the
   migration succeeds and retains the old index as a correctness-preserving fallback.
-- The composed fresh-install plan now contains 54 migrations: Kiroku 11, Keiro 30, Kioku 13.
+- Added the exact-checksum, idempotent 0.4.x ledger re-baseline at
+  `ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql` and tests for mismatch recovery,
+  repeated execution, and a missing custom ledger configuration.
+
+### Fixed
+
+- Migration `0011` now restores the configured database or role `search_path` before its own
+  transaction commits. The composed-plan regression applies all 55 framework migrations and an
+  unqualified host migration on one connection with a nonstandard `host_app, pg_catalog` default.
 
 ## 0.4.1.0 — 2026-08-18
 

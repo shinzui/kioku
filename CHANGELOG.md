@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- **kioku-migrations:** corrected the exact payload of
+  `0011-kioku-memory-space-partition.sql` so it restores the host's configured `search_path`
+  before committing. Its SHA-256 changes from
+  `eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192` to
+  `6c83d3f01f784d0d9395953d5bb1763b8eea6cd9439073df42f79775a85197a9`. A database that
+  already applied `0011` under Kioku 0.4.0.0 or 0.4.1.0 must run
+  `kioku-migrations/ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql` before the corrected
+  `up` or `verify`; a database where `0011` is pending needs no special action. The next Kioku
+  release must use the 0.5.0.0 series.
+- **kioku-migrations:** upgraded `keiro-migrations` to `^>=0.14.0.0`, adding Keiro migration
+  `0031` for terminal rejected-outbox audit fields and indexes. The composed plan now contains 55
+  migrations: Kiroku 11, Keiro 31, and Kioku 13.
+
+### Fixed
+
+- Kioku's migration component no longer leaves pg-migrate's reused connection pinned to
+  `kiroku, pg_catalog`, so a later host migration can resolve its own unqualified tables against
+  the configured database or role default in the same run.
+
 ## 0.4.1.0 — 2026-08-18
 
 A cohort release. `kioku-core` moves onto Baikai 0.5; no Kioku source changed, and nothing any

@@ -2,7 +2,7 @@
 
 This runbook moves a data-bearing database created by the pre-cutover kioku cohort onto
 pg-migrate without replaying any of its 30 historical migrations. The source profile is exact:
-kiroku 6, keiro 14, and kioku 10. Six migrations added after those pins are not imported; the
+Kiroku 6, Keiro 14, and Kioku 10. Twenty-five migrations added after those pins are not imported; the
 normal `up` step applies them once after the history import.
 
 Stop every application, worker, and migration process that can write to the database. The importer
@@ -86,7 +86,11 @@ mapped SQL. Six Kiroku and nine Kioku mappings are checked against preserved SHA
 Running the same import again is safe: matching audit evidence reports `already imported`. Changed
 evidence fails with a history-import conflict instead of overwriting the first audit.
 
-## 5. Apply the ten post-pin migrations and verify
+## 5. Apply the 25 post-pin migrations and verify
+
+A Codd-era database has no applied Kioku `0011` row: the imported Kioku history ends at `0010`.
+Do not run the 0.4.x `0011` checksum re-baseline before this first corrected `up`; `0011` is
+pending here and applies from the corrected payload normally.
 
 ```bash
 DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- up
@@ -95,14 +99,15 @@ DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- status
 ```
 
 `up` reports the 30 imported migrations as already applied and applies only the forward suffix:
-Kiroku 0007/0008, Keiro 0015 through 0020, Kioku 0011 (the memory-space partition) and Kioku 0012
-(the projection relocation into the `kioku` schema). The final status is 40 applied migrations
+Kiroku `0007` through `0011`, Keiro `0015` through `0031`, and Kioku `0011` through `0013`.
+The Kioku suffix partitions the read models, relocates the projections into the `kioku` schema,
+and installs the partition-aware full-text index. The final status is 55 applied migrations
 with no pending, unknown, or verification issues:
 
 ```text
-kiroku  8
-keiro  20
-kioku  12
+kiroku  11
+keiro  31
+kioku  13
 ```
 
 Because the suffix includes Kioku 0012, this cutover also moves the seven projections out of

@@ -13,6 +13,34 @@ component's namespace, distinguished only by a name prefix that nothing enforces
 This is a **migration-first upgrade with a short planned outage**. Read the rollout below before
 you start: there are no compatibility views, and restarting the old binary is not a rollback.
 
+## Preflight an applied 0.4.x `0011`
+
+Kioku 0.4.0.0 and 0.4.1.0 shipped migration `0011-kioku-memory-space-partition.sql` with a
+session-scoped `SET search_path` that was not restored. The corrected payload resets the host's
+configured default before committing, so its exact SHA-256 changes from
+`eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192` to
+`6c83d3f01f784d0d9395953d5bb1763b8eea6cd9439073df42f79775a85197a9`.
+
+After taking and verifying the backup required below, run this once if the database already
+applied `kioku/0011-kioku-memory-space-partition` under either 0.4.x release, and run it before the
+corrected binary's first `up` or `verify`:
+
+```bash
+psql "$PG_CONNECTION_STRING" --set=ON_ERROR_STOP=1 \
+  --file=kioku-migrations/ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql
+```
+
+The script matches only an applied `kioku/0011` row carrying the withdrawn checksum and is safe
+to run twice. A zero-row notice means `0011` is pending, already corrected, or has an unexpected
+checksum; determine which before proceeding. If pg-migrate uses a custom `LedgerConfig`, adapt the
+script's explicit `pgmigrate.migrations` lookup to that ledger schema without broadening its
+component, migration, status, or checksum predicate. Never delete the ledger row or mark the
+migration pending.
+
+Fresh databases and databases where `0011` is still pending need no special action. A database
+following [the Codd cutover runbook](upgrading-to-pg-migrate.md) also has no `0011` row before its
+first corrected `up`, because that import ends at Kioku `0010`.
+
 ## What moves
 
 | Before | After |
@@ -97,7 +125,8 @@ hand-write registry SQL.
    DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- status
    ```
 
-   `status` must report all 53 migrations applied, with nothing pending or failed.
+   `status` must report all 55 migrations applied (Kiroku 11, Keiro 31, Kioku 13), with nothing
+   pending or failed.
 5. **Grant schema usage if your runtime role is not the owner.** Table grants moved with the
    tables; usage on a schema that did not exist before is a separate privilege.
 

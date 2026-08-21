@@ -2,18 +2,30 @@
 type: Bug Report
 title: Migration 0011's session search_path leaks into every migration applied after it
 description: >-
-  Migration 0011 is the final of ten released Kioku migrations that set the session search_path
-  and never restore it, so later components on the same connection resolve unqualified names
-  against the kiroku schema instead of their own.
+  The 0.4.x payload of migration 0011 was the final of ten Kioku migrations that left the session
+  search_path pinned to the kiroku schema; the corrected payload resets the host default before
+  later components run.
 generated:
   by: openai/gpt-5
-  at: "2026-08-19T21:39:40Z"
+  at: "2026-08-21T19:16:10Z"
 bugId: BUG-1
-status: confirmed
+status: fixed
 severity: degraded
 origin: mori://shinzui/rei
 affects: mori://shinzui/kioku/packages/kioku-migrations
 affectedVersion: "0.4.0.0"
+fixedVersion: unreleased
+resolution: >-
+  Fixed on the default branch by correcting migration 0011 itself: its final statement now resets
+  search_path before the transaction commits, so migration 0011 cannot reach an applied state
+  while leaving pg-migrate's shared connection poisoned. The exact payload checksum changes from
+  eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192 to
+  6c83d3f01f784d0d9395953d5bb1763b8eea6cd9439073df42f79775a85197a9. Databases that
+  already applied the 0.4.0.0 or 0.4.1.0 payload must run the shipped, idempotent
+  ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql before the corrected up or verify;
+  databases where 0011 is pending apply it normally. A composed Kiroku/Keiro/Kioku/host
+  regression now gives the database a nonstandard host_app search path and proves an unqualified
+  host migration succeeds after all 55 framework migrations.
 observed: >-
   Applying a composed plan in which 0011 and a later component's migration are both pending fails
   on the first migration after 0011 with SQLSTATE 42P01, reporting that a table which exists in
@@ -23,7 +35,7 @@ expected: >-
   consumer's composed pg-migrate plan, and kioku sorts before the consuming application in that
   plan, so a consumer's own migrations must resolve their own unqualified names exactly as they
   did before kioku's ran. Migration 0012 already meets this — it schema-qualifies rather than
-  setting search_path.
+  setting search_path — as does migration 0013.
 reproduction:
   - Compose a pg-migrate plan whose components are ordered kioku then a consuming application, as an embedding host does.
   - Bring a database to kioku 0010 and leave at least one of the consuming application's own migrations pending, so that 0011 and that migration are pending in the same run.
@@ -39,34 +51,35 @@ workaround: >-
 reviews:
   - kind: model
     reviewer: codex
-    reviewed_at: "2026-08-19T21:39:40Z"
-    document_timestamp: "2026-08-19T21:39:40Z"
+    reviewed_at: "2026-08-21T19:16:10Z"
+    document_timestamp: "2026-08-21T19:16:10Z"
     scope: content-and-metadata
     outcome: approved
     provider: openai
     model: gpt-5
     effort: high
     context: >-
-      Confirmed at repository commit c6032c5926d94b13894dc35589b409376c135f04 by reading
-      pg-migrate 1.1.0.0's dedicated-connection runner and reproducing the 42P01 failure with a
-      composed Kioku-plus-host plan on PostgreSQL 17.10. The same plan succeeded when a
-      transactional RESET search_path migration was inserted before the host component.
+      Reviewed against repository commit a53d063da16640322b86ed0eccd61490d351df4c after reading
+      pg-migrate 1.1.0.0's dedicated-connection runner, reproducing the 42P01 failure with the
+      checked-in composed Kiroku/Keiro-0.14/Kioku/host test on PostgreSQL 17.10, and verifying the
+      corrected 0011 plus exact-checksum re-baseline through all 24 migration tests.
 verified:
   by: process:codex
-  at: "2026-08-19T21:39:40Z"
+  at: "2026-08-21T19:16:10Z"
 ---
 
 # Migration 0011's session `search_path` leaks into every migration applied after it
 
 ## What is wrong
 
-`kioku-migrations/migrations/0011-kioku-memory-space-partition.sql:28` opens with
+The payload shipped in 0.4.0.0 and 0.4.1.0 opened with
 
 ```sql
 SET search_path TO kiroku, pg_catalog;
 ```
 
-and never restores it.
+and never restored it. The corrected file retains that opening statement for its own unqualified
+DDL and ends with `RESET search_path;`.
 
 A bare `SET` is **session**-scoped, not transaction-scoped. Committing the migration transaction
 therefore commits the setting too. `pg-migrate` runs a plan's migrations on one dedicated
@@ -74,13 +87,14 @@ connection, so the setting outlives `0011` and applies to every migration that e
 in the same run — including migrations belonging to components `0011` knows nothing about.
 
 Migration `0012`, in the same release, does not have this problem: it schema-qualifies its
-statements and sets no `search_path`. It also does not repair the session state it inherits from
-`0011`, so `kiroku, pg_catalog` remains active when the next component begins.
+statements and sets no `search_path`. Feature migration `0013`, added later, does the same. Before
+the correction neither repaired the session state inherited from `0011`, so `kiroku, pg_catalog`
+remained active when the next component began.
 
 `0011` is the final offender, not the only one. Migrations `0001`–`0005` and `0007`–`0011` all
-contain the same bare `SET search_path TO kiroku, pg_catalog`; `0006` and `0012` do not. The report
-centres on `0011` because it is the last such migration in the current manifest and therefore the
-one whose value reaches a host component when the full released plan is pending.
+contain the same bare `SET search_path TO kiroku, pg_catalog`; `0006`, `0012`, and `0013` do not.
+The report centres on `0011` because it is the last such migration in the manifest and therefore
+the one that must clear both its own setting and the identical value that `0010` may have left.
 
 ## Why it reaches consumers
 
@@ -121,45 +135,49 @@ affected version against which this particular failure was observed.
 
 ## Validation
 
-The owning repository reproduced the defect at commit
-`c6032c5926d94b13894dc35589b409376c135f04` with `kioku-migrations` 0.4.1.0,
-`pg-migrate` 1.1.0.0, and PostgreSQL 17.10. The ephemeral database contained
-`public.host_table`, and the composed plan was `kiroku, keiro, kioku, host`; the host component's
-only migration ran `ALTER TABLE host_table ADD COLUMN leaked boolean`. The plan failed after both
-Kioku migrations `0011` and `0012` committed:
+The owning repository now carries the reproducer in `kioku-migrations/test/Main.hs`. The
+ephemeral database sets its configured default to `host_app, pg_catalog`, creates
+`host_app.host_table`, and applies `kiroku -> keiro -> kioku -> host` with
+`keiro-migrations` 0.14.0.0. The host component's only migration runs an unqualified
+`ALTER TABLE host_table`. With the withdrawn `0011` body, all other migration cases passed and
+this case alone failed:
 
 ```text
 Left (DatabaseSessionFailed (ScriptSessionError
-  "ALTER TABLE host_table ADD COLUMN leaked boolean;"
+  "ALTER TABLE host_table ADD COLUMN migrated boolean NOT NULL DEFAULT true;"
   (ServerError "42P01" "relation \"host_table\" does not exist" ...)))
 ```
 
-Inserting a transactional `RESET search_path` migration between the Kioku and host components
-made the otherwise identical plan complete, including the unqualified host `ALTER TABLE`. This
-also demonstrates that the repair can be forward-only.
+After migration `0011` itself gained its final `RESET search_path;`, the focused case passed and
+the complete suite reported all 24 cases passing. The final composed framework plan contains 55
+rows: 11 Kiroku, 31 Keiro, and 13 Kioku. A separate regression models an applied 0.4.x database by
+replacing only `kioku/0011`'s ledger checksum with the withdrawn digest; strict verification then
+reports `MigrationChecksumMismatch`, the shipped re-baseline restores verification without DDL,
+and a second run changes nothing.
 
-## Fix direction
+## Resolution
 
-Append migration `0013` containing `RESET search_path;`. It runs after every released Kioku
-migration, restores the database/role default on the runner's existing connection when its
-transaction commits, and preserves every released migration checksum. A composed-plan regression
-test must set a nonstandard database default, run a later host migration with an unqualified table
-name, and prove the host migration sees that default after Kioku completes.
+Migration `0011` now cleans up the session state before its own transaction commits. The opening
+plain `SET` remains because the migration's historical DDL is unqualified, but the file ends with
+an explanatory comment and `RESET search_path;`. Changing the opening statement to `SET LOCAL`
+would not suffice: when `0011` begins, `0010` may already have left the same session value, and
+commit would reveal it again. The final plain reset restores the configured database or role
+default for `0012`, `0013`, and every later host component.
 
-Future migrations must either schema-qualify their relations or use
-`SET LOCAL search_path TO ...`, whose value disappears at the end of that migration's transaction.
-Do not edit migrations `0001`–`0011`: changing any released payload changes its durable checksum.
+This deliberately corrects a released payload. The withdrawn exact-byte SHA-256 is
+`eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192`; the corrected digest is
+`6c83d3f01f784d0d9395953d5bb1763b8eea6cd9439073df42f79775a85197a9`. A database that already
+applied `0011` under 0.4.0.0 or 0.4.1.0 must run
+`kioku-migrations/ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql` once before the corrected
+`up` or `verify`. The script matches only the applied Kioku row with the withdrawn checksum and is
+an informative no-op otherwise. A database where `0011` is pending applies the corrected bytes
+normally, and a Codd-era database has no `0011` row before its first corrected `up`.
 
-The general rule for an embedded migration component is: **a component must leave session state
-ready for the next component, whose SQL it cannot know.**
-
-## Note for the fix
-
-`0011` is already released in 0.4.0.0 and 0.4.1.0, and the earlier offenders shipped in every
-release, so correcting any historical payload would change its checksum. `shinzui/kiroku`'s BUG-1
-is the precedent for a historical checksum repair, but this defect does not need one: every
-historical migration applies correctly, and a new final migration can restore the session before
-control passes to another component.
+No schema-convergence migration is necessary: the old and corrected bodies have identical durable
+schema and data effects, and the old session value disappeared when its runner connection closed.
+No cleanup migration was added. A component must leave session state ready for the next component,
+whose SQL it cannot know; future migrations must name relations explicitly or contain and clean up
+any session setting inside their own execution boundary.
 
 ## Related
 

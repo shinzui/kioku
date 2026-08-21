@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- The composed plan includes the corrected Kioku `0011` payload. A database that already applied
+  `0011` with Kioku 0.4.0.0 or 0.4.1.0 must run
+  `kioku-migrations/ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql` before this executable's
+  first `up` or `verify`; a database where `0011` is pending needs no preflight action. The next
+  release must use the 0.5.0.0 series.
+
+### Changed
+
+- The composed Keiro migration dependency is now 0.14.0.0 and includes `keiro/0031`. `up`,
+  `status`, and `verify` now report 55 migrations: Kiroku 11, Keiro 31, and Kioku 13.
+
+### Fixed
+
+- A single composed `up` no longer leaves the migration connection's `search_path` pinned to the
+  Kiroku schema before control reaches an application-owned component.
+
 ## 0.4.1.0 — 2026-08-18
 
 ### Changed

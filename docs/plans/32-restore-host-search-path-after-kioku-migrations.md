@@ -56,8 +56,9 @@ and no application-facing Haskell API changes.
 - [x] (2026-08-21T19:14:29Z) Add and test the exact-checksum ledger re-baseline for databases that
       applied the withdrawn 0.4.x payload, while preserving the 55-row plan and the pinned Codd
       import evidence.
-- [ ] Close BUG-1 as fixed on the default branch, update current user documentation and
-      changelogs, regenerate the bug-report index/log, and validate the OKF bundle.
+- [x] (2026-08-21T19:19:47Z) Close BUG-1 as fixed on the default branch, update current user
+      documentation and changelogs, regenerate the bug-report index/log, and validate the OKF
+      bundle.
 - [ ] Validate and record the durable migration-correction policy in ADR-10, run focused and
       repository-wide validation, perform the final ADR distillation pass, and record the results
       in this plan.
@@ -145,6 +146,12 @@ and no application-facing Haskell API changes.
   Evidence: both focused fixup tests passed; the complete migration suite reported
   `All 24 tests passed`; and the source tarball contains
   `ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql`.
+
+- Observation: The bug-report index generator emits one extra blank line at end of file, which
+  fails this repository's required `git diff --check` even though strict OKF validation accepts
+  it. Removing that generated trailing blank preserves the index content and both checks pass.
+  Evidence: `okf validate ... --profile-enforce --log-enforce` printed
+  `OK: 1 concepts (okf_version 0.2)`, and the subsequent whitespace check exited zero.
 
 
 ## Decision Log
