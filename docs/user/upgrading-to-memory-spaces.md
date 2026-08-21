@@ -233,6 +233,13 @@ second run a no-op. A destination holding *different* content is a `COLLISION`: 
 never overwritten — the partitioned file is what the running worker writes, and a pre-partition
 snapshot is older. The command exits non-zero if any collision was reported, in dry-run mode too.
 
+`--apply` revalidates publication atomically, so it is safe to leave workers running between the
+dry run and apply. If a worker creates the destination in that interval, byte-identical content is
+treated as already migrated; differing content makes apply exit non-zero without replacing the
+worker's file. The complete copy is staged as a hidden sibling whose name begins
+`.kioku-migrate-artifacts`; a killed process can leave one behind, and an operator may remove it
+after confirming no artifact migration is running. The historical source is always retained.
+
 One thing still touches the old tree: when every memory in a scope is forgotten, the legacy
 space's historical mirror is unlinked along with the partitioned one. A merely out-of-date file
 shows up in the migration plan; forgotten content surviving on disk is not out of date, it is a

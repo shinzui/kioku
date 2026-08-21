@@ -355,7 +355,7 @@ kioku migrate-artifacts [--workspace DIR] [--apply]
 Mirrors used to be written to `.kioku/scenes/<scope-slug>.md` and `.kioku/persona/<scope-slug>.md`,
 keyed by scope alone — so two memory spaces holding the same scope wrote to one file. They now
 live under `.kioku/spaces/<space-dir>/{scenes,persona}/`, and nothing writes to the old tree any
-more. This command moves what is already there.
+more. This command copies what is already there and retains the historical source.
 
 | Flag              | Description                                                                        |
 |-------------------|-------------------------------------------------------------------------------------|
@@ -375,6 +375,11 @@ Each file gets one of three verdicts:
   partitioned file is what the running worker writes, and the historical one is older.
 
 The command exits `1` if any collision was reported, in dry-run mode as well as under `--apply`.
+`--apply` also revalidates each `copy` atomically. A byte-identical destination created after the
+plan is accepted as already migrated; a differing late destination makes the command exit
+non-zero without replacing it. Complete copies are staged under a hidden
+`.kioku-migrate-artifacts` prefix before publication. If a killed process leaves one behind, it
+may be removed after confirming no migration process is running.
 
 Removing the old tree after you have verified the new layout is your decision; this command will
 not delete anything.

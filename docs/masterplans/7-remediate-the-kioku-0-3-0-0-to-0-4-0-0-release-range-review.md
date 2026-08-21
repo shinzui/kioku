@@ -88,7 +88,7 @@ convention.
 
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
-| EP-1 | Make workspace artifact migration no-clobber and share slug derivation | docs/plans/33-make-workspace-artifact-migration-no-clobber-and-share-slug-derivation.md | None | None | In Progress |
+| EP-1 | Make workspace artifact migration no-clobber and share slug derivation | docs/plans/33-make-workspace-artifact-migration-no-clobber-and-share-slug-derivation.md | None | None | Complete |
 | EP-2 | Enforce distillation permissions through shared timer primitives | docs/plans/34-enforce-distillation-permissions-through-shared-timer-primitives.md | None | None | Not Started |
 | EP-3 | Enforce memory lineage and centralize write-context gates | docs/plans/35-enforce-memory-lineage-and-centralize-write-context-gates.md | None | None | Not Started |
 | EP-4 | Repair L1 watermark ownership and timer-space attribution | docs/plans/36-repair-l1-watermark-ownership-and-timer-space-attribution.md | None | EP-2 | Not Started |
@@ -168,8 +168,8 @@ rationale that will matter later, and deliberate exclusions.
 Track milestone-level progress across all child plans. Each entry names the child plan
 and the milestone. This section provides an at-a-glance view of the entire initiative.
 
-- [ ] EP-1: publish artifact copies atomically without replacing a destination created after planning.
-- [ ] EP-1: make workspace and scope slugs consume one sanitise-plus-digest primitive.
+- [x] EP-1: publish artifact copies atomically without replacing a destination created after planning.
+- [x] EP-1: make workspace and scope slugs consume one sanitise-plus-digest primitive.
 - [ ] EP-2: reject L1, L2, and L3 work before any LLM or write when required permissions are absent.
 - [ ] EP-2: replace L2/L3 timer, partition-parameter, and mirror-removal duplication with shared primitives.
 - [ ] EP-3: reject missing and cross-space lineage targets before appending memory events.
@@ -250,4 +250,8 @@ Compare the result against the original vision. Before marking the MasterPlan co
 distill durable project context from this MasterPlan and its child ExecPlans into
 docs/adr/. Keep task-local execution and coordination details here.
 
-(To be filled during and after implementation.)
+EP-1 completed on 2026-08-21. Workspace artifact migration now preserves a live destination even
+when it appears after planning, accepts byte-identical late publication idempotently, preserves
+source permissions, and removes its temporary sibling on handled success and failure. Workspace
+and scope persisted names share one byte-stable slug primitive. The full affected core and CLI
+suites pass; six child plans remain.

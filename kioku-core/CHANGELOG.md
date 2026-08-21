@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `applyArtifactMigration` now publishes a fully written temporary sibling through an atomic
+  no-replace hard link. A destination created after the dry-run plan can no longer be overwritten:
+  byte-identical content is accepted as already migrated, while differing content fails without
+  changing either file. Published copies retain the historical source's permissions.
+- Workspace directory names and scope mirror filenames now consume one exported
+  `slugWithDigest` implementation while preserving every existing persisted path byte for byte.
+
 ## 0.4.1.0 — 2026-08-18
 
 ### Changed

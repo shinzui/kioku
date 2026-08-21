@@ -41,7 +41,9 @@ This section must always reflect the actual current state of the work.
   handle a stale plan.
 - [x] (2026-08-21 17:11Z) Add deterministic stale-plan, idempotence, permission, cleanup, and
   shared-slug regression tests. The focused Workspace pattern passes all 13 tests.
-- [ ] Update package metadata, changelog, and operator/library documentation; run the full core suite.
+- [x] (2026-08-21 17:14Z) Update package metadata, changelog, and operator/library
+  documentation; run the full affected suites. `kioku-core` passes all 215 tests and `kioku-cli`
+  passes all 50 tests after both packages build successfully.
 
 
 ## Surprises & Discoveries
@@ -85,7 +87,19 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Completed on 2026-08-21. `slugWithDigest` now owns the persisted sanitise-plus-digest recipe used
+by both scope mirror filenames and memory-space directories, with regression fixtures proving
+the old bytes did not change. Artifact apply now stages complete bytes in the destination
+directory, applies the source mode, and publishes with an atomic no-replace hard link. A late
+byte-identical destination is idempotent; a late differing destination produces a named
+`IOException` while both the live file and historical source remain unchanged.
+
+`nix fmt`, `cabal build kioku-core kioku-cli`, the 215-test `kioku-core` suite, the 50-test
+`kioku-cli` suite, and `git diff --check` all pass. The existing pgvector-dependent skips remain
+environmental and Cabal reports both suites PASS. The completion distillation found no new ADR
+to write: [the filesystem partition ADR](../adr/the-partition-reaches-the-filesystem-as-a-digest.md)
+already owns the durable encoding and no-overwrite policy, while the temporary-file and hard-link
+mechanics are replaceable implementation details.
 
 
 ## Context and Orientation

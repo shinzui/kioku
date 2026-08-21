@@ -594,8 +594,10 @@ summarizing nothing.
   `legacyPersonaArtifactDir`. A memory space id is validated for a database column rather than for
   a path (`..` is legal), so the directory component is a sanitised prefix plus a digest, never
   the id itself. `planArtifactMigration` / `applyArtifactMigration` are what
-  `kioku migrate-artifacts` runs; the plan is a pure report and the apply copies, never moves or
-  overwrites.
+  `kioku migrate-artifacts` runs; the plan is a pure report and the apply publishes a complete
+  copy atomically without replacing an existing path. If the destination appears after planning,
+  byte-identical content is accepted as already migrated and differing content raises an
+  `IOException` that names the refused destination.
 - `Kioku.Distill.Timer` — the timer ids, the schedule projection (`l1TimerScheduleProjection`,
   `l1IdleTimerId`, `idleFlushSeconds`), and `L1TimerPayload`, which carries the memory space the
   scheduled pass belongs to.
@@ -615,7 +617,8 @@ summarizing nothing.
   (`applyFireOutcome`). **kioku ships no loop function**: the supervised loop is the host's, and the
   CLI builds one with `race` over `drainKiokuTimers`.
 - `Kioku.Distill.ScopeIdentity` — the collision-free scope identity (`scopeIdentity`,
-  `scopeSlugFromColumns`) that determines scene/persona mirror filenames.
+  `scopeSlugFromColumns`) that determines scene/persona mirror filenames, plus the shared
+  `slugWithDigest` primitive used by both scope filenames and workspace space directories.
 
 Most hosts let the **worker** drive these on timers rather than calling them directly; see
 [Distillation](distillation.md).
