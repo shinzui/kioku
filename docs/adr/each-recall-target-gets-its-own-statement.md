@@ -5,7 +5,7 @@ description: >-
   Recall's three targets compile to three SQL scope clauses in nine statements rather than to one
   parameterised predicate with nullable scope columns, so the breadth a call asked for is visible
   in the statement it ran and in the plan PostgreSQL chose.
-timestamp: 2026-08-07T12:00:00Z
+timestamp: 2026-08-21T18:43:01Z
 docId: ADR-9
 status: accepted
 date: 2026-08-07
@@ -74,13 +74,20 @@ varies between families; the partition predicate is not a variable. This is
 [ADR-2](namespace-is-not-a-security-boundary.md)'s constraint reaching the SQL, as
 [ADR-6](the-partition-is-a-column-not-a-schema.md) reached the schema.
 
-**No new index.** All three bounds are answered through the partition-first index migration 0011
-installed, `kioku_memories_space_scope_idx` on
-`(memory_space_id, namespace, scope_kind, scope_ref) WHERE status = 'active'`: the two exact
-bounds as four-column index conditions and the namespace-wide bound as a two-column prefix. A
-btree index takes `scope_kind IS NULL` as an index condition rather than as a filter, so the exact
-global bucket needs no index of its own — and adding a partial one would cost a write per insert
-for no gain, which is the redundancy migrations 0008 and 0011 removed twice already.
+**Target semantics and full-text access paths are separate decisions.** The partition-first
+`kioku_memories_space_scope_idx` from migration 0011 still answers the two exact bounds as
+four-column index conditions and the namespace-wide bound as a two-column prefix. It remains the
+right path for unranked scope reads and the exact vector pass. A B-tree takes
+`scope_kind IS NULL` as an index condition rather than as a filter, so the exact global bucket
+still needs no dedicated index.
+
+Full-text recall has a different cost boundary. A content-only GIN enumerates matching text from
+every memory space before the heap applies the mandatory space and namespace predicates, so its
+cost grows with unrelated tenants even though its results are correct. Migration 0013 therefore
+prefers an active-only GIN on `(memory_space_id, namespace, content_tsv)`. The first two text
+columns use `btree_gin`; because Kioku cannot assume an embedded host's database role may install
+extensions, the migration retains the content-only GIN when `btree_gin` is unavailable. The
+fallback changes performance, never target meaning or isolation.
 
 ## Consequences
 
@@ -97,6 +104,16 @@ namespace-wide plan constrains no scope at all — and that every one of them is
 `memory_space_id`. Its fixture holds two memory spaces with byte-identical rows under identical
 names, so a statement that lost the partition predicate returns six rows where it should return
 one.
+
+**The FTS plan proof needs both semantic fixtures and planner-scale noise.** PostgreSQL correctly
+prefers the four-column scope B-tree when an exact scope contains one row; that proves the scope
+path, not the composite GIN. The fixture therefore adds nonmatching rows inside every requested
+scope, matching rows in another namespace, and current table statistics, then compares
+bitmap-capable paths with sequential and direct index scans disabled. All three full-text
+families must name `kioku_memories_space_namespace_tsv_idx`, and their GIN condition must carry
+the requested space, namespace, and `content_tsv` match. If `btree_gin` is unavailable, that
+performance assertion reports an explicit skip while the two-space result-isolation cases still
+run.
 
 **The nine statements are a real cost, and prepared-statement cache pressure is the honest form of
 it.** Three channels times three bounds is nine entries per connection instead of three. That is
@@ -144,6 +161,8 @@ every insert.
 
 - `kioku-core/src/Kioku/Recall.hs` — `ScopeBound`, the three SQL templates, the nine statements
 - `kioku-core/test/Kioku/RecallTargetSpec.hs` — the target matrix and the plan evidence
+- `kioku-migrations/migrations/0013-partition-aware-fts-index.sql` — the preferred composite GIN
+  and content-only fallback
 - `kioku-core/test/Kioku/RecallSqlSpec.hs` — the per-family filtered-ANN regressions
 - [Recall & Hybrid Retrieval](../user/recall.md#how-a-target-reaches-sql)
 - [ADR-8](an-explicit-recall-target-replaces-the-overloaded-scope.md) — the vocabulary this

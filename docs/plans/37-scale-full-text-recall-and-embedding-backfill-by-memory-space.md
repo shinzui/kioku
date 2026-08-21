@@ -35,10 +35,11 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Add the next manifest-ordered, partition-aware full-text index migration with a safe fallback.
-- [ ] Prove scoped recall correctness and index use with a two-space PostgreSQL fixture.
-- [ ] Move the embedding missing-or-stale predicate into both backfill candidate statements.
-- [ ] Add candidate-transfer regressions, documentation, changelogs, and full package validation.
+- [x] Add the next manifest-ordered, partition-aware full-text index migration with a safe fallback. (2026-08-21; migration 0013 and all 21 migration tests pass.)
+- [x] Prove scoped recall correctness and index use with a two-space PostgreSQL fixture. (2026-08-21; all three FTS target plans name `kioku_memories_space_namespace_tsv_idx` and bind space, namespace, and `content_tsv` in the index condition.)
+- [x] Move the embedding missing-or-stale predicate into both backfill candidate statements. (2026-08-21; both statements share one SQL fragment and the Haskell race check remains.)
+- [x] Add candidate-transfer regressions, documentation, and changelogs. (2026-08-21; the regression observes the production statements and passes on a cluster without pgvector.)
+- [x] Run and record the complete migration/core builds, suites, and diff checks. (2026-08-21; both packages build, 21 migration tests and 226 core tests pass, `nix fmt` and `git diff --check` are clean.)
 
 
 ## Surprises & Discoveries
@@ -46,7 +47,16 @@ This section must always reflect the actual current state of the work.
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- PostgreSQL preferred the existing four-column scope B-tree for a one-row exact scope even with
+  sequential scans disabled; that was correct for the tiny fixture but did not exercise the new
+  GIN. Seeding same-scope rows with nonmatching content and comparing bitmap-capable paths made
+  the intended access-path proof stable. Evidence: the focused `Recall.Target` suite passes with
+  all three FTS plans naming `kioku_memories_space_namespace_tsv_idx`.
+- The ephemeral PostgreSQL can install `btree_gin` but not `pgvector`. A skipped embedding test
+  would leave the transfer regression unproved, so the test installs test-only nullable marker
+  and hash columns when vector is absent and constructs the same settled row state directly.
+  Evidence: `-p "settled rows do not cross"` passes and observes zero candidates after settling,
+  then only the two stale identities after changing content.
 
 
 ## Decision Log
@@ -73,6 +83,14 @@ Record every decision made while working on the plan.
   owns the next ordinal.
   Date: 2026-08-20
 
+- Decision: Make the candidate-transfer regression run without pgvector instead of treating the
+  missing optional extension as a skip.
+  Rationale: candidate eligibility depends only on embedding nullability and the stored content
+  hash. Test-only columns can represent those facts and execute the exact production SELECTs,
+  preserving evidence for the performance boundary without pretending the vector write path is
+  available.
+  Date: 2026-08-21
+
 
 ## Outcomes & Retrospective
 
@@ -81,7 +99,15 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Migration 0013 now replaces the content-only GIN with an active-only
+`(memory_space_id, namespace, content_tsv)` GIN when `btree_gin` is available, and preserves the
+old index when extension installation is unavailable. All three production FTS families use the
+replacement in planner-scale two-space fixtures. Both production embedding scans now reject
+settled content in PostgreSQL while retaining the Haskell race check, and the candidate-transfer
+regression runs even without pgvector. The affected packages build; all 21 migration tests and
+226 core tests pass; formatting and diff checks are clean. ADR-9 was updated because its original
+“No new index” conclusion no longer described the multi-tenant FTS cost boundary. No other durable
+architecture decision changed.
 
 
 ## Context and Orientation
