@@ -33,7 +33,9 @@ opened. This is observable in a new ephemeral-database test whose database defau
 `host_app, pg_catalog`: the current tree fails with SQLSTATE `42P01`, while the completed tree
 applies 55 migrations (Kiroku 11, Keiro 31, Kioku 13) plus the host migration in one run. The
 31st Keiro row comes from upgrading the composed component to `keiro-migrations` 0.14.0.0 as part
-of this plan.
+of this plan. The complete dependency cohort used or constrained by Kioku also moves in lockstep:
+`keiro`, `keiro-core`, `keiro-migrations`, and the optional `keiro-pgmq` constraint all target
+0.14.0.0. Kioku does not add dependencies on Keiro packages it does not consume.
 
 Correcting released migration `0011` changes its exact-byte SHA-256 checksum and is therefore a
 deliberate breaking change for databases that applied Kioku 0.4.0.0 or 0.4.1.0. The release ships
@@ -62,6 +64,13 @@ and no application-facing Haskell API changes.
 - [x] (2026-08-21T19:23:01Z) Validate and record the durable migration-correction policy in ADR-10,
       run focused and repository-wide validation, perform the final ADR distillation pass, and
       record the results in this plan.
+- [x] (2026-08-21T19:29:03Z) Reopen the completed plan, inventory every Keiro package reference,
+      verify the 0.14.0.0 releases and tags, and audit Kioku against Keiro's 0.13-to-0.14 source
+      migration guide.
+- [ ] Raise the remaining `keiro`, `keiro-core`, and optional `keiro-pgmq` bounds to 0.14.0.0 and
+      update current dependency documentation and changelogs.
+- [ ] Re-run focused and repository-wide validation for the full Keiro cohort, perform another ADR
+      distillation pass, and record the results here.
 
 
 ## Surprises & Discoveries
@@ -167,6 +176,32 @@ and no application-facing Haskell API changes.
   Evidence: the prescribed `rg` checks found the metadata, two ExecPlan 32 references, and the
   matching log record; the final whitespace check also covers both files.
 
+- Observation: Kioku references four Keiro packages, not all seven packages published from the
+  Keiro repository. `keiro` and `keiro-core` are library and test dependencies of `kioku-core`;
+  `keiro-migrations` is a library and test dependency of `kioku-migrations`; and `keiro-pgmq` is a
+  forward-looking optional-integration constraint in `cabal.project`. There are no references to
+  `keiro-dsl`, `keiro-ops`, or `keiro-test-support` in Kioku's package definitions or project
+  constraints.
+  Evidence: the repository-scoped Cabal search found only those four package names, and
+  `mori registry show shinzui/keiro --full` identified the owning source and complete seven-package
+  publication set.
+
+- Observation: Keiro 0.14 is a lockstep package release. Its upgrade guide requires every Keiro
+  package a project already depends on to move together. Hackage lists 0.14.0.0 as a normal,
+  non-deprecated release of all four packages Kioku references, and upstream publishes matching
+  `keiro-0.14.0.0`, `keiro-core-0.14.0.0`, `keiro-migrations-0.14.0.0`, and
+  `keiro-pgmq-0.14.0.0` tags.
+  Evidence: the Hackage preferred-version pages and `git ls-remote --tags` both expose exactly
+  those releases; the local upstream source is at the tagged 0.14 package cohort.
+
+- Observation: Keiro 0.14's new terminal outbox-rejection API does not require a Kioku source
+  adaptation. Kioku neither matches `PublishOutcome` or `OutboxStatus` nor constructs `OutboxRow`,
+  `OutboxPublishSummary`, or `KeiroMetrics`; it only passes `Maybe KeiroMetrics` through existing
+  interfaces. `keiro-core` and `keiro-pgmq` have no API changes beyond their lockstep bounds.
+  Evidence: the source audit found no affected constructors or record construction outside
+  historical documentation, and Keiro's checked-in `0-13-to-0-14.md` guide and package changelogs
+  identify those sites as the complete consumer migration surface.
+
 
 ## Decision Log
 
@@ -257,6 +292,20 @@ and no application-facing Haskell API changes.
   architecture boundary or recovery policy changed while executing the plan.
   Date: 2026-08-21
 
+- Decision: Interpret “upgrade all Keiro packages” as upgrading every Keiro package Kioku already
+  uses or constrains, without adding unused Keiro packages.
+  Rationale: Lockstep requires `keiro`, `keiro-core`, `keiro-migrations`, and `keiro-pgmq` to share
+  the 0.14 series. Adding `keiro-dsl`, `keiro-ops`, or `keiro-test-support` would enlarge Kioku's
+  dependency surface without a consumer, build target, or user-visible capability.
+  Date: 2026-08-21
+
+- Decision: Treat the remaining Keiro upgrade as a bounds-and-documentation change unless the
+  compiler identifies an affected API site.
+  Rationale: The authoritative Keiro upgrade guide names every new constructor and record field;
+  the source audit found none constructed or exhaustively matched by Kioku. Compilation with the
+  repository's incomplete-pattern warnings remains the final proof.
+  Date: 2026-08-21
+
 
 ## Outcomes & Retrospective
 
@@ -278,7 +327,12 @@ fresh, pending, and Codd-era databases, and the fixup is included in the source 
 Focused migration tests, repository-wide build and tests, strict OKF validation, Nix flake checks,
 formatting, and whitespace validation all pass. The final ADR pass found that ADR-10 already
 captures the implemented exception and its recovery constraints, so no additional architecture
-record change was necessary. No implementation work remains.
+record change was necessary.
+
+Reopened 2026-08-21 at the user's request to finish the Keiro cohort upgrade. The migration package
+was already on 0.14.0.0, but `kioku-core` still admitted only `keiro` and `keiro-core` 0.13, and the
+optional PGMQ constraint still selected `keiro-pgmq` 0.13. The remaining outcome is to align those
+three references with 0.14.0.0, refresh current dependency documentation, and repeat validation.
 
 
 ## Context and Orientation
@@ -332,6 +386,21 @@ with the already available `Data.Text.Encoding.encodeUtf8`, so no new `bytestrin
 is necessary. This bound was verified against Hackage and the upstream
 `keiro-migrations-0.14.0.0` tag. The existing pg-migrate 1.1.0.0 bound was likewise
 verified against Hackage and upstream tag `v1.1.0.0`.
+
+The rest of the Keiro cohort appears in two places. `kioku-core/kioku-core.cabal` declares
+`keiro ^>=0.13.0.0` and `keiro-core ^>=0.13.0.0` in both its library and test suite.
+`cabal.project` constrains optional integration package `keiro-pgmq ^>=0.13.0.0`; it is not in
+Kioku's build closure today, but the constraint prevents a downstream project from resolving an
+older optional stack. Keiro's own 0.13-to-0.14 upgrade contract says all existing Keiro references
+must move in lockstep. Raise these remaining bounds to `^>=0.14.0.0`. Do not add dependencies on
+`keiro-dsl`, `keiro-ops`, or `keiro-test-support` because Kioku does not consume them.
+
+Keiro 0.14 adds terminal outbox rejection constructors and fields in the `keiro` package. The
+repository audit must search for `PublishOutcome`, `PublishSucceeded`, `PublishFailed`,
+`OutboxStatus`, `OutboxRow`, `OutboxPublishSummary`, and direct `KeiroMetrics` construction. Kioku
+contains none of those adaptation sites: it carries `Maybe KeiroMetrics` values but does not build
+the record. Therefore this extension should require no Haskell source edit. The build and tests,
+including incomplete-pattern warnings, are the authoritative confirmation.
 
 No Kioku migration identity is added, but the Keiro 0.14 upgrade appends `keiro/0031`. The final
 totals are therefore 55 rows in the full plan, 13 in the Kioku component, 31 in the Keiro
@@ -482,6 +551,26 @@ confirming ADR-10's stable `docId`, advanced timestamp, matching log entry, link
 The milestone is complete when all checks pass, 0.4.x recovery is fully documented, and the only
 database behavior difference is that corrected `0011` no longer leaks session state.
 
+### Milestone 4: align the complete Keiro dependency cohort
+
+Raise `keiro` and `keiro-core` in both stanzas of `kioku-core/kioku-core.cabal` from
+`^>=0.13.0.0` to `^>=0.14.0.0`. Raise the optional `keiro-pgmq` constraint in `cabal.project` to
+`^>=0.14.0.0`, and update its cohort comment so it no longer describes Keiro 0.13. Keep the
+already-completed `keiro-migrations ^>=0.14.0.0` changes. Do not add unused Keiro packages.
+
+Update the root and `kioku-core` Unreleased changelogs to describe the full lockstep cohort and the
+consumer-visible outbox additions. State that Kioku has no affected exhaustive match or direct
+record construction, so its source and exported API are unchanged. Correct the current framework
+baseline in `README.md` and `docs/user/library-api.md`; do not rewrite historical release notes or
+BUG-1's historical Keiro 0.13 reproduction.
+
+Run a solver/build check first, then the `kioku-core` and `kioku-migrations` test suites, because
+they exercise the runtime and migration halves of the cohort. Finish with the complete repository
+build and tests, Nix flake checks, formatting, strict BUG-1 bundle validation, and whitespace
+checks. The milestone is complete when no 0.13 Keiro bound remains outside historical records, the
+solver selects the released 0.14 packages, every check passes, and the final ADR distillation
+finds either a recorded durable change or an explicit no-change result.
+
 
 ## Concrete Steps
 
@@ -588,6 +677,23 @@ git diff --check
 git status --short
 ```
 
+For the full Keiro-cohort extension, verify the remaining references and affected API surface,
+then run focused validation before repeating the final commands above:
+
+```bash
+rg -n --glob '*.cabal' --glob 'cabal.project*' '\bkeiro(?:-[a-z0-9-]+)?\b' .
+rg -n 'PublishSucceeded|PublishFailed|PublishOutcome|OutboxStatus|OutboxRow|OutboxPublishSummary|KeiroMetrics' \
+  kioku-core kioku-api kioku-cli kioku-migrate kioku-migrations
+nix develop -c cabal build kioku-core kioku-migrations
+nix develop -c cabal test kioku-core:kioku-test kioku-migrations:kioku-migrations-test \
+  --test-show-details=direct
+```
+
+The first search must show 0.14.0.0 for `keiro`, `keiro-core`, `keiro-migrations`, and
+`keiro-pgmq`. The second may find `KeiroMetrics` type plumbing but must find no direct record
+construction or affected outbox match. Both focused suites must pass before repository-wide
+validation.
+
 At completion, a commit implementing this plan must use a Conventional Commit subject and both
 required trailers. For example:
 
@@ -637,6 +743,13 @@ Finally, `nix develop -c cabal test all --test-show-details=direct`, `nix flake 
 `git diff --check` must all exit zero. Record concise transcripts and the ADR distillation result
 in this living plan before marking Progress complete.
 
+The dependency extension additionally requires all current Kioku references to `keiro`,
+`keiro-core`, `keiro-migrations`, and `keiro-pgmq` to select `^>=0.14.0.0`. Cabal must solve and
+compile without `allow-newer` or source overrides. No new incomplete-pattern warning may appear,
+and the existing 55-row migration behavior must remain unchanged. Current user documentation must
+identify Keiro 0.14 as the supported baseline; historical changelog and reproduction statements
+remain unchanged.
+
 
 ## Idempotence and Recovery
 
@@ -666,9 +779,12 @@ connection. That workaround is recovery for old artifacts, not the corrected con
 
 ## Interfaces and Dependencies
 
-There is no new production Haskell interface. The production dependency change is limited to
-raising `keiro-migrations` from `^>=0.13.0.0` to `^>=0.14.0.0`, which appends Keiro migration
-`0031` without changing the component API.
+There is no new Kioku production Haskell interface. The production dependency changes raise
+`keiro`, `keiro-core`, and `keiro-migrations` from the 0.13 series to `^>=0.14.0.0`; the project
+constraint for optional `keiro-pgmq` moves to the same series. Keiro migration `0031` is appended
+without changing the component API. Keiro's exported outbox types gain terminal-rejection
+constructors and fields, but Kioku does not match or construct them; downstream applications that
+also use those Keiro APIs must follow Keiro's 0.13-to-0.14 upgrade contract.
 `Kioku.Migrations.kiokuMigrations :: Either DefinitionError MigrationComponent` and
 `Kioku.Migrations.kiokuMigrationPlan :: Either PlanError MigrationPlan` retain their existing
 types and the same migration identities. The observable production interface change is that
@@ -696,6 +812,10 @@ Raise the library's `keiro-migrations` bound and add `containers >=0.6 && <0.8` 
 `hasql`, `text`, `pg-migrate`, and `kiroku-store-migrations` test dependencies for setup,
 execution, and assertions.
 
+Also raise `keiro` and `keiro-core` in the `kioku-core` library and test stanzas, plus the
+`keiro-pgmq` project constraint, to `^>=0.14.0.0`. No new package dependency or source import is
+needed.
+
 Keep the test helper functions private to `kioku-migrations/test/Main.hs`. At minimum, the end
 state needs an assertion such as `testHostSearchPathRestored :: Assertion`, a helper that builds
 the four-component `MigrationPlan`, a statement returning `quote_ident(current_database())`, and
@@ -722,3 +842,9 @@ released `keiro-migrations` 0.14.0.0 upgrade to this plan. Inventory, Codd-forwa
 and documentation now target 11 Kiroku, 31 Keiro, and 13 Kioku migrations: 55 total and 25 after
 the Codd pin. The plan still corrects only released Kioku migration `0011` and forbids adding a
 cleanup migration.
+
+Revised again 2026-08-21 after the user requested that the entire Keiro package cohort be upgraded,
+not only its migration component. The plan now aligns every Keiro package Kioku already uses or
+constrains (`keiro`, `keiro-core`, `keiro-migrations`, and `keiro-pgmq`) at 0.14.0.0, audits the
+terminal outbox-rejection API, updates current baseline documentation, and repeats focused and
+repository-wide validation. It deliberately does not add the three unused Keiro packages.
