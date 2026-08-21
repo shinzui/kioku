@@ -67,8 +67,9 @@ and no application-facing Haskell API changes.
 - [x] (2026-08-21T19:29:03Z) Reopen the completed plan, inventory every Keiro package reference,
       verify the 0.14.0.0 releases and tags, and audit Kioku against Keiro's 0.13-to-0.14 source
       migration guide.
-- [ ] Raise the remaining `keiro`, `keiro-core`, and optional `keiro-pgmq` bounds to 0.14.0.0 and
-      update current dependency documentation and changelogs.
+- [x] (2026-08-21T19:36:44Z) Raise the remaining `keiro`, `keiro-core`, and optional `keiro-pgmq`
+      bounds to 0.14.0.0, update current dependency documentation and changelogs, and pass the
+      focused core and migration suites.
 - [ ] Re-run focused and repository-wide validation for the full Keiro cohort, perform another ADR
       distillation pass, and record the results here.
 
@@ -202,6 +203,14 @@ and no application-facing Haskell API changes.
   historical documentation, and Keiro's checked-in `0-13-to-0-14.md` guide and package changelogs
   identify those sites as the complete consumer migration surface.
 
+- Observation: The compiler confirmed the 0.14 upgrade needs no Kioku source adaptation. Cabal
+  downloaded and built `keiro-core-0.14.0.0` and `keiro-0.14.0.0`, then rebuilt `kioku-core`
+  without an incomplete-pattern or missing-record-field diagnostic. The build still reports
+  Keiro's existing deprecations for legacy `ReadModel` fields, `Eventual`, and `runQueryWith`;
+  those APIs are outside the 0.14 terminal-rejection migration surface and remain available.
+  Evidence: `nix develop -c cabal build kioku-core kioku-migrations` exited zero, followed by
+  `All 24 tests passed` in `kioku-migrations-test` and `All 226 tests passed` in `kioku-test`.
+
 
 ## Decision Log
 
@@ -331,8 +340,9 @@ record change was necessary.
 
 Reopened 2026-08-21 at the user's request to finish the Keiro cohort upgrade. The migration package
 was already on 0.14.0.0, but `kioku-core` still admitted only `keiro` and `keiro-core` 0.13, and the
-optional PGMQ constraint still selected `keiro-pgmq` 0.13. The remaining outcome is to align those
-three references with 0.14.0.0, refresh current dependency documentation, and repeat validation.
+optional PGMQ constraint still selected `keiro-pgmq` 0.13. Those three references now target
+0.14.0.0, current dependency documentation names the real cohort, and both affected focused suites
+pass. Repository-wide validation and the repeated ADR distillation remain.
 
 
 ## Context and Orientation

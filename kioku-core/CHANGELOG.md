@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Breaking Changes
+
+- Raised the lockstep `keiro` and `keiro-core` bounds to `^>=0.14.0.0`. Keiro's exported outbox
+  types gain the terminal rejected outcome and audit fields. `kioku-core` neither exhaustively
+  matches nor directly constructs the affected types, so its source and exported API are
+  unchanged; applications that also consume those Keiro outbox types must handle the new cases.
+
 ### Fixed
 
 - `applyArtifactMigration` now publishes a fully written temporary sibling through an atomic

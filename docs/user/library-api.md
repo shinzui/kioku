@@ -18,7 +18,7 @@ types (`Kioku.Api.*`), and how to run them.
 
 kioku's write/read functions run in the `Eff` monad (from `effectful`) and require a `Store`
 effect (the kiroku event store) and `IOE`. Writes additionally require `Error StoreError` and
-Kiroku 0.3's `KirokuStoreResource`, which preserves configured event-enrichment hooks across
+Kiroku Store's `KirokuStoreResource`, which preserves configured event-enrichment hooks across
 Keiro's transactional append-and-project path. A typical shape:
 
 ```haskell
@@ -31,7 +31,7 @@ record ::
 The CLI sets this up via `Kioku.App`: `AppEnv` holds Kiroku `ConnectionSettings`, and `runAppIO`
 acquires `KirokuStoreResource` and interprets `Store` with `runStoreResource`. `withNoopAppEnv`
 constructs the common no-telemetry environment and registers all Kioku read models once before
-serving queries, as required by Keiro 0.3. Hosts with their own effect stack should install the
+serving queries, as required by Keiro. Hosts with their own effect stack should install the
 resource with `withKirokuStore`, interpret `Store` with `runStoreResource`, and run
 `Kioku.ReadModel.registerKiokuReadModels` once at application startup before calling Kioku APIs.
 
@@ -707,7 +707,7 @@ operator or host input; **`parseIdLenient`** exists for legacy streams only and 
 
 ## Migrations (`kioku-migrations`)
 
-The supported dependency baseline is Keiki 0.2, Keiro 0.3, Kiroku Store 0.3, and pg-migrate 1.1.
+The supported dependency baseline is Keiki 0.9, Keiro 0.14, Kiroku Store 0.8, and pg-migrate 1.1.
 These are ordinary Hackage dependencies; downstream projects do not need Git
 `source-repository-package` stanzas for the framework or migration packages.
 

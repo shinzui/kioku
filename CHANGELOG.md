@@ -13,9 +13,12 @@
   `kioku-migrations/ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql` before the corrected
   `up` or `verify`; a database where `0011` is pending needs no special action. The next Kioku
   release must use the 0.5.0.0 series.
-- **kioku-migrations:** upgraded `keiro-migrations` to `^>=0.14.0.0`, adding Keiro migration
-  `0031` for terminal rejected-outbox audit fields and indexes. The composed plan now contains 55
-  migrations: Kiroku 11, Keiro 31, and Kioku 13.
+- **Keiro cohort:** upgraded `keiro`, `keiro-core`, and `keiro-migrations` to `^>=0.14.0.0`, and
+  aligned the optional `keiro-pgmq` constraint with the same lockstep release. Keiro's exported
+  outbox types gain the terminal rejected outcome and audit fields; Kioku neither exhaustively
+  matches nor directly constructs the affected types, so its source and exported API are
+  unchanged. Migration `keiro/0031` adds the corresponding audit fields and indexes, bringing the
+  composed plan to 55 migrations: Kiroku 11, Keiro 31, and Kioku 13.
 
 ### Fixed
 

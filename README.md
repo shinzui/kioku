@@ -51,8 +51,8 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 Project dependencies resolve from Hackage; `cabal.project` does not replace released packages with
-Git checkouts. The current framework baseline is Keiki 0.2, Keiro 0.3, Kiroku Store 0.3,
-pg-migrate 1.1, and PGMQ 0.4 for Keiro's optional PGMQ integration.
+Git checkouts. The current framework baseline is Keiki 0.9, Keiro 0.14, Kiroku Store 0.8,
+pg-migrate 1.1, and PGMQ 0.5 for Keiro's optional PGMQ integration.
 
 The development shell is provided by Nix:
 
