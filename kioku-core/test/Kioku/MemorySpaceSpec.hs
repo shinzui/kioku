@@ -77,7 +77,9 @@ tests =
         [ testCase "a payload naming another space is refused" testPayloadSpaceMismatch,
           testCase "a payload naming another principal is refused" testPayloadActorMismatch,
           testCase "a read-only context cannot record" testReadContextCannotRecord,
-          testCase "a context without distill cannot distill" testContextWithoutDistill
+          testCase "a context without distill cannot distill" testContextWithoutDistill,
+          testCase "a distill-only context cannot start L1" testContextWithoutRecordCannotDistill,
+          testCase "a context without forget cannot start L1" testContextWithoutForgetCannotDistill
         ],
       testGroup
         "the deprecated wrappers reach only the legacy space"
@@ -243,6 +245,34 @@ testContextWithoutDistill =
     liftIO case result of
       Left (L1NotPermitted MemoryDistill) -> pure ()
       other -> assertFailure ("expected L1NotPermitted MemoryDistill, got " <> show other)
+
+-- | L1 records newly extracted atoms, so distill permission alone is insufficient. The stable
+-- preflight order reports record before forget and refuses before the extractor is reached.
+testContextWithoutRecordCannotDistill :: Assertion
+testContextWithoutRecordCannotDistill =
+  assertL1RefusedBeforeExtraction
+    [MemoryDistill]
+    MemoryRecord
+
+-- | L1 can supersede or merge old atoms, which spends forget permission. A context that can
+-- distill and record but cannot forget must fail at the same zero-LLM preflight.
+testContextWithoutForgetCannotDistill :: Assertion
+testContextWithoutForgetCannotDistill =
+  assertL1RefusedBeforeExtraction
+    [MemoryDistill, MemoryRecord]
+    MemoryForget
+
+assertL1RefusedBeforeExtraction :: [MemoryPermission] -> MemoryPermission -> Assertion
+assertL1RefusedBeforeExtraction granted expectedMissing =
+  withApp do
+    sid <- startFixture testContext
+    runtime <- liftIO newDistillRuntime
+    let refuse = runtime {runExtract = \_ -> liftIO (assertFailure "the extractor must not run")}
+    result <- distillSessionL1 (narrowContext testSpace granted) RespectWatermark refuse (scopedScanCandidates 5) sid
+    liftIO case result of
+      Left (L1NotPermitted actualMissing) ->
+        assertEqual "reports the first missing permission" expectedMissing actualMissing
+      other -> assertFailure ("expected L1NotPermitted " <> show expectedMissing <> ", got " <> show other)
 
 testWrapperRefusesNonLegacy :: Assertion
 testWrapperRefusesNonLegacy =

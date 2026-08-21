@@ -42,7 +42,7 @@ import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Prelude
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
-import Kioku.SpaceFixtures (legacyContext, otherSpace, testContext, testContextProvider, testSpace)
+import Kioku.SpaceFixtures (legacyContext, otherContext, otherSpace, testContext, testContextProvider, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -68,6 +68,7 @@ tests =
       testCase "drain processes every due timer in one pass" testDrainProcessesAllDueTimers,
       testCase "two spaces sharing a scope schedule two timers, and both fire" testTwoSpacesTwoTimers,
       testCase "a refused memory space dead-letters" testRefusedSpaceDeadLetters,
+      testCase "a provider returning the wrong memory space dead-letters" testWrongSpaceContextDeadLetters,
       testCase "every dead-letter row names the memory space" testDeadLetterNamesTheSpace
     ]
 
@@ -295,6 +296,30 @@ testRefusedSpaceDeadLetters =
       ("last_error should name the refusal, got: " <> show row.lastError)
       (maybe False (Text.isInfixOf "not authorized") row.lastError)
 
+-- | A buggy host provider may answer a request for one space with a context minted for another.
+-- The worker must diagnose that configuration error rather than silently retargeting the timer.
+testWrongSpaceContextDeadLetters :: Assertion
+testWrongSpaceContextDeadLetters =
+  withTimerEnv \env rt -> do
+    timerId <- freshTimerId
+    row <- runOrFail env do
+      scheduleTestTimer
+        timerId
+        l2SceneProcessManagerName
+        (partitionedCorrelationId testSpace emptyScope)
+        (sceneTimerPayload testSpace)
+        (-1)
+      fireOnceWith wrongSpaceContextProvider rt
+      fetchTimer timerId
+    row.status @?= "dead"
+    assertBool
+      ("last_error should name the wrong-space context, got: " <> show row.lastError)
+      ( maybe
+          False
+          (\err -> memorySpaceIdText testSpace `Text.isInfixOf` err && memorySpaceIdText otherSpace `Text.isInfixOf` err)
+          row.lastError
+      )
+
 -- | @last_error@ is the column an operator reads when a distillation stops happening, and a
 -- dead-lettered timer that does not say which tenant it belongs to is a question, not an answer.
 testDeadLetterNamesTheSpace :: Assertion
@@ -324,6 +349,10 @@ sceneTimerPayload space =
 refusingContextProvider :: (Applicative m) => MemoryContextProvider m
 refusingContextProvider =
   MemoryContextProvider \space -> pure (Left (MemoryPermissionDenied space MemoryDistill))
+
+wrongSpaceContextProvider :: (Applicative m) => MemoryContextProvider m
+wrongSpaceContextProvider =
+  MemoryContextProvider \_ -> pure (Right otherContext)
 
 fireOnce ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es, Tracing :> es) =>

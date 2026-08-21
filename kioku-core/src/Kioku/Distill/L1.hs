@@ -21,7 +21,7 @@ import Data.Either (lefts)
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int32)
 import Data.KindID.V7 qualified as KindID
-import Data.List (nub)
+import Data.List (find, nub)
 import Data.Maybe (catMaybes)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
@@ -44,6 +44,7 @@ import Kioku.Api.Access
     memoryContextRecordedActor,
     memoryContextSpace,
   )
+import Kioku.Api.Access qualified as Access
 import Kioku.Api.Scope (MemoryScope, scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..), confidenceFromText, memoryTypeFromText)
 import Kioku.Database.Schema (consolidationDecisionsTable, l1WatermarksTable)
@@ -173,8 +174,9 @@ data AuditRow = AuditRow
 -- a failed pass is retried in full.
 --
 -- The pass writes memories, so it needs a 'MemoryAccessContext' — the one for the memory space
--- the session belongs to. It demands 'MemoryDistill' before anything else, so an unauthorized
--- pass fails before it spends a single LLM token rather than after, at the first write.
+-- the session belongs to. It demands 'MemoryDistill', 'MemoryRecord', and 'MemoryForget' before
+-- anything else, so an under-scoped pass fails before it spends a single LLM token rather than
+-- after, at the first write.
 distillSessionL1 ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   MemoryAccessContext ->
@@ -183,10 +185,10 @@ distillSessionL1 ::
   FindMergeCandidates es ->
   SessionId ->
   Eff es (Either L1Error L1Outcome)
-distillSessionL1 context mode rt finder sid
-  | not (memoryContextAllows MemoryDistill context) =
-      pure (Left (L1NotPermitted MemoryDistill))
-  | otherwise = do
+distillSessionL1 context mode rt finder sid =
+  case find (not . (`memoryContextAllows` context)) requiredPermissions of
+    Just missingPermission -> pure (Left (L1NotPermitted missingPermission))
+    Nothing -> do
       sessionResult <- Session.getById space sid
       case sessionResult of
         Left err -> pure (Left (L1SessionReadFailed err))
@@ -220,6 +222,7 @@ distillSessionL1 context mode rt finder sid
                               writeWatermark space sid maxTurnIndex
                               pure (Right (L1Distilled summary))
   where
+    requiredPermissions = [MemoryDistill, Access.MemoryRecord, MemoryForget]
     space = memoryContextSpace context
 
     stepAtom _ _ (Left err) _ = pure (Left err)

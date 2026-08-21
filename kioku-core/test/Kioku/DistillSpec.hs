@@ -29,16 +29,23 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Stream qualified as Stream
-import Keiro.Timer (countDueTimers)
-import Kioku.Api.Access (MemoryAccessContext, memoryContextRecordedActor, memoryContextSpace)
+import Keiro.Timer (TimerRow, countDueTimers)
+import Kioku.Api.Access
+  ( MemoryAccessContext,
+    MemoryContextProvider (..),
+    MemoryPermission (..),
+    memoryContextRecordedActor,
+    memoryContextSpace,
+  )
+import Kioku.Api.Access.Internal qualified as Internal
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..))
 import Kioku.App (AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.Consolidate (ConsolidateInput (..), ConsolidationAction (..), ConsolidationDecision (..), ExistingMemory (..), consolidateProgram)
 import Kioku.Distill.Extract (ExtractOutput (..), ExtractedAtom (..), extractProgram)
 import Kioku.Distill.L1 (L1Error (..), L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
-import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, regenerateScene, sceneMirrorPath)
-import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, personaMirrorPath, regeneratePersona)
+import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, l2SceneProcessManagerName, regenerateScene, sceneMirrorPath)
+import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, l3PersonaProcessManagerName, personaMirrorPath, regeneratePersona)
 import Kioku.Distill.Persona (personaProgram)
 import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
 import Kioku.Distill.Scene (SceneInput (..), sceneProgram)
@@ -64,11 +71,13 @@ import Kioku.Session.Domain (CompleteSessionData (..), RecordTurnData (..), Star
 import Kioku.SpaceFixtures
   ( otherContext,
     otherSpace,
+    testActor,
     testActorPrincipal,
     testContext,
     testContextProvider,
     testSpace,
   )
+import Kioku.Workspace (personaArtifactDir, sceneArtifactDir)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -86,7 +95,7 @@ import Shikumi.Schema.Types (field, unField)
 import Shikumi.Trace (runTrace, tracedLLM)
 import Shikumi.Trace.Replay (runLLMReplay)
 import Shikumi.Trace.Store (replayIndex)
-import System.Directory (doesFileExist)
+import System.Directory (doesDirectoryExist, doesFileExist)
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
@@ -103,10 +112,93 @@ tests =
       testCase "a session accumulates one idle timer however many turns" testIdleTimerCollapse,
       testCase "recall candidates find a duplicate outside the scan window" testRecallCandidateWindow,
       testCase "recall candidates stay inside the session's own scope" testRecallCandidateBreadth,
+      authorizationTests,
       forgetPropagationTests,
       confidencePropagationTests,
       validationTests
     ]
+
+authorizationTests :: TestTree
+authorizationTests =
+  testGroup
+    "Authorization preflight"
+    [ testCase "L2 rejects a read-only worker before models, rows, or mirrors" testL2RejectsReadOnlyContext,
+      testCase "L3 rejects a read-only worker before models, rows, or mirrors" testL3RejectsReadOnlyContext
+    ]
+
+-- | Provider success is not permission success. With an active memory waiting, an authorized L2
+-- fire would invoke the scene model and write a row and mirror; the read-only context must instead
+-- dead-letter without producing any of them.
+testL2RejectsReadOnlyContext :: Assertion
+testL2RejectsReadOnlyContext = withDistillWorkspaceEnv \env workspace -> do
+  calls <- newDistillCalls
+  runtime <- countingRuntime calls <$> replayRuntimeIn workspace
+  memoryId <- genMemoryId
+  now <- getCurrentTime
+  let scope = forgetScope "intention_l2_permission_preflight"
+  result <-
+    runAppIO env do
+      recordForgetFixture memoryId scope alphaContent now
+      void (fireOneWith readOnlyContextProvider runtime)
+      scenes <- getScenesByScope testSpace scope
+      persona <- getPersonaByScope testSpace scope
+      sceneDirectoryExists <- liftIO (doesDirectoryExist (sceneArtifactDir workspace testSpace))
+      sceneCalls <- liftIO (readIORef calls.sceneCalls)
+      timer <- loadLatestTimerFailure l2SceneProcessManagerName
+      pure (scenes, persona, sceneDirectoryExists, sceneCalls, timer)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (scenes, persona, sceneDirectoryExists, sceneCalls, timer) -> do
+      scenes @?= []
+      persona @?= Nothing
+      assertBool "L2 created a mirror directory before authorization" (not sceneDirectoryExists)
+      sceneCalls @?= 0
+      assertMissingDistillFailure "L2" timer
+
+-- | L3 has the same gate. A fully authorized L2 fire first creates its source scene and schedules
+-- persona work; the next fire receives a read-only context and must leave that scene untouched,
+-- create neither persona row nor mirror, and never invoke the persona model.
+testL3RejectsReadOnlyContext :: Assertion
+testL3RejectsReadOnlyContext = withDistillWorkspaceEnv \env workspace -> do
+  calls <- newDistillCalls
+  runtime <- countingRuntime calls <$> replayRuntimeIn workspace
+  memoryId <- genMemoryId
+  now <- getCurrentTime
+  let scope = forgetScope "intention_l3_permission_preflight"
+  result <-
+    runAppIO env do
+      recordForgetFixture memoryId scope alphaContent now
+      void (fireOneWith testContextProvider runtime)
+      scenesBefore <- getScenesByScope testSpace scope
+      personaBefore <- getPersonaByScope testSpace scope
+      void (fireOneWith readOnlyContextProvider runtime)
+      scenesAfter <- getScenesByScope testSpace scope
+      personaAfter <- getPersonaByScope testSpace scope
+      personaDirectoryExists <- liftIO (doesDirectoryExist (personaArtifactDir workspace testSpace))
+      sceneCalls <- liftIO (readIORef calls.sceneCalls)
+      personaCalls <- liftIO (readIORef calls.personaCalls)
+      timer <- loadLatestTimerFailure l3PersonaProcessManagerName
+      pure
+        ( scenesBefore,
+          personaBefore,
+          scenesAfter,
+          personaAfter,
+          personaDirectoryExists,
+          sceneCalls,
+          personaCalls,
+          timer
+        )
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (scenesBefore, personaBefore, scenesAfter, personaAfter, personaDirectoryExists, sceneCalls, personaCalls, timer) -> do
+      assertBool "the authorized L2 setup did not create its source scene" (length scenesBefore == 1)
+      scenesAfter @?= scenesBefore
+      personaBefore @?= Nothing
+      personaAfter @?= Nothing
+      assertBool "L3 created a mirror directory before authorization" (not personaDirectoryExists)
+      sceneCalls @?= 1
+      personaCalls @?= 0
+      assertMissingDistillFailure "L3" timer
 
 -- | Forgetting a memory must reach every derived artifact: the scene row, the
 -- persona row, and the plaintext mirror files a host agent actually reads.
@@ -750,6 +842,36 @@ drainTimers rt = go (50 :: Int) 0
           case claimed of
             Nothing -> pure fired
             Just _ -> go (fuel - 1) (fired + 1)
+
+-- | Claim one timer an hour into the future so the five-second L2/L3 debounce is due.
+fireOneWith ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es, Tracing :> es) =>
+  MemoryContextProvider (Eff es) ->
+  DistillRuntime ->
+  Eff es (Maybe TimerRow)
+fireOneWith provider rt = do
+  realNow <- liftIO getCurrentTime
+  runKiokuTimerWorkerOnce
+    Nothing
+    provider
+    rt
+    (scopedScanCandidates 5)
+    (addUTCTime 3600 realNow)
+
+-- | A provider that returns a real context for the requested space, but grants read only.
+-- This distinguishes a provider-level refusal from the under-scoped success path under test.
+readOnlyContextProvider :: (Applicative m) => MemoryContextProvider m
+readOnlyContextProvider =
+  MemoryContextProvider \space ->
+    pure
+      ( Right
+          Internal.MemoryAccessContext
+            { Internal.memorySpaceId = space,
+              Internal.actor = testActor,
+              Internal.grantedPermissions = Set.singleton MemoryRead,
+              Internal.decisionToken = Nothing
+            }
+      )
 
 expectOneScene :: String -> [SceneRow] -> IO SceneRow
 expectOneScene label = \case
@@ -1692,6 +1814,46 @@ loadTimerKinds sid =
           correlationId = idText sid
         }
       selectTimerKindsStmt
+
+data TimerFailure = TimerFailure
+  { timerStatus :: !Text,
+    timerError :: !(Maybe Text)
+  }
+  deriving stock (Generic, Eq, Show)
+
+loadLatestTimerFailure ::
+  (Store :> es) =>
+  Text ->
+  Eff es (Maybe TimerFailure)
+loadLatestTimerFailure processManagerName =
+  runTransaction $
+    Tx.statement processManagerName selectLatestTimerFailureStmt
+
+selectLatestTimerFailureStmt :: Statement Text (Maybe TimerFailure)
+selectLatestTimerFailureStmt =
+  preparable
+    """
+    SELECT status, last_error
+    FROM keiro.keiro_timers
+    WHERE process_manager_name = $1
+    ORDER BY fire_at DESC, timer_id DESC
+    LIMIT 1
+    """
+    (E.param (E.nonNullable E.text))
+    ( D.rowMaybe $
+        TimerFailure
+          <$> D.column (D.nonNullable D.text)
+          <*> D.column (D.nullable D.text)
+    )
+
+assertMissingDistillFailure :: String -> Maybe TimerFailure -> Assertion
+assertMissingDistillFailure label = \case
+  Nothing -> assertFailure (label <> " timer row was not found")
+  Just timer -> do
+    timer.timerStatus @?= "dead"
+    assertBool
+      (label <> " failure did not name MemoryDistill: " <> show timer.timerError)
+      (maybe False (Text.isInfixOf "MemoryDistill") timer.timerError)
 
 selectTimerKindsStmt :: Statement TimerQuery [TimerKindRow]
 selectTimerKindsStmt =
