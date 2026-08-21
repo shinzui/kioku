@@ -240,6 +240,12 @@ A failing distillation retries with backoff (`30s` doubling to `900s`) and is de
 **8 claims** — roughly an hour — so a structurally impossible pass stops burning LLM tokens. The
 most common cause is a missing or invalid `ANTHROPIC_API_KEY`.
 
+Authorization/configuration failures do not retry: provider refusal, an L2/L3 context without
+`MemoryDistill`, or a provider returning a context for a different space is dead-lettered on the
+first claim. The `last_error` names the missing permission or both the requested and returned
+spaces. Fix the host's `MemoryContextProvider` before requeueing the work; provider success alone
+does not authorize a fire.
+
 A dead **L1** timer means that session is never distilled. A dead **L2/L3** timer means that
 scope's scene or persona never regenerates.
 

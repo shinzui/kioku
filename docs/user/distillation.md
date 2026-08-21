@@ -161,6 +161,19 @@ prompt.
 **L3 persona regeneration** is scheduled (same 5-second debounce) by every scene regeneration —
 including a scene *deletion*.
 
+### Permission preflight
+
+L1 can read session evidence, record new atoms, and retire old atoms through supersede or merge.
+It therefore checks `MemoryDistill`, `MemoryRecord`, and `MemoryForget`, in that order, before it
+reads the session or calls a model. The first missing permission is returned as `L1NotPermitted`.
+A service-backed host must request all three when it authorizes an L1 pass; an embedded host using
+`assumeAuthorizedMemoryContext` already grants them.
+
+L2 and L3 timer fires require `MemoryDistill`. Their `MemoryContextProvider` must return a context
+for the exact space named by the timer and that context must grant distillation. Provider refusal,
+a context missing `MemoryDistill`, or a context minted for another space is a permanent failure
+before any database read, model call, or mirror write.
+
 ### Regeneration is content-hashed
 
 Each regeneration hashes its inputs (the scope's atoms for a scene; the scope's scenes for a
@@ -186,7 +199,8 @@ A timer fire reports one of four outcomes:
   pass (a conversation past the model's context window, a missing `ANTHROPIC_API_KEY`) stops rather
   than retrying indefinitely.
 - **failed permanently** — a structurally broken timer (malformed payload, a correlation id that is
-  not a session id). Dead-lettered on the first fire.
+  not a session id) or a worker authorization/configuration failure (provider refusal, missing
+  `MemoryDistill`, wrong-space context). Dead-lettered on the first fire.
 - **not mine** — a timer no handler in this build owns. Requeued 600s out rather than killed, so a
   rolling deploy is safe.
 

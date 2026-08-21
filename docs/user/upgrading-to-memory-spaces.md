@@ -132,7 +132,7 @@ threading a context through your call sites.
 | `MemoryActorMismatch` / `SessionActorMismatch` | the payload attributed the write to somebody else |
 | `MemoryCommandRejected` | the aggregate refused it |
 | `MemoryNotFound` / `SessionNotFound` | no such row **in this space** — which now includes an id that exists in another one |
-| `L1NotPermitted` | the context does not authorize distillation in this space |
+| `L1NotPermitted` | the context lacks the named L1 permission; the pass needs distill, record, and forget |
 
 `MemorySpaceMismatch` is a caller bug caught before anything was read: the payload and the context
 disagree.
@@ -144,13 +144,31 @@ aggregate and returned `MemoryCommandRejected`, which told the caller the id exi
 
 ## Which permission each write asks for
 
-- `MemoryRecord` — recording a memory, retagging, re-scoring confidence, and every session write
-  (a session, its turns, and its lifecycle are memory being recorded).
-- `MemoryForget` — superseding, archiving, and merging.
-- `MemoryDistill` — running an L1 distillation pass, checked before any LLM call.
+- `MemoryRecord` — recording a memory, retagging, re-scoring confidence, every session write, and
+  the new atoms produced by an L1 pass.
+- `MemoryForget` — superseding, archiving, merging, and the retirement actions an L1 pass may
+  apply while consolidating atoms.
+- `MemoryDistill` — running any distillation level. L1, L2, and L3 all check it before a model
+  call or derived-artifact write.
 
 `assumeAuthorizedMemoryContext` grants all of them. A context obtained through
-`authorizeMemoryAccess` grants exactly what was checked, so ask for what you intend to do.
+`authorizeMemoryAccess` grants exactly what was checked, so ask for what you intend to do. L1
+preflights all three permissions in stable order before it even reads the session:
+
+```haskell
+l1Context <-
+  authorizeMemoryAccess
+    binding
+    directory
+    authorizer
+    freshness
+    subject
+    space
+    (MemoryDistill :| [MemoryRecord, MemoryForget])
+```
+
+L2 and L3 timer contexts need `MemoryDistill` only because they update derived scenes and personas
+rather than appending memory aggregate commands.
 
 ## Background workers
 
@@ -162,8 +180,10 @@ contexts = assumeAuthorizedContextProvider (MemoryActor …)
 drainKiokuTimers Nothing contexts runtime finder
 ```
 
-A refusal dead-letters the timer instead of retrying it silently: a worker that is not authorized
-for a space is a configuration problem, and an operator needs to see it rather than watch it
+Provider success alone does not authorize the fire. L2 and L3 verify that the returned context is
+for the requested space and grants `MemoryDistill` before they read rows, call a model, or write a
+mirror. A provider refusal, an under-scoped context, or a context for another space dead-letters
+the timer immediately: all three are configuration problems an operator must see rather than
 retry every thirty seconds for an hour.
 
 The embedding worker takes a provider for the same reason — it learns the space from the

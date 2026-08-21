@@ -10,6 +10,11 @@
   changing either file. Published copies retain the historical source's permissions.
 - Workspace directory names and scope mirror filenames now consume one exported
   `slugWithDigest` implementation while preserving every existing persisted path byte for byte.
+- Distillation now refuses under-scoped work before it can read evidence, call an LLM, mutate a
+  derived row, or write a mirror. L1 preflights `MemoryDistill`, `MemoryRecord`, and
+  `MemoryForget`; L2/L3 timer fires require `MemoryDistill` and reject a context for the wrong
+  space. Their shared partition, timer-outcome, and mirror-removal primitives replace the former
+  duplicate handler implementations.
 
 ## 0.4.1.0 — 2026-08-18
 

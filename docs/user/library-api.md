@@ -573,13 +573,19 @@ distillSessionL1 ::
   Eff es (Either L1Error L1Outcome)
 
 -- Kioku.Distill.L2 / L3
-regenerateScene   :: DistillRuntime -> MemoryScope -> Eff es (Either L2Error (Maybe SceneRow))
-regeneratePersona :: DistillRuntime -> MemoryScope -> Eff es (Either L3Error (Maybe PersonaRow))
+regenerateScene   :: DistillRuntime -> MemorySpaceId -> MemoryScope -> Eff es (Either L2Error (Maybe SceneRow))
+regeneratePersona :: DistillRuntime -> MemorySpaceId -> MemoryScope -> Eff es (Either L3Error (Maybe PersonaRow))
 ```
 
-A pass records and merges memories, so it needs a context for the space the session belongs to,
-and it demands `MemoryDistill` before anything else — an unauthorized pass fails before it spends
-an LLM token rather than after, at the first write (`L1NotPermitted`).
+An L1 pass records new atoms and can supersede or merge old ones, so it needs a context for the
+space the session belongs to and preflights `[MemoryDistill, MemoryRecord, MemoryForget]` in that
+stable order. The first missing permission returns `L1NotPermitted` before a session read or LLM
+call. A service-backed host must request all three when minting the context; an embedded host using
+`assumeAuthorizedMemoryContext` already grants them.
+
+`regenerateScene` and `regeneratePersona` are low-level trusted-host seams: the caller supplies the
+space explicitly. The timer handlers are the authorization boundary for background regeneration;
+they require `MemoryDistill` before calling either seam.
 
 `L1SkippedUpToDate` is the watermark: under `RespectWatermark` a session with no turns newer than
 the last successful pass is skipped before any LLM call. `regenerateScene`/`regeneratePersona`
@@ -647,8 +653,10 @@ drainKiokuTimers ::
 ```
 
 An embedded host wires `assumeAuthorizedContextProvider`; a host behind a service boundary wires
-its own authorizer. A refusal dead-letters the timer rather than retrying it silently, because a
-refusal is a configuration fact and an operator has to see it.
+its own authorizer. Returning `Right context` is not enough by itself: L2 and L3 require that the
+context names the requested space and grants `MemoryDistill`. Provider refusal, a missing
+permission, or a wrong-space context dead-letters the timer before database, model, or workspace
+work, because each is a configuration fact an operator has to see.
 
 The CLI resolves both values from the environment: `KIOKU_MEMORY_SPACE` (default `kioku_legacy`)
 and `KIOKU_ACTOR` (default `kioku_cli`). A malformed value is a startup error, not a silent

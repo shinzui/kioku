@@ -37,7 +37,7 @@ This section must always reflect the actual current state of the work.
 - [x] (2026-08-21T17:35:10Z) Add shared partition-scope, payload-parser, timer-fire, and mirror-removal primitives.
 - [x] (2026-08-21T17:40:52Z) Require all L1 permissions before work and `MemoryDistill` in both derived-artifact handlers.
 - [x] (2026-08-21T17:40:52Z) Add denial regressions proving no LLM call, row change, or mirror write occurs.
-- [ ] Update authorization and distillation documentation; run API, core, and CLI suites.
+- [x] (2026-08-21T17:44:39Z) Update authorization and distillation documentation; run API, core, and CLI suites.
 
 
 ## Surprises & Discoveries
@@ -45,7 +45,13 @@ This section must always reflect the actual current state of the work.
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- The direct `regenerateScene` and `regeneratePersona` functions remain low-level trusted-host
+  seams; authorization belongs to the timer boundary that first receives a provider decision.
+  This distinction was implicit in the source-compatible interface requirement and is now explicit
+  in `docs/user/library-api.md` and ADR-4.
+- The complete validation environment had no reachable pgvector extension, so the core suite kept
+  its existing vector-only skips. The affected authorization and distillation paths all executed:
+  119 API tests, 220 core tests, and 50 CLI tests passed with zero failures.
 
 
 ## Decision Log
@@ -69,6 +75,14 @@ Record every decision made while working on the plan.
   would leave the next hardening edit vulnerable to the same one-sided change.
   Date: 2026-08-20
 
+- Decision: Keep direct scene/persona regeneration as trusted-host seams and enforce provider
+  permission and space agreement in the background timer boundary.
+  Rationale: the public regeneration signatures remain source-compatible, while the timer handler
+  is the first component that holds both the untrusted payload space and the host's authorization
+  decision. Validating there prevents provider success from retargeting work or bypassing
+  `MemoryDistill`.
+  Date: 2026-08-21
+
 
 ## Outcomes & Retrospective
 
@@ -77,7 +91,18 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Completed on 2026-08-21. L1 now refuses the first missing permission from
+`[MemoryDistill, MemoryRecord, MemoryForget]` before reading session evidence. L2 and L3 share one
+payload/provider/outcome pipeline that rejects provider refusal, missing distill permission, and
+wrong-space contexts before regeneration. Partitioned SQL parameters and mirror removal likewise
+have one owner instead of two copies.
+
+Database-backed regressions prove denied L2/L3 work makes no model call, derived row, or mirror;
+the wrong-space provider case is also permanent and diagnostic. User documentation and the core
+changelog describe the service-host permission requirements. The full API, core, and CLI suites
+passed (119, 220, and 50 tests respectively); pgvector-only cases retained their environment skip.
+ADR-4 was amended rather than adding a new record because it already owns background context and
+partition validation. No EP-2 work remains.
 
 
 ## Context and Orientation

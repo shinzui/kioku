@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-08-21
+* **Update**: ADR-4 records that distillation validates the supplied decision before work: L1 preflights distill, record, and forget permissions, while L2/L3 require a context for the requested timer space with distill permission; provider success cannot retarget work or bypass the action check.
+
 ## 2026-08-19
 * **Update**: ADR-10 records the narrow exception to released-migration immutability: a payload whose successful execution is itself unsafe may be corrected as an explicit breaking change only with known withdrawn/corrected checksums, equivalent or converged durable outcomes, and a guarded operator re-baseline. ExecPlan 32 applies the rule to migration `0011`'s leaked session `search_path` while preserving the Codd evidence for `0001` through `0010`.
 

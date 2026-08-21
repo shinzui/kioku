@@ -4,7 +4,7 @@ title: The aggregate enforces the memory-space partition
 description: >-
   The memory space lives in aggregate state and is checked by a transducer guard, so a
   cross-space command is refused by the state machine rather than by a read-model precheck.
-timestamp: 2026-08-06T19:10:00Z
+timestamp: 2026-08-21T17:44:39Z
 docId: ADR-4
 status: accepted
 date: 2026-08-06
@@ -64,6 +64,13 @@ refused rather than silently corrected, so the stored event and the decision tha
 remain the same fact. In particular the actor is checked, which is what stops a caller authorized
 as one principal from writing an event claiming another one acted.
 
+Distillation checks the same decision at the boundary that first holds it. L1 receives a context
+directly and preflights `MemoryDistill`, `MemoryRecord`, and `MemoryForget`, in that order, before
+it reads session evidence or calls a model. L2 and L3 discover their space from a timer, ask a
+`MemoryContextProvider` for that exact space, and then independently require both that the returned
+context names the requested space and that it grants `MemoryDistill`. A provider returning
+`Right context` is not permission to retarget the work or to skip the action check.
+
 **Reads are not partitioned by this decision.** They are partitioned by the schema instead — see
 [ADR-6](the-partition-is-a-column-not-a-schema.md), which added the column and made every
 statement name it. Until that landed the query functions deliberately kept their old signatures
@@ -89,10 +96,12 @@ Every command payload carries a space, which is redundant with the register on e
 the creation one. That redundancy is what makes the event self-describing for projections and
 workers, and it is what the guard compares against.
 
-Background work cannot hold a context, because it discovers its own work. The L1 timer payload
-therefore carries the memory space, and the worker asks a `MemoryContextProvider` for a decision
-about that space. A refusal dead-letters the timer rather than retrying it silently: an
-unauthorized worker is a configuration fact and an operator has to see it.
+Background work cannot hold a context, because it discovers its own work. Timer payloads therefore
+carry the memory space, and the worker asks a `MemoryContextProvider` for a decision about that
+space. A provider refusal, a returned context missing the required permission, or a returned
+context for another space dead-letters the timer rather than retrying it silently: all three are
+configuration facts an operator has to see, and none may reach a database read, model call, or
+derived-artifact write.
 
 ## Alternatives rejected
 

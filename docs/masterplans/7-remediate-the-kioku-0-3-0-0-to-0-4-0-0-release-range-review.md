@@ -89,7 +89,7 @@ convention.
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
 | EP-1 | Make workspace artifact migration no-clobber and share slug derivation | docs/plans/33-make-workspace-artifact-migration-no-clobber-and-share-slug-derivation.md | None | None | Complete |
-| EP-2 | Enforce distillation permissions through shared timer primitives | docs/plans/34-enforce-distillation-permissions-through-shared-timer-primitives.md | None | None | In Progress |
+| EP-2 | Enforce distillation permissions through shared timer primitives | docs/plans/34-enforce-distillation-permissions-through-shared-timer-primitives.md | None | None | Complete |
 | EP-3 | Enforce memory lineage and centralize write-context gates | docs/plans/35-enforce-memory-lineage-and-centralize-write-context-gates.md | None | None | Not Started |
 | EP-4 | Repair L1 watermark ownership and timer-space attribution | docs/plans/36-repair-l1-watermark-ownership-and-timer-space-attribution.md | None | EP-2 | Not Started |
 | EP-5 | Scale full-text recall and embedding backfill by memory space | docs/plans/37-scale-full-text-recall-and-embedding-backfill-by-memory-space.md | None | None | Not Started |
@@ -170,8 +170,8 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 
 - [x] EP-1: publish artifact copies atomically without replacing a destination created after planning.
 - [x] EP-1: make workspace and scope slugs consume one sanitise-plus-digest primitive.
-- [ ] EP-2: reject L1, L2, and L3 work before any LLM or write when required permissions are absent.
-- [ ] EP-2: replace L2/L3 timer, partition-parameter, and mirror-removal duplication with shared primitives.
+- [x] EP-2: reject L1, L2, and L3 work before any LLM or write when required permissions are absent.
+- [x] EP-2: replace L2/L3 timer, partition-parameter, and mirror-removal duplication with shared primitives.
 - [ ] EP-3: reject missing and cross-space lineage targets before appending memory events.
 - [ ] EP-3: make Memory and Session writes consume one parameterized context gate.
 - [ ] EP-4: make a divergent watermark row self-heal and become readable to the next pass.
@@ -200,6 +200,9 @@ interactions between child plans. Provide concise evidence.
 - `kioku_l1_watermarks.session_id` remains the primary key after memory spaces are added. The
   minimal repair is therefore to update `memory_space_id` from `EXCLUDED` on the existing
   conflict target, not to create a second row for the same globally unique session id.
+- EP-2's shared timer pipeline also rejects a provider that returns a context for a different
+  space than the payload requested. This preserves EP-4's assumption that it may change diagnostic
+  attribution without weakening or duplicating execution-time partition validation.
 
 
 ## Decision Log
@@ -255,3 +258,9 @@ when it appears after planning, accepts byte-identical late publication idempote
 source permissions, and removes its temporary sibling on handled success and failure. Workspace
 and scope persisted names share one byte-stable slug primitive. The full affected core and CLI
 suites pass; six child plans remain.
+
+EP-2 completed on 2026-08-21. L1 preflights distill, record, and forget authority before evidence
+reads; L2/L3 use one partitioned timer pipeline that validates provider refusal, permission, and
+space agreement before derived work. Shared partition encoders and mirror removal eliminate the
+remaining handler duplication. The full API/core/CLI suites pass (119/220/50 tests), and ADR-4
+now records the durable background-context rule. Five child plans remain.
