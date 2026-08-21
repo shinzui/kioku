@@ -7,7 +7,7 @@ import Data.Time (UTCTime)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), mkNamespace, mkScopeKind)
 import Kioku.Distill.L2 (l2SceneTimerId, sceneRowId)
 import Kioku.Distill.L3 (l3PersonaTimerId, personaRowId)
-import Kioku.Distill.ScopeIdentity (escapeScopeComponent, scopeIdentity, scopeSlugFromColumns)
+import Kioku.Distill.ScopeIdentity (escapeScopeComponent, scopeIdentity, scopeSlugFromColumns, slugWithDigest)
 import Kioku.SpaceFixtures (otherSpace, testSpace)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, testCase, (@?=))
@@ -20,6 +20,7 @@ tests =
       testCase "well-formed scopes keep their exact legacy ids" testLegacyStability,
       testCase "escaping is injective on adversarial components" testEscapeInjective,
       testCase "mirror slugs separate scopes the sanitiser cannot" testSlugCollision,
+      testCase "the shared slug recipe preserves persisted bytes" testSlugRecipeStability,
       testCase "namespace and kind reject the reserved characters" testValidators,
       testCase "one scope in two memory spaces derives different timer ids" testSpaceSeparatesTimers
     ]
@@ -114,6 +115,12 @@ testSlugCollision = do
   assertBool
     ("the slug keeps a human-readable prefix, got " <> show entity)
     ("a-b-c-" `Text.isPrefixOf` entity)
+
+testSlugRecipeStability :: Assertion
+testSlugRecipeStability = do
+  slugWithDigest "a/b/c" "a%2Fb%2Fc" @?= "a-b-c-48a3ec67db"
+  scopeSlugFromColumns "a/b/c" Nothing Nothing @?= "a-b-c-48a3ec67db"
+  scopeSlugFromColumns "a" (Just "b") (Just "c") @?= "a-b-c-d76a7b7266"
 
 testValidators :: Assertion
 testValidators = do

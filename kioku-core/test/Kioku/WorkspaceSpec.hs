@@ -12,6 +12,7 @@ module Kioku.WorkspaceSpec (tests) where
 import Data.List (isInfixOf)
 import Data.Text qualified as Text
 import Kioku.Api.Access (MemorySpaceId, mkMemorySpaceId)
+import Kioku.Distill.ScopeIdentity (slugWithDigest)
 import Kioku.Workspace
   ( ArtifactMove (..),
     MoveVerdict (..),
@@ -36,6 +37,7 @@ tests =
     "Workspace artifact layout"
     [ testCase "two spaces never share an artifact root" testDistinctRoots,
       testCase "the same space always gets the same root" testStableRoot,
+      testCase "space directories use the shared persisted slug recipe" testSharedSlugRecipe,
       testCase "a case-only difference is still two roots" testCaseOnlyDifference,
       testCase "no space id can escape .kioku/spaces" testNoTraversal,
       testCase "a fresh workspace has nothing to migrate" testEmptyMigration,
@@ -61,6 +63,12 @@ testStableRoot =
     "the artifact root must be a function of the space id alone"
     (spaceArtifactRoot "/w" (spaceNamed "space_a"))
     (spaceArtifactRoot "/w" (spaceNamed "space_a"))
+
+testSharedSlugRecipe :: Assertion
+testSharedSlugRecipe = do
+  spaceDirectoryName (spaceNamed "space_A") @?= "space_A-c1c5662504"
+  spaceDirectoryName (spaceNamed "space_A") @?= slugWithDigest "space_A" "space_A"
+  spaceDirectoryName (spaceNamed "..") @?= "---5ec1f7e700"
 
 -- | macOS and Windows fold case in path components, so a sanitised name alone would merge these
 -- two spaces into one directory on the machines this is developed on. The digest is what keeps

@@ -62,13 +62,11 @@ module Kioku.Workspace
   )
 where
 
-import Crypto.Hash (Digest, SHA256)
-import Crypto.Hash qualified as Hash
 import Data.ByteString qualified as BS
 import Data.List (sort)
 import Data.Text qualified as Text
-import Data.Text.Encoding qualified as TE
 import Kioku.Api.Access (MemorySpaceId, memorySpaceIdText)
+import Kioku.Distill.ScopeIdentity (slugWithDigest)
 import Kioku.Prelude
 import System.Directory
   ( copyFile,
@@ -109,30 +107,9 @@ legacyPersonaArtifactDir workspace = kiokuRoot workspace </> "persona"
 -- the name is both. This is the same shape as a scope slug, for the same reasons.
 spaceDirectoryName :: MemorySpaceId -> Text
 spaceDirectoryName space =
-  sanitize raw <> "-" <> digest
+  slugWithDigest raw raw
   where
     raw = memorySpaceIdText space
-
-    digest =
-      Text.take 10 . Text.pack . show $
-        (Hash.hash (TE.encodeUtf8 raw) :: Digest SHA256)
-
--- | Map every character outside @[A-Za-z0-9_-]@ to @-@.
---
--- Dots included, and that is the load-bearing part: it is what makes @..@ and @.@ ordinary
--- directory names rather than traversal.
-sanitize :: Text -> Text
-sanitize =
-  Text.map \ch ->
-    if isSafeChar ch then ch else '-'
-
-isSafeChar :: Char -> Bool
-isSafeChar ch =
-  (ch >= 'a' && ch <= 'z')
-    || (ch >= 'A' && ch <= 'Z')
-    || (ch >= '0' && ch <= '9')
-    || ch == '-'
-    || ch == '_'
 
 kiokuRoot :: FilePath -> FilePath
 kiokuRoot workspace = workspace </> ".kioku"
@@ -197,15 +174,13 @@ planOne sourceDir destinationDir name = do
         pure (if same then MoveAlreadyMigrated else MoveCollision)
   pure ArtifactMove {source, destination, verdict}
 
--- | Compared by content hash rather than by size or mtime: a copy made by an earlier run has a
+-- | Compared by exact bytes rather than by size or mtime: a copy made by an earlier run has a
 -- different mtime and must still count as already migrated.
 sameContent :: FilePath -> FilePath -> IO Bool
 sameContent left right = do
   leftBytes <- BS.readFile left
   rightBytes <- BS.readFile right
-  pure (digestOf leftBytes == digestOf rightBytes)
-  where
-    digestOf bytes = Hash.hash bytes :: Digest SHA256
+  pure (leftBytes == rightBytes)
 
 -- | Carry out a plan, copying every 'MoveReady' file and touching nothing else.
 --

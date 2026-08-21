@@ -23,6 +23,7 @@ module Kioku.Distill.ScopeIdentity
   ( escapeScopeComponent,
     scopeIdentity,
     scopeIdentityFromColumns,
+    slugWithDigest,
     scopeSlugFromColumns,
   )
 where
@@ -69,14 +70,23 @@ scopeIdentityFromColumns namespace scopeKind scopeRef =
 -- what actually separates them; the prefix is only so a human can tell the files apart.
 scopeSlugFromColumns :: Text -> Maybe Text -> Maybe Text -> Text
 scopeSlugFromColumns namespace scopeKind scopeRef =
-  sanitizeSlug readable <> "-" <> identityDigest
+  slugWithDigest readable (scopeIdentityFromColumns namespace scopeKind scopeRef)
   where
     readable =
       Text.intercalate "-" (namespace : catMaybes [scopeKind, scopeRef])
 
+-- | Turn a readable label and its exact identity into a path-safe persisted slug.
+--
+-- The readable label is only for humans: sanitisation is intentionally lossy. The digest is
+-- computed from the separate identity input so callers can retain that identity's injective
+-- encoding even when the readable label uses a friendlier spelling.
+slugWithDigest :: Text -> Text -> Text
+slugWithDigest readable identity =
+  sanitizeSlug readable <> "-" <> identityDigest
+  where
     identityDigest =
       Text.take 10 . Text.pack . show $
-        (Hash.hash (TE.encodeUtf8 (scopeIdentityFromColumns namespace scopeKind scopeRef)) :: Digest SHA256)
+        (Hash.hash (TE.encodeUtf8 identity) :: Digest SHA256)
 
 sanitizeSlug :: Text -> Text
 sanitizeSlug =

@@ -35,7 +35,8 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Add the shared `slugWithDigest` primitive and make scope and workspace slugs consume it.
+- [x] (2026-08-21 17:08Z) Add the shared `slugWithDigest` primitive and make scope and workspace
+  slugs consume it. Focused Workspace (10 tests) and Scope identity (7 tests) patterns pass.
 - [ ] Replace `copyFile` with an atomic no-replace publication path and handle a stale plan.
 - [ ] Add deterministic stale-plan, idempotence, and shared-slug regression tests.
 - [ ] Update package metadata, changelog, and operator/library documentation; run the full core suite.
@@ -66,6 +67,13 @@ Record every decision made while working on the plan.
   a memory space uses the same text for both. A two-input primitive covers both without changing
   either persisted recipe.
   Date: 2026-08-20
+
+- Decision: Compare artifact contents byte for byte in `Kioku.Workspace` instead of comparing
+  SHA-256 digests.
+  Rationale: moving the persisted slug digest into `slugWithDigest` leaves `Kioku.Workspace`
+  independent of cryptographic implementation details, and exact equality is stronger than a
+  digest comparison for classifying migration collisions.
+  Date: 2026-08-21
 
 
 ## Outcomes & Retrospective
