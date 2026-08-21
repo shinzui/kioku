@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added `0013-partition-aware-fts-index.sql`. When `btree_gin` is installed or can be installed,
+  it replaces the content-only full-text GIN with an active-only GIN over
+  `(memory_space_id, namespace, content_tsv)`, preventing one space's recall cost from growing
+  with matching content in unrelated spaces. If extension installation is unavailable, the
+  migration succeeds and retains the old index as a correctness-preserving fallback.
+- The composed fresh-install plan now contains 54 migrations: Kiroku 11, Keiro 30, Kioku 13.
+
 ## 0.4.1.0 — 2026-08-18
 
 ### Changed

@@ -8,7 +8,9 @@ where
 import Baikai.Embedding (EmbeddingModel)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Functor.Contravariant ((>$<))
 import Data.HashMap.Strict qualified as HashMap
+import Data.List (sort)
 import Data.Set qualified as Set
 import Data.Vector qualified as Vector
 import Effectful (Eff, IOE, (:>))
@@ -26,6 +28,7 @@ import Kioku.Api.Access
     MemorySpaceId,
     memoryContextRecordedActor,
     memoryContextSpace,
+    memorySpaceIdText,
   )
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
@@ -39,6 +42,7 @@ import Kioku.Memory.Embedding.Worker
     EmbeddingWorkerEnv (..),
     backfillMissingEmbeddings,
     embeddingHandler,
+    selectEmbeddingCandidateIds,
     shouldSkipEmbedding,
   )
 import Kioku.Memory.EventStream (memoryStream)
@@ -78,7 +82,8 @@ tests =
       testCase "dimension mismatch halts the processor" testDimensionMismatchHalts,
       testCase "a refused memory space acks dead-letter" testRefusedSpaceDeadLetters,
       testCase "an envelope naming another space acks dead-letter and writes nothing" testForgedSpaceDeadLetters,
-      testCase "a one-space backfill leaves every other space alone" testBackfillHonorsSpace
+      testCase "a one-space backfill leaves every other space alone" testBackfillHonorsSpace,
+      testCase "settled rows do not cross the backfill transfer boundary" testBackfillCandidateTransfer
     ]
 
 -- | Every constructor kiroku documents as retryable is transient; every
@@ -228,6 +233,112 @@ testBackfillHonorsSpace =
     assertBool ("the backfill embedded nothing (count " <> show count <> ")") (count >= 1)
     assertBool "the backfilled space's memory has no embedding" mineEmbedded
     assertBool "the untouched space's memory was embedded anyway" (not theirsEmbedded)
+
+-- | Observe the identities decoded by the two production candidate statements at each state
+-- transition. A settled row returning here would mean PostgreSQL still transferred its full
+-- content only for Haskell to discard it later, which is the startup-scan regression this test
+-- exists to catch.
+testBackfillCandidateTransfer :: Assertion
+testBackfillCandidateTransfer =
+  withEmbeddingEnv \appEnv -> do
+    capability <- runOrFail appEnv (detectVectorCapability embeddingDims)
+    case capability of
+      VectorAvailable -> pure ()
+      _ -> runOrFail appEnv installCandidateTestColumns
+    evidence <- runOrFail appEnv do
+      (mine, _) <- recordFixtureMemory testContext "candidate transfer mine"
+      (theirs, _) <- recordFixtureMemory otherContext "candidate transfer theirs"
+
+      missingEvery <- selectEmbeddingCandidateIds BackfillEverySpace
+      missingMine <- selectEmbeddingCandidateIds (BackfillOneSpace testSpace)
+
+      embedded <- case capability of
+        VectorAvailable ->
+          backfillMissingEmbeddings
+            capability
+            (mkTestEnv (\_ -> pure (Right (Vector.replicate embeddingDims 0.1))))
+            BackfillEverySpace
+        _ -> do
+          settleCandidateWithoutVector mine
+          settleCandidateWithoutVector theirs
+          pure 2
+      settledEvery <- selectEmbeddingCandidateIds BackfillEverySpace
+      settledMine <- selectEmbeddingCandidateIds (BackfillOneSpace testSpace)
+
+      markContentStale mine "candidate transfer mine changed"
+      markContentStale theirs "candidate transfer theirs changed"
+      staleEvery <- selectEmbeddingCandidateIds BackfillEverySpace
+      staleMine <- selectEmbeddingCandidateIds (BackfillOneSpace testSpace)
+
+      pure
+        ( idText mine,
+          idText theirs,
+          embedded,
+          missingEvery,
+          missingMine,
+          settledEvery,
+          settledMine,
+          staleEvery,
+          staleMine
+        )
+
+    let (mine, theirs, embedded, missingEvery, missingMine, settledEvery, settledMine, staleEvery, staleMine) = evidence
+        mineKey = (memorySpaceIdText testSpace, mine)
+        theirKey = (memorySpaceIdText otherSpace, theirs)
+        keys = sort . fmap (\(space, memoryId) -> (memorySpaceIdText space, memoryId))
+    embedded @?= 2
+    keys missingEvery @?= sort [mineKey, theirKey]
+    keys missingMine @?= [mineKey]
+    keys settledEvery @?= []
+    keys settledMine @?= []
+    keys staleEvery @?= sort [mineKey, theirKey]
+    keys staleMine @?= [mineKey]
+
+-- | The optional vector extension may not be installed in the test PostgreSQL. Candidate
+-- eligibility only needs nullability and the content hash, so this fallback gives the two
+-- production SELECTs those columns without pretending the vector write path is available.
+installCandidateTestColumns :: (Store :> es) => Eff es ()
+installCandidateTestColumns =
+  runTransaction $
+    Tx.sql
+      "ALTER TABLE kioku.memories ADD COLUMN IF NOT EXISTS embedding boolean; \
+      \ALTER TABLE kioku.memories ADD COLUMN IF NOT EXISTS content_hash text"
+
+settleCandidateWithoutVector ::
+  (Store :> es) =>
+  MemoryId ->
+  Eff es ()
+settleCandidateWithoutVector memoryId =
+  runTransaction (Tx.statement (idText memoryId) settleCandidateWithoutVectorStmt)
+
+settleCandidateWithoutVectorStmt :: Statement Text ()
+settleCandidateWithoutVectorStmt =
+  preparable
+    """
+    UPDATE kioku.memories
+    SET embedding = true,
+        content_hash = encode(sha256(convert_to(content, 'UTF8')), 'hex')
+    WHERE memory_id = $1
+    """
+    (E.param (E.nonNullable E.text))
+    D.noResult
+
+markContentStale ::
+  (Store :> es) =>
+  MemoryId ->
+  Text ->
+  Eff es ()
+markContentStale memoryId content =
+  runTransaction (Tx.statement (idText memoryId, content) updateMemoryContentStmt)
+
+updateMemoryContentStmt :: Statement (Text, Text) ()
+updateMemoryContentStmt =
+  preparable
+    "UPDATE kioku.memories SET content = $2 WHERE memory_id = $1"
+    ( (fst >$< E.param (E.nonNullable E.text))
+        <> (snd >$< E.param (E.nonNullable E.text))
+    )
+    D.noResult
 
 -- | Record a memory, then hand back its id and the @MemoryRecorded@ event at
 -- the head of its stream — a real recorded event, not a hand-built one.

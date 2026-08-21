@@ -10,3 +10,4 @@
 0010-kioku-scope-identity-recompute.sql
 0011-kioku-memory-space-partition.sql
 0012-relocate-projections-to-kioku-schema.sql
+0013-partition-aware-fts-index.sql

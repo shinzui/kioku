@@ -81,6 +81,12 @@ tests =
       testCase "the pinned Codd history maps 30 known plan targets" testHistoryMappings,
       testCase "the pre-cutover Codd cohort imports 30 rows and applies only the forward migrations" testCoddCohortImport,
       testGroup
+        "the partition-aware full-text index"
+        [ testCase "a normal database replaces the content-only GIN" testPartitionAwareFtsIndex,
+          testCase "extension failure is handled before the fallback can be dropped" testPartitionAwareFtsFallbackOrdering,
+          testCase "re-applying its body changes nothing" testPartitionAwareFtsIndexIdempotent
+        ],
+      testGroup
         "the memory-space partition migration"
         [ testCase "backfills every pre-partition row into the legacy space" testMemorySpaceBackfill,
           testCase "refuses to finish when a derived row disagrees with its session" testMemorySpaceDriftAborts,
@@ -220,6 +226,83 @@ registryTableExists =
     "SELECT to_regclass('keiro.keiro_read_models') IS NOT NULL"
     E.noParams
     (D.singleRow (D.column (D.nonNullable D.bool)))
+
+-- * The partition-aware full-text index
+
+partitionAwareFtsMigration :: FilePath
+partitionAwareFtsMigration = "0013-partition-aware-fts-index.sql"
+
+-- | The ordinary ephemeral role can install @btree_gin@, so the preferred branch must exist as
+-- a catalog fact: extension present, replacement GIN present, historical GIN absent. The index
+-- definition also proves that all three candidate predicates and the active-row partial clause
+-- are carried by the access path.
+testPartitionAwareFtsIndex :: Assertion
+testPartitionAwareFtsIndex =
+  withKiokuMigratedDatabase \connStr -> do
+    (extensionPresent, replacementPresent, fallbackPresent, definition) <-
+      query connStr partitionAwareFtsIndexLayout
+    extensionPresent @?= True
+    replacementPresent @?= True
+    fallbackPresent @?= False
+    mapM_
+      ( \fragment ->
+          assertBool
+            ("partition-aware GIN definition is missing " <> Text.unpack fragment <> ": " <> Text.unpack definition)
+            (fragment `Text.isInfixOf` definition)
+      )
+      [ "USING gin (memory_space_id, namespace, content_tsv)",
+        "WHERE (status = 'active'::text)"
+      ]
+
+-- | The fallback is a source-order guarantee as well as a happy-path database test. A role that
+-- cannot install @btree_gin@ must reach the exception handler before any statement can remove
+-- the old index, and the replacement receives a catalog check before that removal too.
+testPartitionAwareFtsFallbackOrdering :: Assertion
+testPartitionAwareFtsFallbackOrdering = do
+  migration <- loadMigration partitionAwareFtsMigration
+  let dropStatement = "DROP INDEX IF EXISTS kioku.kioku_memories_tsv_idx"
+      (beforeDrop, dropAndAfter) = Text.breakOn dropStatement migration
+  assertBool "the migration never names the historical fallback index" (not (Text.null dropAndAfter))
+  assertBool
+    "the btree_gin exception handler appears after the fallback drop"
+    ("WHEN OTHERS THEN" `Text.isInfixOf` beforeDrop)
+  assertBool
+    "the fallback drop is not guarded by a catalog-visible replacement"
+    ( "IF to_regclass('kioku.kioku_memories_space_namespace_tsv_idx') IS NOT NULL THEN"
+        `Text.isInfixOf` beforeDrop
+    )
+
+testPartitionAwareFtsIndexIdempotent :: Assertion
+testPartitionAwareFtsIndexIdempotent =
+  withKiokuMigratedDatabase \connStr ->
+    withConnection connStr \conn -> do
+      migration <- loadMigration partitionAwareFtsMigration
+      before <- run conn (Session.statement () partitionAwareFtsIndexLayout)
+      run conn (Session.script migration)
+      run conn (Session.statement () partitionAwareFtsIndexLayout) >>= (@?= before)
+
+partitionAwareFtsIndexLayout :: Statement () (Bool, Bool, Bool, Text)
+partitionAwareFtsIndexLayout =
+  preparable
+    """
+    SELECT EXISTS (
+             SELECT 1 FROM pg_catalog.pg_extension WHERE extname = 'btree_gin'
+           ),
+           to_regclass('kioku.kioku_memories_space_namespace_tsv_idx') IS NOT NULL,
+           to_regclass('kioku.kioku_memories_tsv_idx') IS NOT NULL,
+           coalesce(pg_catalog.pg_get_indexdef(
+             to_regclass('kioku.kioku_memories_space_namespace_tsv_idx')::oid
+           ), '')
+    """
+    E.noParams
+    ( D.singleRow
+        ( (,,,)
+            <$> D.column (D.nonNullable D.bool)
+            <*> D.column (D.nonNullable D.bool)
+            <*> D.column (D.nonNullable D.bool)
+            <*> D.column (D.nonNullable D.text)
+        )
+    )
 
 -- * The memory-space partition migration
 
@@ -555,7 +638,7 @@ testKirokuOnlyAdoption =
     adoption <- runMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let MigrationReport {results = adoptionResults} = adoption
     length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 11
-    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 42
+    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 43
 
     -- Verified and skipped, never re-executed: the stored rows keep their checksums and their
     -- original application timestamps.
@@ -568,7 +651,7 @@ testKirokuOnlyAdoption =
     verification <- verifyMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let VerificationReport {issues = adoptionIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     adoptionIssues @?= []
-    length appliedMigrations @?= 53
+    length appliedMigrations @?= 54
     pendingMigrations @?= []
     unknownMigrations @?= []
 
@@ -919,13 +1002,13 @@ testCoddCohortImport =
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 53
+    length appliedMigrations @?= 54
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 53
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 54
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 fixtureMigrationNames :: Text -> [FilePath]
@@ -1013,7 +1096,8 @@ expectedForwardMigrationIds =
           migrationId "keiro" "0029",
           migrationId "keiro" "0030",
           migrationId "kioku" "0011-kioku-memory-space-partition",
-          migrationId "kioku" "0012-relocate-projections-to-kioku-schema"
+          migrationId "kioku" "0012-relocate-projections-to-kioku-schema",
+          migrationId "kioku" "0013-partition-aware-fts-index"
         ]
 
 expectRight :: (Show error) => Either error value -> value

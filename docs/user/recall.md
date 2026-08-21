@@ -127,7 +127,9 @@ embedding endpoint. `embedding` is pure semantic similarity.
 3. **Candidate selection.** Up to 50 candidates are pulled from each active channel, scoped to
    the request:
    - **FTS:** `content_tsv @@ websearch_to_tsquery('english', query)`, ordered by `ts_rank`
-     then recency.
+     then recency. When `btree_gin` is available, the partial
+     `kioku_memories_space_namespace_tsv_idx` GIN carries `memory_space_id`, `namespace`, and
+     `content_tsv` together, so matching content owned by other spaces never enters the bitmap.
    - **Vector:** ordered by cosine distance (`embedding <=> queryVector`) — and by nothing
      else — over rows where `embedding IS NOT NULL`. An HNSW index can only produce the
      distance ordering, so any second sort key leaves the planner to make up the difference,
@@ -265,12 +267,23 @@ global bucket could not be asked for at all, and no artifact anywhere could show
 meaning a call had. Splitting the statements puts the difference in the statement's name and in
 its query plan.
 
-**All three are partition-led.** `memory_space_id` is the first mandatory predicate in every one,
-and PostgreSQL answers all three through the same partition-first index,
+**All three are partition-led.** `memory_space_id` is the first mandatory predicate in every one.
+For full-text recall, migration `0013-partition-aware-fts-index` prefers the active-only
+`kioku_memories_space_namespace_tsv_idx` GIN on
+`(memory_space_id, namespace, content_tsv)`. Its first two text columns require PostgreSQL's
+`btree_gin` extension. The migration tries to install that extension, but treats it as an optional
+performance capability: if the database role cannot install it, the migration succeeds and keeps
+the historical content-only `kioku_memories_tsv_idx`. Results and space isolation are identical
+on the fallback; the degraded path can enumerate matching content from unrelated spaces before
+the heap filter removes it, so its cost can grow with the whole database.
+
+The exact vector pass and unranked scope access continue to use
 `kioku_memories_space_scope_idx` on `(memory_space_id, namespace, scope_kind, scope_ref)`: the two
 exact bounds as four-column index conditions, the namespace-wide bound as a two-column prefix. A
-btree index takes `scope_kind IS NULL` as an index condition rather than as a filter, which is why
-the exact global bucket needs no index of its own.
+B-tree takes `scope_kind IS NULL` as an index condition rather than as a filter, which is why the
+exact global bucket needs no index of its own. To inspect the installed FTS path, run
+`SELECT to_regclass('kioku.kioku_memories_space_namespace_tsv_idx');`; a NULL result means the
+content-only fallback remains active.
 
 The scoped reads (`getActiveByScope` and friends) *require* the scope columns to be NULL for a
 global scope, which is the same set of rows `ExactScope (ScopeGlobal ns)` now returns — ranked

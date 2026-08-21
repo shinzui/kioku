@@ -244,17 +244,20 @@ undefinedModel = error "the keyword channel must not embed"
 --    parameterised predicate, and no artifact anywhere could tell a reviewer which meaning had
 --    been asked for.
 --
--- @enable_seqscan = off@ is set for the same reason the corpus is small: the fixture holds six
--- rows, so an unconstrained planner would sequentially scan whatever it was asked and the plan
--- would say nothing about which access paths are /available/. Turning the sequential scan off
--- asks the question this case actually means — can this query be answered through a
--- partition-leading index? — and the answer is asserted below.
+-- The fixture includes hundreds of matching decoys in a second namespace, and
+-- @enable_seqscan = off@ removes the remaining cost-dependent ambiguity. The question this case
+-- asks is therefore precise: can this query be answered through an index that carries space,
+-- namespace, and full-text match together? The answer is asserted below.
 testBoundedPlans :: IO ()
 testBoundedPlans =
   withTargetFixture \runEff -> do
     result <- runEff do
+      scopedFtsIndex <- partitionAwareFtsIndexIsPresent
       available <- vectorTypeIsReachable
-      keywordPlans <- traverse (planFor explainFtsCandidates . ftsPlan) targetsUnderTest
+      keywordPlans <-
+        ifAvailable
+          scopedFtsIndex
+          (traverse (ftsPlanFor . ftsPlan) targetsUnderTest)
       vectorPlans <-
         ifAvailable
           available
@@ -263,7 +266,9 @@ testBoundedPlans =
     case result of
       Left err -> assertFailure ("store error: " <> show err)
       Right (keywordPlans, vectorPlans) -> do
-        assertPlans "keyword" keywordPlans
+        case keywordPlans of
+          Just plans -> assertFtsPlans plans
+          Nothing -> putStrLn ftsIndexSkipMessage
         case vectorPlans of
           Just plans -> assertPlans "vector (exact pass)" plans
           Nothing -> putStrLn skipMessage
@@ -272,11 +277,48 @@ testBoundedPlans =
     vectorPlan target =
       vectorCandidateSql (request testSpace target Embedding) fixtureQueryVector
 
+    -- GIN is a bitmap access method. Disable plain index scans as well as sequential scans so
+    -- PostgreSQL compares bitmap-capable paths instead of taking the scope B-tree as a direct
+    -- index scan merely because this synthetic corpus is cache-hot.
+    ftsPlanFor compiled =
+      Text.unlines
+        <$> runTransaction do
+          Tx.sql "SET LOCAL enable_seqscan = off"
+          Tx.sql "SET LOCAL enable_indexscan = off"
+          explainFtsCandidates compiled
+
     planFor explain compiled =
       Text.unlines
         <$> runTransaction do
           Tx.sql "SET LOCAL enable_seqscan = off"
           explain compiled
+
+assertFtsPlans :: [Text] -> IO ()
+assertFtsPlans plans = do
+  assertPlans "keyword" plans
+  traverse_ assertScopedGin plans
+  where
+    assertScopedGin plan = do
+      assertBool
+        ("keyword: the partition-aware GIN is absent from the plan\n" <> Text.unpack plan)
+        ("kioku_memories_space_namespace_tsv_idx" `Text.isInfixOf` plan)
+      let indexConditions = Text.unlines (filter ("Index Cond:" `Text.isInfixOf`) (Text.lines plan))
+      mapM_
+        ( \fragment ->
+            assertBool
+              ( "keyword: the GIN index condition is missing "
+                  <> Text.unpack fragment
+                  <> "\n"
+                  <> Text.unpack plan
+              )
+              (fragment `Text.isInfixOf` indexConditions)
+        )
+        [ "memory_space_id",
+          memorySpaceIdText testSpace,
+          "namespace",
+          namespaceText fixtureNamespace,
+          "content_tsv"
+        ]
 
 assertPlans :: String -> [Text] -> IO ()
 assertPlans label plans =
@@ -323,6 +365,9 @@ assertPartitionBound label plan =
 
 fixtureNamespace :: Namespace
 fixtureNamespace = Namespace "mori"
+
+namespaceText :: Namespace -> Text
+namespaceText (Namespace value) = value
 
 repoKind :: ScopeKind
 repoKind = ScopeKind "repo"
@@ -375,6 +420,11 @@ skipMessage =
   "  [skipped] no reachable pgvector on this cluster; re-enter the dev shell to exercise the \
   \vector rows of the target matrix"
 
+ftsIndexSkipMessage :: String
+ftsIndexSkipMessage =
+  "  [skipped: partition-aware FTS access path] btree_gin is unavailable; correctness ran \
+  \against the retained content-only GIN fallback"
+
 -- | Six rows: three scopes, twice, one set per memory space. Each carries a distinct embedding so
 -- the vector channel has something to rank, and identical content so the keyword channel matches
 -- all six.
@@ -384,9 +434,55 @@ seedFixture withEmbeddings = do
     "INSERT INTO kioku.memories \
     \(memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) VALUES "
       <> Text.intercalate ", " (concatMap rowsFor fixtureScopes)
+
+  -- A few fixture rows prove correctness; these decoys make the planner evidence meaningful.
+  -- Both spaces own a second namespace whose content matches the query, so a content-only GIN
+  -- must enumerate hundreds of unrelated candidates while the replacement can constrain the
+  -- bitmap by space and namespace inside the index.
+  runTransaction . Tx.sql . encodeUtf8 $
+    "INSERT INTO kioku.memories \
+    \(memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) \
+    \SELECT spaces.memory_space_id, \
+    \       'fts_planner_decoy_' || spaces.id_prefix || '_' || ordinal::text, \
+    \       'agent', 'mori_archive', NULL, NULL, 'fact', '"
+      <> fixtureContent
+      <> "', 'active', now(), now() \
+         \FROM (VALUES ('"
+      <> memorySpaceIdText testSpace
+      <> "'::text, 't'::text), ('"
+      <> memorySpaceIdText otherSpace
+      <> "'::text, 'o'::text)) AS spaces(memory_space_id, id_prefix) \
+         \CROSS JOIN generate_series(1, 400) AS ordinal"
+
+  -- Make every requested scope expensive through the older partition-leading B-trees while
+  -- keeping the FTS result selective. Without these rows the exact-scope B-tree can fetch the
+  -- single matching fixture row more cheaply than any GIN, which proves that index is healthy
+  -- but says nothing about the new full-text access path.
+  runTransaction . Tx.sql . encodeUtf8 $
+    "INSERT INTO kioku.memories \
+    \(memory_space_id, memory_id, agent_id, namespace, scope_kind, scope_ref, memory_type, content, status, created_at, updated_at) \
+    \SELECT spaces.memory_space_id, \
+    \       'fts_scope_noise_' || spaces.id_prefix || '_' || scopes.id_prefix || '_' || ordinal::text, \
+    \       'agent', '"
+      <> namespaceText fixtureNamespace
+      <> "', scopes.scope_kind, scopes.scope_ref, 'fact', \
+         \       'an unrelated archival note about gardening', 'active', now(), now() \
+         \FROM (VALUES ('"
+      <> memorySpaceIdText testSpace
+      <> "'::text, 't'::text), ('"
+      <> memorySpaceIdText otherSpace
+      <> "'::text, 'o'::text)) AS spaces(memory_space_id, id_prefix) \
+         \CROSS JOIN (VALUES \
+         \  (NULL::text, NULL::text, 'global'::text), \
+         \  ('repo'::text, 'web'::text, 'web'::text), \
+         \  ('repo'::text, 'api'::text, 'api'::text) \
+         \) AS scopes(scope_kind, scope_ref, id_prefix) \
+         \CROSS JOIN generate_series(1, 1000) AS ordinal"
+
   if withEmbeddings
     then traverse_ setEmbedding (zip [0 ..] (testSpaceIds <> otherSpaceIds))
     else pure ()
+  runTransaction (Tx.sql "ANALYZE kioku.memories")
   where
     rowsFor (testId, otherId, scope) =
       [row testSpace testId scope, row otherSpace otherId scope]
@@ -442,6 +538,17 @@ vectorTypeIsReachable =
     stmt =
       preparable
         "SELECT to_regtype('vector') IS NOT NULL"
+        E.noParams
+        (D.singleRow (D.column (D.nonNullable D.bool)))
+
+partitionAwareFtsIndexIsPresent :: (Store :> es) => Eff es Bool
+partitionAwareFtsIndexIsPresent =
+  runTransaction (Tx.statement () stmt)
+  where
+    stmt :: Statement () Bool
+    stmt =
+      preparable
+        "SELECT to_regclass('kioku.kioku_memories_space_namespace_tsv_idx') IS NOT NULL"
         E.noParams
         (D.singleRow (D.column (D.nonNullable D.bool)))
 

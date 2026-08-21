@@ -299,6 +299,10 @@ every space in its database, so a per-space default would let you run a backfill
 and never learn that the other spaces are still unsearchable. A malformed `--space` value is a
 parse error, not an empty result.
 
+Both the explicit and startup backfills select only active rows whose embedding is missing or
+whose stored content hash is stale. PostgreSQL applies that predicate before returning candidates,
+so a settled corpus sends no unchanged memory content to the worker merely to skip it in Haskell.
+
 The two one-shot modes are **mutually exclusive** — they do unrelated work, so there is no
 combined meaning. Passing both is a parse error naming whichever flag came *second*
 (``Invalid option `--timers-once'`` for `--backfill --timers-once`, and ``Invalid option

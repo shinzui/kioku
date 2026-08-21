@@ -28,6 +28,7 @@ module Kioku.Memory.Embedding.Worker
     EmbedOutcome (..),
     EmbeddingBackfillScope (..),
     backfillMissingEmbeddings,
+    selectEmbeddingCandidateIds,
     embeddingHandler,
     embeddingWorkerProcessor,
     mkEmbeddingWorkerEnv,
@@ -339,14 +340,9 @@ backfillMissingEmbeddings ::
   EmbeddingBackfillScope ->
   Eff es Int
 backfillMissingEmbeddings VectorAvailable env scope = do
-  candidates <- runTransaction candidateQuery
+  candidates <- selectEmbeddingCandidates scope
   foldM embedCandidate 0 candidates
   where
-    candidateQuery =
-      case scope of
-        BackfillEverySpace -> Tx.statement () selectEmbeddingCandidatesStmt
-        BackfillOneSpace space -> Tx.statement space selectEmbeddingCandidatesInSpaceStmt
-
     embedCandidate count candidate
       | shouldSkipEmbedding candidate.hasEmbedding candidate.contentHash contentHash =
           pure count
@@ -375,6 +371,29 @@ backfillMissingEmbeddings VectorAvailable env scope = do
       where
         contentHash = sha256Hex candidate.content
 backfillMissingEmbeddings _ _ _ = pure 0
+
+-- | Return only the identities that the production backfill statements actually transferred.
+--
+-- This deliberately projects from decoded 'EmbeddingCandidate' values after running the same
+-- statements as 'backfillMissingEmbeddings'. It is a regression seam for the database/Haskell
+-- transfer boundary, not a second spelling of candidate eligibility.
+selectEmbeddingCandidateIds ::
+  (Store :> es) =>
+  EmbeddingBackfillScope ->
+  Eff es [(MemorySpaceId, Text)]
+selectEmbeddingCandidateIds scope =
+  fmap (\candidate -> (candidate.memorySpaceId, candidate.memoryId))
+    <$> selectEmbeddingCandidates scope
+
+selectEmbeddingCandidates ::
+  (Store :> es) =>
+  EmbeddingBackfillScope ->
+  Eff es [EmbeddingCandidate]
+selectEmbeddingCandidates scope =
+  runTransaction $
+    case scope of
+      BackfillEverySpace -> Tx.statement () selectEmbeddingCandidatesStmt
+      BackfillOneSpace space -> Tx.statement space selectEmbeddingCandidatesInSpaceStmt
 
 -- | Embed one memory, refusing to touch it if it is not in the space the caller named.
 --
@@ -445,10 +464,9 @@ selectEmbeddingCandidatesStmt =
         <> " "
         <> memoriesTable
         <> " "
-        <> """
-           WHERE status = 'active'
-           ORDER BY created_at ASC
-           """
+        <> "WHERE status = 'active' AND "
+        <> embeddingCandidatePredicate
+        <> " ORDER BY created_at ASC"
     )
     E.noParams
     (D.rowList embeddingCandidateDecoder)
@@ -469,13 +487,23 @@ selectEmbeddingCandidatesInSpaceStmt =
         <> " "
         <> memoriesTable
         <> " "
-        <> """
-           WHERE status = 'active' AND memory_space_id = $1
-           ORDER BY created_at ASC
-           """
+        <> "WHERE status = 'active' AND memory_space_id = $1 AND "
+        <> embeddingCandidatePredicate
+        <> " ORDER BY created_at ASC"
     )
     memorySpaceParam
     (D.rowList embeddingCandidateDecoder)
+
+-- | Candidate eligibility belongs at the transfer boundary. PostgreSQL calculates the same
+-- lowercase hexadecimal SHA-256 that 'sha256Hex' calculates in Haskell, so settled content is
+-- rejected before its full text crosses the Hasql connection. 'shouldSkipEmbedding' remains the
+-- later race check after a row has already been selected.
+embeddingCandidatePredicate :: Text
+embeddingCandidatePredicate =
+  """
+  (embedding IS NULL
+   OR content_hash IS DISTINCT FROM encode(sha256(convert_to(content, 'UTF8')), 'hex'))
+  """
 
 selectEmbeddingStateStmt :: Statement Text (Maybe EmbeddingState)
 selectEmbeddingStateStmt =

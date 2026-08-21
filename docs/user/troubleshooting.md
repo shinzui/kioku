@@ -230,9 +230,11 @@ SELECT dead_letter_id, event_id, created_at, reason
 ```
 
 There is no drain command, and you do not need one: `kioku worker --backfill` re-embeds every
-active memory whose stored content hash doesn't match its content, which recovers exactly the
-memories a dead-lettered event would have embedded. A backfill also runs automatically at every
-`kioku worker` start.
+active memory whose embedding is missing or whose stored content hash doesn't match its content,
+which recovers exactly the memories a dead-lettered event would have embedded. The candidate
+predicate runs in PostgreSQL, so settled rows do not transfer their full content to the worker.
+A backfill also runs automatically at every `kioku worker` start; on a settled corpus that scan
+returns zero candidates.
 
 ### Distillation timers
 

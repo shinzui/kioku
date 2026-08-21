@@ -25,6 +25,10 @@
 - Timer dead letters and fire spans now attribute only an explicitly valid `memorySpaceId`.
   Missing, null, and unreadable ownership is reported as `unknown`; native pre-partition timer
   actions still execute in `kioku_legacy`, and the eight-attempt ceiling is unchanged.
+- Embedding startup and explicit backfills now apply the missing-or-stale content-hash predicate
+  in both production SQL statements. Settled active rows no longer transfer their full content
+  from PostgreSQL merely to be skipped in Haskell; the existing Haskell check remains as a race
+  defense after candidate selection.
 
 ### Changed
 
