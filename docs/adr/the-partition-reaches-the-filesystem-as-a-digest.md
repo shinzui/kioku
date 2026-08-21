@@ -4,7 +4,7 @@ title: The memory-space partition reaches the filesystem as a sanitised digest, 
 description: >-
   Workspace artifacts are rooted at .kioku/spaces/<sanitised-prefix>-<digest>/, because a memory
   space id is validated for a database column and is not safe as a path component.
-timestamp: 2026-08-06T21:30:00Z
+timestamp: 2026-08-21T18:17:23Z
 docId: ADR-7
 status: accepted
 date: 2026-08-06
@@ -83,6 +83,15 @@ is prefixed with the space its payload named. No instrument is labelled by the s
 principal, and none may be: a space id is caller-supplied text with no bound on how many distinct
 values exist, so a counter keyed on it is an unbounded time series per tenant and an identity leak
 into a metrics backend. Bounded outcome and reason labels are fine; identifiers are not.
+
+Kioku enforces its timer attempt ceiling inside its own fire callback, even though Keiro can
+enforce the same numeric ceiling itself. Keiro's generic ceiling runs before the callback, so it
+cannot attach Kioku's memory-space prefix or fire-span outcome. Keeping the post-claim
+`attempts > 8` comparison in Kioku preserves the retry policy while ensuring that terminal path
+obeys this diagnostic decision too. Payloads that explicitly name `kioku_legacy` report that
+space; absent, null, or unreadable ownership reports `unknown` and adds no space trace attribute.
+That diagnostic `unknown` does not change action decoding: native pre-partition timers still act
+in the explicit legacy space.
 
 ## Consequences
 

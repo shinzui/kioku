@@ -61,15 +61,15 @@ tests =
       testCase "transient failure reschedules with backoff" testTransientFailureReschedules,
       testCase "a timer scheduled before memory spaces fires in the legacy space" testPrePartitionPayloadFiresInLegacySpace,
       testCase "a pre-partition timer cannot reach a session in another space" testPrePartitionPayloadCannotReachAnotherSpace,
-      testCase "a malformed L1 payload dead-letters" testMalformedL1PayloadDeadLetters,
+      testCase "a malformed object payload dead-letters with unknown space" testMalformedL1PayloadDeadLetters,
       testCase "unknown process manager requeues with a long delay" testUnknownProcessManagerRequeues,
-      testCase "the attempt ceiling dead-letters" testAttemptCeilingDeadLetters,
+      testCase "a foreign object dead-letters with unknown space at the attempt ceiling" testAttemptCeilingDeadLetters,
       testCase "success marks the timer fired" testSuccessMarksFired,
       testCase "drain processes every due timer in one pass" testDrainProcessesAllDueTimers,
       testCase "two spaces sharing a scope schedule two timers, and both fire" testTwoSpacesTwoTimers,
       testCase "a refused memory space dead-letters" testRefusedSpaceDeadLetters,
       testCase "a provider returning the wrong memory space dead-letters" testWrongSpaceContextDeadLetters,
-      testCase "every dead-letter row names the memory space" testDeadLetterNamesTheSpace
+      testCase "an explicit-space dead-letter names that exact space" testDeadLetterNamesTheSpace
     ]
 
 -- | A correlation id that is not a session id can never become one. It used to
@@ -164,13 +164,21 @@ testMalformedL1PayloadDeadLetters =
     sid <- genSessionId
     row <- runOrFail env do
       startFixtureSession sid
-      scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) Aeson.Null (-1)
+      scheduleTestTimer
+        timerId
+        l1ExtractProcessManagerName
+        (idText sid)
+        (Aeson.object ["memorySpaceId" Aeson..= Aeson.object []])
+        (-1)
       fireOnce rt
       fetchTimer timerId
     row.status @?= "dead"
     assertBool
       ("last_error names the payload, got: " <> show row.lastError)
       (maybe False (Text.isInfixOf "payload") row.lastError)
+    assertBool
+      ("last_error should report unknown ownership, got: " <> show row.lastError)
+      (maybe False (Text.isPrefixOf "[memory space unknown] ") row.lastError)
 
 -- | An L1 timer payload as the projection writes one today.
 l1Payload :: MemorySpaceId -> Aeson.Value
@@ -200,7 +208,12 @@ testAttemptCeilingDeadLetters =
   withTimerEnv \env rt -> do
     timerId <- freshTimerId
     row <- runOrFail env do
-      scheduleTestTimer timerId "kioku-nonexistent" "whatever" Aeson.Null (-1)
+      scheduleTestTimer
+        timerId
+        "kioku-nonexistent"
+        "whatever"
+        (Aeson.object ["foreign" Aeson..= True])
+        (-1)
       forceAttempts timerId 8
       fireOnce rt
       fetchTimer timerId
@@ -208,6 +221,9 @@ testAttemptCeilingDeadLetters =
     assertBool
       ("last_error mentions the ceiling, got: " <> show row.lastError)
       (maybe False (Text.isInfixOf "attempt ceiling") row.lastError)
+    assertBool
+      ("last_error should report unknown ownership, got: " <> show row.lastError)
+      (maybe False (Text.isPrefixOf "[memory space unknown] ") row.lastError)
 
 -- | The happy path: an L2 timer for a scope with no memories regenerates
 -- nothing, succeeds without calling the LLM, and is marked fired with the timer's
@@ -337,7 +353,11 @@ testDeadLetterNamesTheSpace =
     row.status @?= "dead"
     assertBool
       ("last_error should name the memory space, got: " <> show row.lastError)
-      (maybe False (Text.isInfixOf (memorySpaceIdText testSpace)) row.lastError)
+      ( maybe
+          False
+          (Text.isPrefixOf ("[memory space " <> memorySpaceIdText testSpace <> "] "))
+          row.lastError
+      )
 
 -- | An L2 scene timer payload as the projection writes one.
 sceneTimerPayload :: MemorySpaceId -> Aeson.Value

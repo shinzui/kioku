@@ -36,8 +36,9 @@ This section must always reflect the actual current state of the work.
 
 - [x] (2026-08-21) Make the existing session-id conflict update repair `memory_space_id` monotonically.
 - [x] (2026-08-21) Add a corrupt-watermark regression proving the next pass heals and the following one skips.
-- [ ] Separate optional diagnostic space parsing from legacy-defaulting action parsing.
-- [ ] Add malformed/foreign/explicit-space diagnostic tests and update operator documentation.
+- [x] (2026-08-21) Separate optional diagnostic space parsing from legacy-defaulting action parsing.
+- [x] (2026-08-21) Add malformed/foreign/explicit-space diagnostic tests.
+- [ ] Update operator documentation and the core changelog.
 
 
 ## Surprises & Discoveries
@@ -45,7 +46,10 @@ This section must always reflect the actual current state of the work.
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- `mori://shinzui/keiro/packages/keiro` applies `TimerWorkerOptions.maxAttempts` immediately after
+  claim and before invoking the caller's fire callback. Kioku's former ceiling therefore bypassed
+  `spaceQualified` and the fire span entirely. The focused worker suite now proves the same ninth
+  claim is dead-lettered through Kioku's callback with `[memory space unknown]`.
 
 
 ## Decision Log
@@ -63,6 +67,13 @@ Record every decision made while working on the plan.
   executing, but a generic diagnostic must not claim a payload explicitly named that space when
   the field is absent or malformed.
   Date: 2026-08-20
+
+- Decision: Enforce Kioku's eight-attempt ceiling inside its fire callback while passing `Nothing`
+  for Keiro's pre-callback ceiling.
+  Rationale: the comparison remains the same post-claim `attempts > 8` boundary, but the callback
+  is the only layer that can add Kioku's required memory-space text and fire-span outcome before
+  dead-lettering.
+  Date: 2026-08-21
 
 
 ## Outcomes & Retrospective

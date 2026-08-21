@@ -44,7 +44,7 @@ import Kioku.Distill.Timer.Outcome
     unknownTimerRetryDelay,
   )
 import Kioku.Id (parseIdLenient)
-import Kioku.Partition (parsePartitionSpace)
+import Kioku.Partition (parseOptionalPartitionSpace)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -64,7 +64,10 @@ import System.IO qualified as IO
 -- stale requeue is keiro's default and unchanged.
 kiokuTimerWorkerOptions :: TimerWorkerOptions
 kiokuTimerWorkerOptions =
-  TimerWorkerOptions {maxAttempts = Just 8, requeueStuckAfter = Just 300}
+  TimerWorkerOptions {maxAttempts = Just kiokuTimerAttemptCeiling, requeueStuckAfter = Just 300}
+
+kiokuTimerAttemptCeiling :: Int
+kiokuTimerAttemptCeiling = 8
 
 -- | Fire one L1 distillation timer.
 --
@@ -188,13 +191,14 @@ spaceQualified row reason =
 
 -- | The memory space a timer payload names, for diagnostics only.
 --
--- Every one of the three payload types carries the space, and each decodes it through
--- 'parsePartitionSpace' — the same function this uses — so this cannot disagree with the handler
--- that actually acts on the payload. It is read here rather than returned by the handlers so
--- that a span and a dead-letter row can name the space even when no handler claimed the timer.
+-- Every newly written Kioku payload carries the space. This parser deliberately differs from the
+-- action codecs: action decoding defaults a native pre-partition payload into the legacy space,
+-- while diagnostics report absent or unreadable ownership as unknown. It is read here rather
+-- than returned by the handlers so a span and a dead-letter row can still be attributed when no
+-- handler claimed the timer.
 timerPayloadSpace :: Aeson.Value -> Maybe MemorySpaceId
 timerPayloadSpace = \case
-  Aeson.Object o -> Aeson.parseMaybe parsePartitionSpace o
+  Aeson.Object o -> Aeson.parseMaybe parseOptionalPartitionSpace o >>= id
   _ -> Nothing
 
 -- | Span attributes for one fire attempt.
@@ -272,12 +276,24 @@ runKiokuTimerWorkerOnce ::
   UTCTime ->
   Eff es (Maybe TimerRow)
 runKiokuTimerWorkerOnce metrics contexts rt finder now =
-  runTimerWorkerWith metrics kiokuTimerWorkerOptions now \row ->
+  runTimerWorkerWith metrics callbackQualifiedOptions now \row ->
     withSpan' "kioku.timer.fire" defaultSpanArguments \fireSpan -> do
       addAttributes fireSpan (timerSpanAttributes row)
-      outcome <- fireKiokuTimer contexts rt finder row
+      outcome <-
+        if row.attempts > kiokuTimerAttemptCeiling
+          then
+            pure
+              ( FireFailedPermanently
+                  ("timer exceeded attempt ceiling of " <> Text.pack (show kiokuTimerAttemptCeiling))
+              )
+          else fireKiokuTimer contexts rt finder row
       addAttributes fireSpan (fireOutcomeAttributes outcome)
       applyFireOutcome row outcome
+  where
+    -- Keiro's built-in ceiling runs before the callback, which would bypass Kioku's mandatory
+    -- space-qualified dead-letter text and fire-span outcome. Enforce the same post-claim
+    -- @attempts > 8@ boundary inside the callback instead.
+    callbackQualifiedOptions = kiokuTimerWorkerOptions {maxAttempts = Nothing}
 
 -- | Claim and fire due timers until none remain, returning how many were
 -- processed.

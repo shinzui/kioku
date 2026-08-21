@@ -25,6 +25,7 @@ module Kioku.Partition
   ( PartitionedScope (..),
     partitionedScope,
     partitionedScopeEncoder,
+    parseOptionalPartitionSpace,
     parsePartitionSpace,
     parseRecordedActor,
     parseRecordedActorFromAgent,
@@ -84,6 +85,14 @@ partitionedScopeEncoder =
 -- | The memory space a payload belongs to, defaulting an older payload into the legacy space.
 parsePartitionSpace :: Object -> Parser MemorySpaceId
 parsePartitionSpace o = o .:? "memorySpaceId" .!= legacyMemorySpaceId
+
+-- | The memory space a payload explicitly names, without inventing one for diagnostics.
+--
+-- Action decoders use 'parsePartitionSpace' so native payloads written before partitioning keep
+-- executing in the legacy space. Generic diagnostics have a different question: absent or
+-- unreadable ownership is unknown rather than evidence that the payload named that space.
+parseOptionalPartitionSpace :: Object -> Parser (Maybe MemorySpaceId)
+parseOptionalPartitionSpace o = o .:? "memorySpaceId"
 
 -- | The actor a payload records, for events that never carried an agent label.
 parseRecordedActor :: Object -> Parser RecordedPrincipal

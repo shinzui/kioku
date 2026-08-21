@@ -175,7 +175,7 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-3: reject missing and cross-space lineage targets before appending memory events.
 - [x] EP-3: make Memory and Session writes consume one parameterized context gate.
 - [x] EP-4: make a divergent watermark row self-heal and become readable to the next pass.
-- [ ] EP-4: report `unknown` rather than `kioku_legacy` for payloads that do not name a space.
+- [x] EP-4: report `unknown` rather than `kioku_legacy` for payloads that do not name a space.
 - [ ] EP-5: install and prove a partition-aware full-text access path with a safe fallback.
 - [ ] EP-5: push the settled-embedding skip predicate into both backfill SQL statements.
 - [ ] EP-6: build the vector capability probe and CLI strategy reader from canonical constants.
@@ -203,6 +203,10 @@ interactions between child plans. Provide concise evidence.
 - EP-2's shared timer pipeline also rejects a provider that returns a context for a different
   space than the payload requested. This preserves EP-4's assumption that it may change diagnostic
   attribution without weakening or duplicating execution-time partition validation.
+- `mori://shinzui/keiro/packages/keiro` applies its timer attempt ceiling before the caller's fire
+  callback, which bypasses Kioku's space-qualified dead-letter text and fire span. EP-4 preserves
+  the same post-claim `attempts > 8` policy inside Kioku's callback and disables only Keiro's
+  pre-callback check for this worker.
 
 
 ## Decision Log
