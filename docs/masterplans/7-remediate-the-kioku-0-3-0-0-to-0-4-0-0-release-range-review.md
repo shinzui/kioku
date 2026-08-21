@@ -91,7 +91,7 @@ convention.
 | EP-1 | Make workspace artifact migration no-clobber and share slug derivation | docs/plans/33-make-workspace-artifact-migration-no-clobber-and-share-slug-derivation.md | None | None | Complete |
 | EP-2 | Enforce distillation permissions through shared timer primitives | docs/plans/34-enforce-distillation-permissions-through-shared-timer-primitives.md | None | None | Complete |
 | EP-3 | Enforce memory lineage and centralize write-context gates | docs/plans/35-enforce-memory-lineage-and-centralize-write-context-gates.md | None | None | Complete |
-| EP-4 | Repair L1 watermark ownership and timer-space attribution | docs/plans/36-repair-l1-watermark-ownership-and-timer-space-attribution.md | None | EP-2 | Not Started |
+| EP-4 | Repair L1 watermark ownership and timer-space attribution | docs/plans/36-repair-l1-watermark-ownership-and-timer-space-attribution.md | None | EP-2 | In Progress |
 | EP-5 | Scale full-text recall and embedding backfill by memory space | docs/plans/37-scale-full-text-recall-and-embedding-backfill-by-memory-space.md | None | None | Not Started |
 | EP-6 | Use canonical schema and recall-strategy vocabularies | docs/plans/38-use-canonical-schema-and-recall-strategy-vocabularies.md | None | None | Not Started |
 | EP-7 | Retire Rei legacy event decoders after consumer cutover | docs/plans/39-retire-rei-legacy-event-decoders-after-consumer-cutover.md | External Rei cutover gate | None | Not Started |
@@ -174,7 +174,7 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-2: replace L2/L3 timer, partition-parameter, and mirror-removal duplication with shared primitives.
 - [x] EP-3: reject missing and cross-space lineage targets before appending memory events.
 - [x] EP-3: make Memory and Session writes consume one parameterized context gate.
-- [ ] EP-4: make a divergent watermark row self-heal and become readable to the next pass.
+- [x] EP-4: make a divergent watermark row self-heal and become readable to the next pass.
 - [ ] EP-4: report `unknown` rather than `kioku_legacy` for payloads that do not name a space.
 - [ ] EP-5: install and prove a partition-aware full-text access path with a safe fallback.
 - [ ] EP-5: push the settled-embedding skip predicate into both backfill SQL statements.

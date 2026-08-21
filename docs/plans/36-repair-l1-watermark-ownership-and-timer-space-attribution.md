@@ -34,8 +34,8 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Make the existing session-id conflict update repair `memory_space_id` monotonically.
-- [ ] Add a corrupt-watermark regression proving the next pass heals and the following one skips.
+- [x] (2026-08-21) Make the existing session-id conflict update repair `memory_space_id` monotonically.
+- [x] (2026-08-21) Add a corrupt-watermark regression proving the next pass heals and the following one skips.
 - [ ] Separate optional diagnostic space parsing from legacy-defaulting action parsing.
 - [ ] Add malformed/foreign/explicit-space diagnostic tests and update operator documentation.
 

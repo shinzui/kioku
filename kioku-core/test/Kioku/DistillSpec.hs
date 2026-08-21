@@ -13,7 +13,7 @@ import Data.ByteString.Lazy qualified as BL
 import Data.Foldable (traverse_)
 import Data.Functor.Contravariant ((>$<))
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
-import Data.Int (Int64)
+import Data.Int (Int32, Int64)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
@@ -34,6 +34,7 @@ import Kioku.Api.Access
   ( MemoryAccessContext,
     MemoryContextProvider (..),
     MemoryPermission (..),
+    MemorySpaceId,
     memoryContextRecordedActor,
     memoryContextSpace,
   )
@@ -63,6 +64,7 @@ import Kioku.Memory.Domain
 import Kioku.Memory.Embedding (EmbeddingConfig (..), toEmbeddingModel)
 import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
+import Kioku.Partition (memorySpaceColumn, memorySpaceParam)
 import Kioku.Prelude
 import Kioku.Recall qualified as Recall
 import Kioku.Recall.Capability (VectorCapability (..))
@@ -109,6 +111,7 @@ tests =
       testCase "consolidation failure stores nothing and fails the pass" testConsolidationFailure,
       testCase "merge with a missing target drops it and stays convergent" testMergeMissingTarget,
       testCase "watermark skips re-extraction until a new turn arrives" testWatermarkSkip,
+      testCase "watermark ownership self-heals without rewinding the turn index" testWatermarkOwnershipRepair,
       testCase "a session accumulates one idle timer however many turns" testIdleTimerCollapse,
       testCase "recall candidates find a duplicate outside the scan window" testRecallCandidateWindow,
       testCase "recall candidates stay inside the session's own scope" testRecallCandidateBreadth,
@@ -1036,6 +1039,12 @@ data TimerQuery = TimerQuery
   }
   deriving stock (Generic, Eq, Show)
 
+data WatermarkState = WatermarkState
+  { watermarkSpace :: !MemorySpaceId,
+    watermarkTurnIndex :: !Int32
+  }
+  deriving stock (Generic, Eq, Show)
+
 data DistillResult = DistillResult
   { summary :: !L1Summary,
     memories :: ![MemoryStatus],
@@ -1214,6 +1223,52 @@ testWatermarkSkip = withDistillEnv \env -> do
       case afterNewTurn of
         Left (L1ExtractionFailed _) -> pure ()
         other -> assertFailure ("expected L1ExtractionFailed after a new turn, got " <> show other)
+
+-- | A watermark row is keyed by the globally unique session id, but reads are partitioned by
+-- memory space. If the row's owner drifts, the next pass must run once, move the authoritative
+-- row back to the session's space, and preserve any higher turn index already stored there.
+testWatermarkOwnershipRepair :: Assertion
+testWatermarkOwnershipRepair = withDistillEnv \env -> do
+  working <- replayRuntime
+  extractCalls <- newIORef (0 :: Int)
+  let counted =
+        working
+          { runExtract = \input -> do
+              modifyIORef' extractCalls (+ 1)
+              working.runExtract input
+          }
+      exploding =
+        working {runExtract = \_ -> pure (Left (ValidationFailure "extractor must not run"))}
+      divergentTurnIndex = 99
+  sid <- genSessionId
+  now <- getCurrentTime
+  result <-
+    runAppIO env do
+      writeRunningFixtureSession sid fixtureScope now
+      first <- distillSessionL1 testContext RespectWatermark working (scopedScanCandidates 5) sid
+      void (liftIO (expectDistilled "initial watermark pass" first))
+
+      corruptWatermark otherSpace sid divergentTurnIndex
+      missingFromOwner <- loadWatermark testSpace sid
+      presentInWrongSpace <- loadWatermark otherSpace sid
+
+      repair <- distillSessionL1 testContext RespectWatermark counted (scopedScanCandidates 5) sid
+      void (liftIO (expectDistilled "watermark repair pass" repair))
+      repaired <- loadWatermark testSpace sid
+
+      skipped <- distillSessionL1 testContext RespectWatermark exploding (scopedScanCandidates 5) sid
+      calls <- liftIO (readIORef extractCalls)
+      pure (missingFromOwner, presentInWrongSpace, repaired, skipped, calls)
+  case result of
+    Left storeErr -> assertFailure ("store error: " <> show storeErr)
+    Right (missingFromOwner, presentInWrongSpace, repaired, skipped, calls) -> do
+      missingFromOwner @?= Nothing
+      presentInWrongSpace @?= Just (WatermarkState otherSpace divergentTurnIndex)
+      repaired @?= Just (WatermarkState testSpace divergentTurnIndex)
+      calls @?= 1
+      case skipped of
+        Right L1SkippedUpToDate -> pure ()
+        other -> assertFailure ("expected repaired watermark to skip, got " <> show other)
 
 -- | However many turns a session records, it holds exactly one idle timer,
 -- re-armed forward to the latest turn. Ramp timers fire only on ramp turns
@@ -1800,6 +1855,25 @@ loadAuditRows scope =
   runTransaction $
     Tx.statement (scopeParams scope) selectAuditRowsStmt
 
+corruptWatermark ::
+  (Store :> es) =>
+  MemorySpaceId ->
+  SessionId ->
+  Int32 ->
+  Eff es ()
+corruptWatermark space sid lastTurnIndex =
+  runTransaction $
+    Tx.statement (space, idText sid, lastTurnIndex) corruptWatermarkStmt
+
+loadWatermark ::
+  (Store :> es) =>
+  MemorySpaceId ->
+  SessionId ->
+  Eff es (Maybe WatermarkState)
+loadWatermark space sid =
+  runTransaction $
+    Tx.statement (space, idText sid) selectWatermarkStateStmt
+
 -- | keiro's timer table is unqualified at the pinned version: it lives in the
 -- @kiroku@ schema, which the connection's search_path already resolves.
 loadTimerKinds ::
@@ -1915,6 +1989,39 @@ selectMemoryStatusesStmt =
     """
     scopeParamsEncoder
     (D.rowList memoryStatusDecoder)
+
+corruptWatermarkStmt :: Statement (MemorySpaceId, Text, Int32) ()
+corruptWatermarkStmt =
+  preparable
+    """
+    UPDATE kioku.l1_watermarks
+    SET memory_space_id = $1,
+        last_turn_index = $3
+    WHERE session_id = $2
+    """
+    ( ((\(space, _, _) -> space) >$< memorySpaceParam)
+        <> ((\(_, sid, _) -> sid) >$< E.param (E.nonNullable E.text))
+        <> ((\(_, _, lastTurnIndex) -> lastTurnIndex) >$< E.param (E.nonNullable E.int4))
+    )
+    D.noResult
+
+selectWatermarkStateStmt :: Statement (MemorySpaceId, Text) (Maybe WatermarkState)
+selectWatermarkStateStmt =
+  preparable
+    """
+    SELECT memory_space_id, last_turn_index
+    FROM kioku.l1_watermarks
+    WHERE memory_space_id = $1
+      AND session_id = $2
+    """
+    ( ((\(space, _) -> space) >$< memorySpaceParam)
+        <> ((\(_, sid) -> sid) >$< E.param (E.nonNullable E.text))
+    )
+    ( D.rowMaybe $
+        WatermarkState
+          <$> memorySpaceColumn
+          <*> D.column (D.nonNullable D.int4)
+    )
 
 selectAuditCountStmt :: Statement ScopeParams Int64
 selectAuditCountStmt =

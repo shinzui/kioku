@@ -729,7 +729,8 @@ upsertWatermarkStmt =
              (memory_space_id, session_id, last_turn_index, distilled_at)
            VALUES ($1, $2, $3, $4)
            ON CONFLICT (session_id) DO UPDATE
-             SET last_turn_index =
+             SET memory_space_id = EXCLUDED.memory_space_id,
+                 last_turn_index =
                    GREATEST(watermark.last_turn_index, EXCLUDED.last_turn_index),
                  distilled_at = EXCLUDED.distilled_at
            """
