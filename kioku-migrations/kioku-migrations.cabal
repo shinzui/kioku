@@ -21,6 +21,7 @@ extra-doc-files:
 
 extra-source-files:
   codd-upgrade/*.sql
+  ledger-fixups/*.sql
   migrations/*.sql
   migrations/manifest
   migrations.lock

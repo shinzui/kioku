@@ -53,8 +53,9 @@ and no application-facing Haskell API changes.
 - [x] (2026-08-21T19:10:20Z) Correct migration `0011-kioku-memory-space-partition.sql` so it resets
       the session before commit, then make the composed-plan regression pass without adding a
       cleanup migration.
-- [ ] Add and test the exact-checksum ledger re-baseline for databases that applied the withdrawn
-      0.4.x payload, while preserving the 55-row plan and the pinned Codd import evidence.
+- [x] (2026-08-21T19:14:29Z) Add and test the exact-checksum ledger re-baseline for databases that
+      applied the withdrawn 0.4.x payload, while preserving the 55-row plan and the pinned Codd
+      import evidence.
 - [ ] Close BUG-1 as fixed on the default branch, update current user documentation and
       changelogs, regenerate the bug-report index/log, and validate the OKF bundle.
 - [ ] Validate and record the durable migration-correction policy in ADR-10, run focused and
@@ -136,6 +137,14 @@ and no application-facing Haskell API changes.
   migration byte, manifest entry, or Codd lock changed.
   Evidence: the focused host test passed in 1.02 seconds, the complete migration suite reported
   `All 22 tests passed`, and the migration-directory diff names only `0011`.
+
+- Observation: The guarded ledger re-baseline restores the exact original 55-row snapshot after a
+  test models the withdrawn 0.4.x checksum, while leaving the qualified Kioku/Keiro catalog hash
+  unchanged. Its second run is a no-op, and its default-ledger guard is observable on a bare
+  database.
+  Evidence: both focused fixup tests passed; the complete migration suite reported
+  `All 24 tests passed`; and the source tarball contains
+  `ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql`.
 
 
 ## Decision Log

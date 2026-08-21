@@ -32,6 +32,7 @@ import Database.PostgreSQL.Migrate
     MigrationPlan,
     MigrationReport (..),
     MigrationResult (..),
+    VerificationIssue (..),
     VerificationReport (..),
     connectionProviderFromSettings,
     defaultImportOptions,
@@ -83,6 +84,11 @@ tests =
       testGroup
         "migration-session isolation"
         [testCase "restores the host search path before later components" testHostSearchPathRestored],
+      testGroup
+        "released checksum re-baseline"
+        [ testCase "restores strict verification and is idempotent" testLedgerChecksumRebaseline,
+          testCase "rejects a missing default ledger table" testLedgerFixupRequiresDefaultLedger
+        ],
       testCase "the migration manifest is complete and valid" testManifestIntegrity,
       testCase "the pinned Codd history maps 30 known plan targets" testHistoryMappings,
       testCase "the pre-cutover Codd cohort imports 30 rows and applies only the forward migrations" testCoddCohortImport,
@@ -307,6 +313,109 @@ hostMigratedColumnExists =
     """
     E.noParams
     (D.singleRow (D.column (D.nonNullable D.bool)))
+
+-- * Released checksum re-baseline
+
+ledgerFixupPath :: FilePath
+ledgerFixupPath = "ledger-fixups/2026-08-19-rebaseline-0011-checksum.sql"
+
+withdrawnKioku0011Checksum :: Text
+withdrawnKioku0011Checksum = "eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192"
+
+testLedgerChecksumRebaseline :: Assertion
+testLedgerChecksumRebaseline =
+  withBareDatabase \connStr -> do
+    plan <- either (fail . show) pure kiokuMigrationPlan
+    let settings = Settings.connectionString connStr
+    initial <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
+    length (appliedNow initial) @?= 55
+
+    baselineLedger <- query connStr fullLedgerSnapshot
+    fst baselineLedger @?= 55
+    baselineSchema <- query connStr cohortSchemaSnapshotStatement
+    fixup <- Text.IO.readFile ledgerFixupPath
+
+    withConnection connStr \conn -> run conn (Session.statement () installWithdrawnChecksumFixture)
+    query connStr kioku0011Checksum >>= (@?= withdrawnKioku0011Checksum)
+    query connStr cohortSchemaSnapshotStatement >>= (@?= baselineSchema)
+
+    mismatch <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
+    expectedMigration <-
+      either
+        (assertFailure . show)
+        pure
+        (migrationId "kioku" "0011-kioku-memory-space-partition")
+    case issues mismatch of
+      [MigrationChecksumMismatch actualMigration _ _] -> actualMigration @?= expectedMigration
+      other -> assertFailure ("expected one MigrationChecksumMismatch, got: " <> show other)
+
+    withConnection connStr \conn -> run conn (Session.script fixup)
+    query connStr fullLedgerSnapshot >>= (@?= baselineLedger)
+    query connStr cohortSchemaSnapshotStatement >>= (@?= baselineSchema)
+    verified <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
+    issues verified @?= []
+
+    repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
+    let MigrationReport {results = repeatedResults} = repeated
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 55
+    length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
+
+    withConnection connStr \conn -> run conn (Session.script fixup)
+    query connStr fullLedgerSnapshot >>= (@?= baselineLedger)
+    query connStr cohortSchemaSnapshotStatement >>= (@?= baselineSchema)
+
+testLedgerFixupRequiresDefaultLedger :: Assertion
+testLedgerFixupRequiresDefaultLedger =
+  withBareDatabase \connStr -> do
+    fixup <- Text.IO.readFile ledgerFixupPath
+    withConnection connStr \conn -> do
+      result <- Connection.use conn (Session.script fixup)
+      case result of
+        Left err ->
+          assertBool
+            ("missing-ledger error did not explain how to adapt LedgerConfig: " <> show err)
+            ("Could not find pgmigrate.migrations" `Text.isInfixOf` Text.pack (show err))
+        Right () -> assertFailure "ledger re-baseline unexpectedly accepted a missing ledger table"
+
+installWithdrawnChecksumFixture :: Statement () ()
+installWithdrawnChecksumFixture =
+  preparable
+    """
+    UPDATE pgmigrate.migrations
+       SET checksum = decode('eee9cd252b32b563c50f8457596347fff1b2e4d3ea4dafe5b45043e991624192', 'hex')
+     WHERE component = 'kioku'
+       AND migration = '0011-kioku-memory-space-partition'
+       AND status = 'applied'
+    """
+    E.noParams
+    D.noResult
+
+kioku0011Checksum :: Statement () Text
+kioku0011Checksum =
+  preparable
+    """
+    SELECT encode(checksum, 'hex')
+    FROM pgmigrate.migrations
+    WHERE component = 'kioku'
+      AND migration = '0011-kioku-memory-space-partition'
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
+
+fullLedgerSnapshot :: Statement () (Int64, Text)
+fullLedgerSnapshot =
+  preparable
+    """
+    SELECT count(*),
+           md5(string_agg(
+             component || '/' || migration || ':' || encode(checksum, 'hex') || ':' || status,
+             E'\n' ORDER BY component COLLATE "C", position))
+    FROM pgmigrate.migrations
+    """
+    E.noParams
+    (D.singleRow ((,) <$> required D.int8 <*> required D.text))
+  where
+    required = D.column . D.nonNullable
 
 -- * The partition-aware full-text index
 
