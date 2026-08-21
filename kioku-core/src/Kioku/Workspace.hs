@@ -62,6 +62,7 @@ module Kioku.Workspace
   )
 where
 
+import Control.Exception (IOException, bracket, finally, throwIO, try)
 import Data.ByteString qualified as BS
 import Data.List (sort)
 import Data.Text qualified as Text
@@ -69,13 +70,16 @@ import Kioku.Api.Access (MemorySpaceId, memorySpaceIdText)
 import Kioku.Distill.ScopeIdentity (slugWithDigest)
 import Kioku.Prelude
 import System.Directory
-  ( copyFile,
-    createDirectoryIfMissing,
+  ( createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
     listDirectory,
+    removeFile,
   )
 import System.FilePath (takeDirectory, takeExtension, (</>))
+import System.IO (Handle, hClose, openBinaryTempFile)
+import System.IO.Error (isAlreadyExistsError)
+import System.Posix.Files (createLink, fileMode, getFileStatus, setFileMode)
 
 -- | The directory holding every artifact of one memory space.
 --
@@ -182,16 +186,52 @@ sameContent left right = do
   rightBytes <- BS.readFile right
   pure (leftBytes == rightBytes)
 
--- | Carry out a plan, copying every 'MoveReady' file and touching nothing else.
+-- | Carry out a plan, publishing every 'MoveReady' file without replacing anything else.
 --
 -- Copy, not move: the historical file stays where it is until an operator has verified the new
 -- layout and removed the old tree themselves. A 'MoveCollision' is skipped here rather than
 -- overwritten — the caller is expected to report it and exit non-zero, which is what makes a
--- refusal visible instead of silent. Re-running is safe: every file copied by the previous run
--- plans as 'MoveAlreadyMigrated'.
+-- refusal visible instead of silent. Publication itself also refuses replacement, so a worker
+-- that creates the destination after this plan was made cannot be clobbered. Re-running is safe:
+-- every file copied by the previous run plans as 'MoveAlreadyMigrated'.
 applyArtifactMigration :: [ArtifactMove] -> IO ()
 applyArtifactMigration moves =
   forM_ moves \move ->
     when (move.verdict == MoveReady) do
       createDirectoryIfMissing True (takeDirectory move.destination)
-      copyFile move.source move.destination
+      copyFileNoReplace move.source move.destination
+
+-- | Copy through a fully written temporary sibling and atomically publish it with POSIX
+-- @link(2)@. Hard-link creation fails if @destination@ already exists, closing the race between
+-- 'planArtifactMigration' and this apply step without ever exposing partial bytes.
+copyFileNoReplace :: FilePath -> FilePath -> IO ()
+copyFileNoReplace source destination = do
+  sourceBytes <- BS.readFile source
+  sourceMode <- fileMode <$> getFileStatus source
+  bracket
+    (openBinaryTempFile destinationDir temporaryTemplate)
+    cleanupTemporary
+    \(temporary, handle) -> do
+      BS.hPut handle sourceBytes
+      hClose handle
+      setFileMode temporary sourceMode
+      published <- try @IOException (createLink temporary destination)
+      case published of
+        Right () -> pure ()
+        Left err
+          | isAlreadyExistsError err -> do
+              destinationBytes <- BS.readFile destination
+              unless (destinationBytes == sourceBytes) $
+                throwIO (userError ("kioku artifact migration refused existing destination: " <> destination))
+          | otherwise -> throwIO err
+  where
+    destinationDir = takeDirectory destination
+
+-- The name is intentionally recognizable: a process killed before bracket cleanup may leave a
+-- hidden sibling that an operator can safely identify after confirming no migration is running.
+temporaryTemplate :: FilePath
+temporaryTemplate = ".kioku-migrate-artifacts.tmp"
+
+cleanupTemporary :: (FilePath, Handle) -> IO ()
+cleanupTemporary (temporary, handle) =
+  hClose handle `finally` removeFile temporary

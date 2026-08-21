@@ -9,7 +9,8 @@
 -- in "Kioku.Workspace" stands between a hostile space id and the rest of the disk.
 module Kioku.WorkspaceSpec (tests) where
 
-import Data.List (isInfixOf)
+import Control.Exception (IOException, try)
+import Data.List (isInfixOf, isPrefixOf)
 import Data.Text qualified as Text
 import Kioku.Api.Access (MemorySpaceId, mkMemorySpaceId)
 import Kioku.Distill.ScopeIdentity (slugWithDigest)
@@ -25,11 +26,12 @@ import Kioku.Workspace
     spaceArtifactRoot,
     spaceDirectoryName,
   )
-import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory)
 import System.FilePath (isRelative, joinPath, splitDirectories, (</>))
 import System.IO.Temp (withSystemTempDirectory)
+import System.Posix.Files (fileMode, getFileStatus, setFileMode)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase, (@?=))
 
 tests :: TestTree
 tests =
@@ -44,6 +46,9 @@ tests =
       testCase "the historical tree is planned, copied, and left in place" testMigrationCopies,
       testCase "a second run is a no-op" testMigrationIdempotent,
       testCase "a destination with different content is refused" testMigrationCollision,
+      testCase "a stale plan cannot clobber a late differing destination" testLateMigrationCollision,
+      testCase "a stale plan accepts a late identical destination" testLateMigrationIdempotent,
+      testCase "a copied artifact retains source permissions" testMigrationPreservesPermissions,
       testCase "a non-markdown file is not Kioku's to relocate" testMigrationIgnoresOtherFiles
     ]
 
@@ -160,6 +165,63 @@ testMigrationCollision =
     applyArtifactMigration planned
     assertFileIs (sceneArtifactDir workspace legacyish </> "web-abc.md") "what the worker wrote today"
 
+-- | This is the exact race the apply step must close: the plan saw an empty destination, then a
+-- live worker published newer content before the operator applied that stale plan.
+testLateMigrationCollision :: Assertion
+testLateMigrationCollision =
+  withSystemTempDirectory "kioku-workspace-late-collision" \workspace -> do
+    let source = legacySceneArtifactDir workspace </> "web-abc.md"
+        destinationDir = sceneArtifactDir workspace legacyish
+        destination = destinationDir </> "web-abc.md"
+    writeHistorical workspace "scenes" "web-abc.md" "the pre-partition snapshot"
+    planned <- planArtifactMigration workspace legacyish
+    map (.verdict) planned @?= [MoveReady]
+
+    createDirectoryIfMissing True destinationDir
+    writeFile destination "what the worker wrote today"
+    result <- try @IOException (applyArtifactMigration planned)
+    case result of
+      Left err ->
+        assertBool
+          ("the refusal must name its destination, got: " <> show err)
+          (destination `isInfixOf` show err)
+      Right () -> assertFailure "a stale MoveReady plan replaced or accepted differing live content"
+
+    assertFileIs source "the pre-partition snapshot"
+    assertFileIs destination "what the worker wrote today"
+    assertNoMigrationTemps destinationDir
+
+testLateMigrationIdempotent :: Assertion
+testLateMigrationIdempotent =
+  withSystemTempDirectory "kioku-workspace-late-idempotent" \workspace -> do
+    let destinationDir = sceneArtifactDir workspace legacyish
+        destination = destinationDir </> "web-abc.md"
+    writeHistorical workspace "scenes" "web-abc.md" "scene body"
+    planned <- planArtifactMigration workspace legacyish
+    map (.verdict) planned @?= [MoveReady]
+
+    createDirectoryIfMissing True destinationDir
+    writeFile destination "scene body"
+    applyArtifactMigration planned
+
+    assertFileIs destination "scene body"
+    replanned <- planArtifactMigration workspace legacyish
+    map (.verdict) replanned @?= [MoveAlreadyMigrated]
+    assertNoMigrationTemps destinationDir
+
+testMigrationPreservesPermissions :: Assertion
+testMigrationPreservesPermissions =
+  withSystemTempDirectory "kioku-workspace-permissions" \workspace -> do
+    let source = legacySceneArtifactDir workspace </> "web-abc.md"
+        destination = sceneArtifactDir workspace legacyish </> "web-abc.md"
+    writeHistorical workspace "scenes" "web-abc.md" "scene body"
+    setFileMode source 0o640
+    planArtifactMigration workspace legacyish >>= applyArtifactMigration
+
+    sourceMode <- fileMode <$> getFileStatus source
+    destinationMode <- fileMode <$> getFileStatus destination
+    destinationMode @?= sourceMode
+
 -- | Only @.md@ files were ever Kioku's. An editor swap file or a README an operator dropped in
 -- the directory is theirs, and relocating it would be a surprise.
 testMigrationIgnoresOtherFiles :: Assertion
@@ -190,6 +252,13 @@ assertFileIs path expected = do
   assertBool ("expected a file at " <> path) exists
   actual <- readFile path
   assertEqual ("contents of " <> path) expected actual
+
+assertNoMigrationTemps :: FilePath -> Assertion
+assertNoMigrationTemps directory = do
+  entries <- listDirectory directory
+  assertBool
+    ("temporary migration files remained in " <> directory <> ": " <> show entries)
+    (not (any (".kioku-migrate-artifacts" `isPrefixOf`) entries))
 
 spaceNamed :: Text.Text -> MemorySpaceId
 spaceNamed = either (error . Text.unpack) id . mkMemorySpaceId

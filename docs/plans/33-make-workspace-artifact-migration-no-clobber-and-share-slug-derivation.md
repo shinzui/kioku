@@ -37,8 +37,10 @@ This section must always reflect the actual current state of the work.
 
 - [x] (2026-08-21 17:08Z) Add the shared `slugWithDigest` primitive and make scope and workspace
   slugs consume it. Focused Workspace (10 tests) and Scope identity (7 tests) patterns pass.
-- [ ] Replace `copyFile` with an atomic no-replace publication path and handle a stale plan.
-- [ ] Add deterministic stale-plan, idempotence, and shared-slug regression tests.
+- [x] (2026-08-21 17:11Z) Replace `copyFile` with an atomic no-replace publication path and
+  handle a stale plan.
+- [x] (2026-08-21 17:11Z) Add deterministic stale-plan, idempotence, permission, cleanup, and
+  shared-slug regression tests. The focused Workspace pattern passes all 13 tests.
 - [ ] Update package metadata, changelog, and operator/library documentation; run the full core suite.
 
 
