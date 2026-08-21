@@ -90,7 +90,7 @@ convention.
 |---|-------|------|-----------|-----------|--------|
 | EP-1 | Make workspace artifact migration no-clobber and share slug derivation | docs/plans/33-make-workspace-artifact-migration-no-clobber-and-share-slug-derivation.md | None | None | Complete |
 | EP-2 | Enforce distillation permissions through shared timer primitives | docs/plans/34-enforce-distillation-permissions-through-shared-timer-primitives.md | None | None | Complete |
-| EP-3 | Enforce memory lineage and centralize write-context gates | docs/plans/35-enforce-memory-lineage-and-centralize-write-context-gates.md | None | None | In Progress |
+| EP-3 | Enforce memory lineage and centralize write-context gates | docs/plans/35-enforce-memory-lineage-and-centralize-write-context-gates.md | None | None | Complete |
 | EP-4 | Repair L1 watermark ownership and timer-space attribution | docs/plans/36-repair-l1-watermark-ownership-and-timer-space-attribution.md | None | EP-2 | Not Started |
 | EP-5 | Scale full-text recall and embedding backfill by memory space | docs/plans/37-scale-full-text-recall-and-embedding-backfill-by-memory-space.md | None | None | Not Started |
 | EP-6 | Use canonical schema and recall-strategy vocabularies | docs/plans/38-use-canonical-schema-and-recall-strategy-vocabularies.md | None | None | Not Started |
@@ -172,8 +172,8 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-1: make workspace and scope slugs consume one sanitise-plus-digest primitive.
 - [x] EP-2: reject L1, L2, and L3 work before any LLM or write when required permissions are absent.
 - [x] EP-2: replace L2/L3 timer, partition-parameter, and mirror-removal duplication with shared primitives.
-- [ ] EP-3: reject missing and cross-space lineage targets before appending memory events.
-- [ ] EP-3: make Memory and Session writes consume one parameterized context gate.
+- [x] EP-3: reject missing and cross-space lineage targets before appending memory events.
+- [x] EP-3: make Memory and Session writes consume one parameterized context gate.
 - [ ] EP-4: make a divergent watermark row self-heal and become readable to the next pass.
 - [ ] EP-4: report `unknown` rather than `kioku_legacy` for payloads that do not name a space.
 - [ ] EP-5: install and prove a partition-aware full-text access path with a safe fallback.
@@ -264,3 +264,9 @@ reads; L2/L3 use one partitioned timer pipeline that validates provider refusal,
 space agreement before derived work. Shared partition encoders and mirror removal eliminate the
 remaining handler duplication. The full API/core/CLI suites pass (119/220/50 tests), and ADR-4
 now records the durable background-context rule. Five child plans remain.
+
+EP-3 completed on 2026-08-21. Record, supersede, and merge now reject absent and cross-space
+lineage targets identically before appending, while stored-transition comparison preserves
+idempotence after a winner retires. Memory and Session consume one access-layer context gate with
+their existing error types and branch order. The full API/core suites pass (125/224 tests), ADR-1
+and ADR-4 record the durable rules, and four child plans remain.

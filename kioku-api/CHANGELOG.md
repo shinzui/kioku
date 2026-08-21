@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `underMemoryContext` and `inLegacyMemorySpaceOnly`, generic `Applicative` helpers that apply an
+  existing context's permission, space, and actor decision in a fixed order while letting Memory
+  and Session retain their distinct public error types. These helpers consume a context; they do
+  not mint or widen one.
+
 ## 0.4.1.0 — 2026-08-18
 
 ### Changed

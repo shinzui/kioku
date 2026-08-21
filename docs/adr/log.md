@@ -1,6 +1,8 @@
 # Bundle Update Log
 
 ## 2026-08-21
+* **Update**: ADR-1 records that Memory and Session consume an authorization decision through one parameterized permission/space/actor gate, retaining separate error vocabularies without separate policy implementations; the gate cannot mint or widen a context.
+* **Update**: ADR-4 records that every first memory-lineage transition resolves its target in the source space, maps absent and cross-space ids to the same refusal, and compares an already-retired source before revalidating its winner so accepted retries remain idempotent.
 * **Update**: ADR-4 records that distillation validates the supplied decision before work: L1 preflights distill, record, and forget permissions, while L2/L3 require a context for the requested timer space with distill permission; provider success cannot retarget work or bypass the action check.
 
 ## 2026-08-19

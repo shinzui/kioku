@@ -4,7 +4,7 @@ title: Kioku owns memory data, never identity or authorization
 description: >-
   Kioku stores memory and carries an authorization decision made elsewhere; it holds no roster,
   credentials, memberships, or policy, and takes no dependency on any identity service.
-timestamp: 2026-08-06T17:20:00Z
+timestamp: 2026-08-21T18:01:14Z
 docId: ADR-1
 status: accepted
 date: 2026-08-06
@@ -56,6 +56,13 @@ made — and never derives one itself. There are exactly two ways to obtain one:
 - `authorizeMemoryAccess`, which runs the three gates above in order, refuses to skip any, and
   keeps their failures distinct.
 
+Once a context exists, `underMemoryContext` is the single policy for spending it on an operation:
+permission first, then agreement between the requested and authorized space, then agreement
+between the claimed and authorized actor. The function is parameterized by error constructors so
+Memory and Session retain separate public error vocabularies without retaining separate policy
+implementations. `inLegacyMemorySpaceOnly` similarly centralizes the one-space boundary of their
+deprecated wrappers. Neither function constructs or widens a context.
+
 The identity seams are two records of plain functions, `PrincipalDirectory` and
 `PermissionChecker`. Kioku names no vendor and imposes no wire protocol.
 
@@ -94,6 +101,9 @@ exposed as read-only accessors, because exporting record fields would export rec
 with them and let an authorized decision be widened without naming the constructor. The context
 has no `FromJSON` instance for the same reason: a serializable decision can be stored and replayed
 against a grant that has since been revoked.
+
+Memory and Session may expose domain-specific refusal constructors, but they cannot drift in how
+they consume an authorization decision: both are thin applications of the same access-layer gate.
 
 The cost is that Kioku cannot answer "who may see this?" on its own, and an integrator must
 supply a binding rather than getting a working default. That is deliberate: a plausible default

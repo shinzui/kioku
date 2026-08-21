@@ -15,6 +15,16 @@
   `MemoryForget`; L2/L3 timer fires require `MemoryDistill` and reject a context for the wrong
   space. Their shared partition, timer-outcome, and mirror-removal primitives replace the former
   duplicate handler implementations.
+- Memory lineage writes now require every `supersedes`, `supersededBy`, and merge-winner target to
+  exist in the source memory's space before the first transition. Missing and cross-space targets
+  both return `MemoryNotFound` without appending an event, while an accepted supersede or merge
+  remains idempotent after its winner retires.
+
+### Changed
+
+- Memory and Session writes now consume the same permission/space/actor and legacy-space gates
+  from `Kioku.Api.Access`, preserving their existing error constructors and check ordering while
+  removing the two local policy copies.
 
 ## 0.4.1.0 — 2026-08-18
 

@@ -4,7 +4,7 @@ title: The aggregate enforces the memory-space partition
 description: >-
   The memory space lives in aggregate state and is checked by a transducer guard, so a
   cross-space command is refused by the state machine rather than by a read-model precheck.
-timestamp: 2026-08-21T17:44:39Z
+timestamp: 2026-08-21T18:01:14Z
 docId: ADR-4
 status: accepted
 date: 2026-08-06
@@ -64,6 +64,14 @@ refused rather than silently corrected, so the stored event and the decision tha
 remain the same fact. In particular the actor is checked, which is what stops a caller authorized
 as one principal from writing an event claiming another one acted.
 
+An inter-memory lineage reference has an additional public-boundary invariant. Before a first
+`MemoryRecorded`, `MemorySuperseded`, or `MemoryMerged` transition stores a target, that target
+must resolve through the read model in the source memory's space. An absent id and an id visible
+only in another space both return `MemoryNotFound`; there is no target-existence oracle. If the
+source is already retired, the stored transition is compared first, so an accepted supersede or
+merge remains an idempotent success even after its winner is retired. Targets never move between
+spaces or disappear, so an accepted reference remains same-space for its lifetime.
+
 Distillation checks the same decision at the boundary that first holds it. L1 receives a context
 directly and preflights `MemoryDistill`, `MemoryRecord`, and `MemoryForget`, in that order, before
 it reads session evidence or calls a model. L2 and L3 discover their space from a timer, ask a
@@ -103,6 +111,10 @@ context for another space dead-letters the timer rather than retrying it silentl
 configuration facts an operator has to see, and none may reach a database read, model call, or
 derived-artifact write.
 
+Every stored memory-lineage reference resolves within the source space. Rejecting a bad reference
+before the source transition means a recursive supersession query can stop only at a real end of
+the chain, not at a dangling or cross-space id introduced through the public API.
+
 ## Alternatives rejected
 
 **Compare a memory-space column in the read-model precheck.** Rejected: it is a snapshot check on
@@ -121,7 +133,9 @@ the column lands.
 
 - `kioku-core/src/Kioku/Memory/Domain.hs`, `kioku-core/src/Kioku/Session/Domain.hs` — the register
   and the guards
-- `kioku-core/src/Kioku/Memory.hs` — `underContext`, and the space-scoped lookup on `mismatchOf`
+- `kioku-api/src/Kioku/Api/Access.hs` — the shared context and legacy-space gates
+- `kioku-core/src/Kioku/Memory.hs` — the thin `underContext` application and space-scoped source
+  and lineage-target lookups
 - `kioku-core/test/Kioku/MemorySpaceSpec.hs` — the cross-space cases, asserted on the event stream
 - [ADR-1](kioku-owns-memory-not-identity.md), [ADR-2](namespace-is-not-a-security-boundary.md),
   [ADR-5](historical-attribution-is-marked-never-invented.md),

@@ -113,6 +113,11 @@ Two rules follow from this, and both are checked on every write:
 - **A context authorizes specific actions.** One minted for reading cannot be spent on a write
   (`MemoryNotPermitted`).
 
+`underMemoryContext` and `inLegacyMemorySpaceOnly` are the common low-level gates used by
+`Kioku.Memory` and `Kioku.Session` to keep those checks in one order. They are consistency
+mechanisms for library code, not additional ways to mint or widen a context; an ordinary host
+should call the write functions rather than these helpers directly.
+
 A memory or session belongs to the space it was created in, permanently. The aggregate itself
 refuses any later command naming a different one, so the check survives a concurrent-writer
 retry rather than depending on a read-model precheck.
@@ -140,6 +145,12 @@ the same one; `archive` succeeds only if the memory was archived (not superseded
 Call-time timestamps do not participate in the comparison — the id is the identity, and a retry that
 re-reads its clock is still a retry.
 
+Before a first transition stores `supersedes`, `supersededBy`, or a merge winner, the target must
+already exist in the source memory's space. A missing target and an id that exists only in another
+space both return `MemoryNotFound`, so the error cannot be used as a cross-space existence oracle.
+Once a transition has succeeded, an identical retry is compared with the stored source first; it
+remains idempotent even if the winner has since been retired.
+
 ```haskell
 data MemoryWriteError
   = MemoryCommandRejected CommandError
@@ -164,9 +175,11 @@ Each asks the context for one permission: `MemoryRecord` for `recordWithContext`
 `MemoryForget` for `supersedeWithContext`, `archiveWithContext`, and `mergeWithContext`, which
 retire one.
 
-- `recordWithContext` — idempotent success if the id already exists with the same payload; `MemoryConflict` if
-  any semantic field differs; otherwise appends `MemoryRecorded`.
-- `supersede` / `archive` / `merge` — `MemoryNotFound` if the memory doesn't exist; idempotent
+- `recordWithContext` — idempotent success if the id already exists with the same payload;
+  `MemoryConflict` if any semantic field differs; `MemoryNotFound` if a new record's `supersedes`
+  target is absent from its space; otherwise appends `MemoryRecorded`.
+- `supersede` / `archive` / `merge` — `MemoryNotFound` if the source doesn't exist, or if a new
+  supersede/merge transition's winner is absent from its space; idempotent
   success if it is already retired **the same way** (the same winner for supersede/merge,
   `archived` for archive); `MemoryConflict` otherwise.
 - `updateTags` / `updateConfidence` — `MemoryNotActive` on an inactive memory; no-op if the value is

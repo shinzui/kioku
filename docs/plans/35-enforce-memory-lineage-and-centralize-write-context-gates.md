@@ -37,7 +37,7 @@ This section must always reflect the actual current state of the work.
 - [x] Add lineage-target validation to record, supersede, and merge write paths.
 - [x] Add missing, cross-space, idempotent-retry, and happy-path lineage regressions.
 - [x] Move generic context and legacy-space gates into `Kioku.Api.Access` and migrate both callers.
-- [ ] Update API documentation and changelog; run API and core suites against PostgreSQL.
+- [x] Update API documentation and changelog; run API and core suites against PostgreSQL.
 
 
 ## Surprises & Discoveries
@@ -82,7 +82,19 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Every public memory write that can store a lineage id now resolves that target inside the source
+space before its first transition. Real-stream tests prove that absent and cross-space targets
+both return `MemoryNotFound` and append nothing, while same-space targets project correctly and
+accepted supersede/merge retries survive later winner retirement.
+
+`Kioku.Api.Access` now owns the permission/space/actor and legacy-space gates. Memory and Session
+retain their public error constructors through thin constructor-injecting applications, and pure
+API sentinel tests pin the shared branch ordering without coupling the packages' error types.
+
+Validation passed with 125 `kioku-api` tests and 224 `kioku-core` tests. The core suite reported
+only its existing environment skips for pgvector-dependent paths; all new lineage, context-gate,
+Memory, and Session cases ran. No dependency, schema, migration, or event wire format changed.
+The durable context-consumption rule is recorded in ADR-1 and the lineage invariant in ADR-4.
 
 
 ## Context and Orientation
