@@ -35,10 +35,10 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Parameterize the vector capability catalog query with canonical schema/relation constants.
-- [ ] Replace the CLI-only strategy case expression with `parseRecallStrategy`.
-- [ ] Add database and parser regressions for the canonical vocabularies.
-- [ ] Update changelogs, format, and run complete core and CLI suites.
+- [x] Parameterize the vector capability catalog query with canonical schema/relation constants.
+- [x] Replace the CLI-only strategy case expression with `parseRecallStrategy`.
+- [x] Add database and parser regressions for the canonical vocabularies.
+- [x] Update changelogs, format, and run complete core and CLI suites.
 
 
 ## Surprises & Discoveries
@@ -46,7 +46,10 @@ This section must always reflect the actual current state of the work.
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- The focused capability regression cannot exercise pgvector in the current development cluster
+  and reports its existing explicit skip. The private statement still compiles and the required
+  source scan proves every catalog relation predicate consumes parameters; the complete core
+  suite passes with the same environment limitation.
 
 
 ## Decision Log
@@ -72,7 +75,16 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Completed on 2026-08-21. `detectVectorCapability` now passes `kiokuSchema` and
+`memoriesRelation` into its private catalog statement while preserving the bare, search-path
+resolved `vector` type probe. The CLI adapts the API parser directly and derives its metavar from
+the API enumeration and renderer; all strategies, the `Hybrid` default, and the canonical invalid
+diagnostic are covered through the real options parser.
+
+`cabal build kioku-core kioku-cli`, all 226 core tests, and all 53 CLI tests pass. `nix fmt` is
+clean, `git diff --check` is clean, and the final duplicate-literal scan is empty. This work
+applies the existing schema-ownership decisions in ADR-6 and ADR-10 and introduces no new durable
+architecture decision, so no ADR change is required.
 
 
 ## Context and Orientation

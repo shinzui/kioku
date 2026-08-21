@@ -66,7 +66,7 @@ tests =
           testCase "punctuation only" (assertQueryDoesNotThrow "-- ; ()")
         ],
       testCase "a vector round-trip ranks the nearest embedding first" testVectorRoundTrip,
-      testCase "capability detection reads the column's real width" testDimensionDetection,
+      testCase "capability detection reads the canonical memories table's real width" testDimensionDetection,
       testCase "the harness seeds the geometry it claims" testHarnessGeometry,
       testCase "the captured plan describes the query that was measured" testPlanCaptureIsFaithful,
       testCase "the vector channel does not starve on a selective scope" testVectorChannelDoesNotStarve,

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `kioku recall --strategy` now uses `Kioku.Api.Recall`'s canonical parser, enumeration, rendered
+  spellings, and invalid-value diagnostic. Accepted commands and the default remain unchanged;
+  the CLI no longer carries a second case expression or help-text list that can drift.
+
 ## 0.4.1.0 — 2026-08-18
 
 ### Changed

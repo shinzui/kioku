@@ -17,7 +17,13 @@ import Kioku.Cli.Options (redactConnectionString)
 import Kioku.Cli.Scope (parseScope)
 import Kioku.Id (genMemoryId, genSessionId, idText)
 import Kioku.Memory.Embedding.Worker (EmbeddingBackfillScope (..))
-import Kioku.Recall (RecallTarget (..))
+import Kioku.Recall
+  ( RecallStrategy (..),
+    RecallTarget (..),
+    allRecallStrategies,
+    parseRecallStrategy,
+    recallStrategyText,
+  )
 import Options.Applicative
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
@@ -29,6 +35,7 @@ tests =
     [ sessionIdTests,
       scopeTests,
       recallTargetTests,
+      strategyTests,
       limitTests,
       demoGuardTests,
       redactionTests,
@@ -176,6 +183,33 @@ recallTargetTests =
         assertBool
           ("failure should name the conflicting flag " <> rejected <> ": " <> err)
           (rejected `isInfixOf` err)
+
+-- | The API owns the strategy wire spelling, accepted enumeration, and diagnostic. The CLI
+-- adapts that vocabulary to optparse-applicative without restating any of it.
+strategyTests :: TestTree
+strategyTests =
+  testGroup
+    "recall strategy uses the API vocabulary"
+    [ testCase "every API strategy parses to itself" do
+        mapM_
+          (\expected -> strategy ["--strategy", Text.unpack (recallStrategyText expected)] @?= Right expected)
+          allRecallStrategies,
+      testCase "omission still defaults to hybrid" do
+        strategy [] @?= Right Hybrid,
+      testCase "an invalid value uses the API diagnostic and accepted list" do
+        let invalid = "fuzzy"
+            expected = either Text.unpack (const "unexpected success") (parseRecallStrategy invalid)
+        case strategy ["--strategy", Text.unpack invalid] of
+          Right parsed -> assertBool ("invalid strategy parsed as " <> show parsed) False
+          Left err ->
+            assertBool
+              ("CLI error does not contain the API diagnostic: " <> err)
+              (expected `isInfixOf` err)
+    ]
+  where
+    strategy extra =
+      fmap (.strategy) $
+        parseWith recallOptionsParser (["query", "--namespace-wide", "mori"] <> extra)
 
 -- | Out-of-range limits are a parse error, not a Postgres error (@--limit -1@ used to reach
 -- SQL and come back as @LIMIT must not be negative@).

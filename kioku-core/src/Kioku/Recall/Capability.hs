@@ -6,12 +6,14 @@ module Kioku.Recall.Capability
   )
 where
 
+import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int32)
 import Effectful (Eff, (:>))
 import Hasql.Decoders qualified as D
 import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
+import Kioku.Database.Schema (kiokuSchema, memoriesRelation)
 import Kioku.Prelude
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
@@ -43,7 +45,9 @@ detectVectorCapability ::
   Int ->
   Eff es VectorCapability
 detectVectorCapability configuredDimensions =
-  classifyProbe configuredDimensions <$> runTransaction (Tx.statement () detectVectorCapabilityStmt)
+  classifyProbe configuredDimensions
+    <$> runTransaction
+      (Tx.statement (kiokuSchema, memoriesRelation) detectVectorCapabilityStmt)
 
 classifyProbe :: Int -> CapabilityProbe -> VectorCapability
 classifyProbe configuredDimensions probe
@@ -81,12 +85,12 @@ missingIf False _ = []
 -- @to_regtype@ resolves against the live @search_path@, which is exactly the question the
 -- query asks.
 --
--- The column probes name @kioku.memories@ because that is where the projection lives; the
--- @vector@ type probe deliberately does /not/ name a schema, because the extension was never
--- moved and its resolution is still whatever the connection's search path makes it. Those two
--- questions are separate on purpose — see
+-- The column probes consume the physical schema and relation owned by
+-- 'Kioku.Database.Schema'; the @vector@ type probe deliberately does /not/ name a schema,
+-- because the extension was never moved and its resolution is still whatever the connection's
+-- search path makes it. Those two questions are separate on purpose — see
 -- @docs\/adr\/projections-live-in-the-kioku-schema.md@.
-detectVectorCapabilityStmt :: Statement () CapabilityProbe
+detectVectorCapabilityStmt :: Statement (Text, Text) CapabilityProbe
 detectVectorCapabilityStmt =
   preparable
     """
@@ -95,35 +99,37 @@ detectVectorCapabilityStmt =
       EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'kioku' AND table_name = 'memories' AND column_name = 'embedding'
+        WHERE table_schema = $1 AND table_name = $2 AND column_name = 'embedding'
       ) AS has_embedding,
       EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'kioku' AND table_name = 'memories' AND column_name = 'embedding_model'
+        WHERE table_schema = $1 AND table_name = $2 AND column_name = 'embedding_model'
       ) AS has_embedding_model,
       EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'kioku' AND table_name = 'memories' AND column_name = 'dimensions'
+        WHERE table_schema = $1 AND table_name = $2 AND column_name = 'dimensions'
       ) AS has_dimensions,
       EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'kioku' AND table_name = 'memories' AND column_name = 'content_hash'
+        WHERE table_schema = $1 AND table_name = $2 AND column_name = 'content_hash'
       ) AS has_content_hash,
       (
         SELECT a.atttypmod
         FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid
         JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'kioku'
-          AND c.relname = 'memories'
+        WHERE n.nspname = $1
+          AND c.relname = $2
           AND a.attname = 'embedding'
           AND NOT a.attisdropped
       ) AS embedding_typmod
     """
-    E.noParams
+    ( (fst >$< E.param (E.nonNullable E.text))
+        <> (snd >$< E.param (E.nonNullable E.text))
+    )
     ( D.singleRow $
         CapabilityProbe
           <$> D.column (D.nonNullable D.bool)

@@ -93,7 +93,7 @@ convention.
 | EP-3 | Enforce memory lineage and centralize write-context gates | docs/plans/35-enforce-memory-lineage-and-centralize-write-context-gates.md | None | None | Complete |
 | EP-4 | Repair L1 watermark ownership and timer-space attribution | docs/plans/36-repair-l1-watermark-ownership-and-timer-space-attribution.md | None | EP-2 | Complete |
 | EP-5 | Scale full-text recall and embedding backfill by memory space | docs/plans/37-scale-full-text-recall-and-embedding-backfill-by-memory-space.md | None | None | Complete |
-| EP-6 | Use canonical schema and recall-strategy vocabularies | docs/plans/38-use-canonical-schema-and-recall-strategy-vocabularies.md | None | None | Not Started |
+| EP-6 | Use canonical schema and recall-strategy vocabularies | docs/plans/38-use-canonical-schema-and-recall-strategy-vocabularies.md | None | None | Complete |
 | EP-7 | Retire Rei legacy event decoders after consumer cutover | docs/plans/39-retire-rei-legacy-event-decoders-after-consumer-cutover.md | External Rei cutover gate | None | Not Started |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
@@ -178,8 +178,8 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-4: report `unknown` rather than `kioku_legacy` for payloads that do not name a space.
 - [x] EP-5: install and prove a partition-aware full-text access path with a safe fallback.
 - [x] EP-5: push the settled-embedding skip predicate into both backfill SQL statements.
-- [ ] EP-6: build the vector capability probe and CLI strategy reader from canonical constants.
-- [ ] EP-6: prove every API recall strategy is accepted by the CLI with the canonical diagnostics.
+- [x] EP-6: build the vector capability probe and CLI strategy reader from canonical constants.
+- [x] EP-6: prove every API recall strategy is accepted by the CLI with the canonical diagnostics.
 - [ ] EP-7: prove every Rei consumer has completed or retired the foreign-event migration path.
 - [ ] EP-7: remove Rei decoders while preserving every native Kioku compatibility fixture.
 
@@ -291,3 +291,10 @@ for full-text recall when `btree_gin` is available and retains the historical co
 a safe fallback. Both embedding backfill statements now reject settled rows before transferring
 content. The full migration/core suites pass (21/226 tests), ADR-9 records the revised access-path
 decision, and two child plans remain; EP-7 is still subject to its external Rei cutover gate.
+
+EP-6 completed on 2026-08-21. Vector capability detection consumes the schema module's canonical
+projection identity without changing the bare `vector` type probe, and the CLI consumes the API's
+strategy enumeration, renderer, parser, and diagnostic without a second vocabulary. The full
+core/CLI suites pass (226/53 tests), the duplicate-literal scan is empty, and no new ADR was
+needed because the change applies the existing schema-ownership decisions. One child plan
+remains, subject to the external Rei cutover gate.

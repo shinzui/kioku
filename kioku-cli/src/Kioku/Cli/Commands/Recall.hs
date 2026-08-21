@@ -17,6 +17,9 @@
 -- @kioku recall --scope mori@ to a fraction of its rows, with no compiler to warn and a zero exit
 -- status, which is the direction @docs\/adr\/an-explicit-recall-target-replaces-the-overloaded-scope.md@
 -- records as the unsafe one.
+--
+-- The strategy spelling, enumeration, and invalid-value diagnostic are owned by
+-- "Kioku.Api.Recall"; this module only adapts that vocabulary to optparse-applicative.
 module Kioku.Cli.Commands.Recall
   ( RecallOptions (..),
     recallOptionsParser,
@@ -27,6 +30,7 @@ module Kioku.Cli.Commands.Recall
   )
 where
 
+import Data.Bifunctor (first)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Kioku.Api.Access (memoryContextSpace, memorySpaceIdText)
@@ -37,7 +41,16 @@ import Kioku.Cli.Context (cliMemoryContext)
 import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Cli.Scope (parseNamespaceOnly, parseScope)
 import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
-import Kioku.Recall (RecallHit (..), RecallStrategy (..), RecallTarget (..), mkRecallQuery, recall)
+import Kioku.Recall
+  ( RecallHit (..),
+    RecallStrategy (..),
+    RecallTarget (..),
+    allRecallStrategies,
+    mkRecallQuery,
+    parseRecallStrategy,
+    recall,
+    recallStrategyText,
+  )
 import Kioku.Recall.Capability (detectVectorCapability)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Options.Applicative
@@ -60,9 +73,9 @@ recallOptionsParser =
     <$> (Text.pack <$> argument str (metavar "QUERY"))
     <*> recallTargetParser
     <*> option
-      (eitherReader parseStrategy)
+      (eitherReader (first Text.unpack . parseRecallStrategy . Text.pack))
       ( long "strategy"
-          <> metavar "keyword|embedding|hybrid"
+          <> metavar strategyMetavar
           <> value Hybrid
           <> help "Recall strategy"
       )
@@ -182,12 +195,9 @@ runRecall opts = do
       Right (Right []) -> putStrLn "(no matches)"
       Right (Right hits) -> mapM_ (printHit opts.showScores) (zip [(1 :: Int) ..] hits)
 
-parseStrategy :: String -> Either String RecallStrategy
-parseStrategy = \case
-  "keyword" -> Right Keyword
-  "embedding" -> Right Embedding
-  "hybrid" -> Right Hybrid
-  other -> Left ("unknown strategy: " <> other)
+strategyMetavar :: String
+strategyMetavar =
+  Text.unpack (Text.intercalate "|" (recallStrategyText <$> allRecallStrategies))
 
 printHit :: Bool -> (Int, RecallHit) -> IO ()
 printHit showScores (index, hit)

@@ -29,6 +29,9 @@
   in both production SQL statements. Settled active rows no longer transfer their full content
   from PostgreSQL merely to be skipped in Haskell; the existing Haskell check remains as a race
   defense after candidate selection.
+- Vector capability detection now takes the projection schema and relation from
+  `Kioku.Database.Schema` instead of repeating `kioku.memories` across catalog predicates. The
+  separate bare `vector` type probe retains its search-path semantics.
 
 ### Changed
 
