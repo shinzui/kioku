@@ -35,6 +35,8 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
+- [x] Refresh the Mori dependent graph and inspect the external gate at exact source revisions;
+  the gate remains closed.
 - [ ] Prove the external Rei migrator is complete and no deployable consumer imports the parsers.
 - [ ] Move the two native pre-`force` fixtures out of the Rei-specific test module.
 - [ ] Remove the foreign fallback parsers, Rei fixtures, and test-suite registration.
@@ -51,6 +53,26 @@ implementation. Provide concise evidence.
   at `^>=0.4.1`, but its `rei-kioku-migrate` executable still imports `parseMemoryEvent` and
   `parseSessionEvent`. A version-bound check alone is therefore insufficient; the source/import
   and production-cutover gates below are mandatory.
+
+- 2026-08-21: At `mori://shinzui/rei/repos/rei` revision
+  `9c81561fdd7f739849238f8511276bd51f6f1c48`, the working tree still declares
+  `rei-kioku-migrate` and its implementation imports and calls both Kioku parsers. The unrelated
+  uncommitted Intention-module generation work adds Cabal library modules but does not touch the
+  migrator stanza or implementation. The newer explicit handoff plan,
+  `mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`,
+  has all six milestones unchecked, including the real-database proof, migrator deletion, and
+  fallback-free Kioku build. Its owning commit is
+  `c601249bb0de807ca02e52dd62a248d564a27395`; the currently released Mori CLI cannot yet resolve
+  this plan URI, so the canonical project URI plus project-relative source inspection supplied
+  the evidence.
+
+- 2026-08-21: `mori registry dependents shinzui/kioku --packages` reports
+  `mori://shinzui/rei`, `mori://shinzui/mori`, `mori://shinzui/kikan`, and
+  `mori://shinzui/shikigami`. Source scans at revisions `9c81561f` (Rei), `aac8d330` (Mori),
+  `b83e3baa` (Kikan), and `25e31709` (Shikigami) find parser imports only in Rei's migrator.
+  Kikan has one historical documentation mention of the executable; Mori and Shikigami have no
+  matches. The dependent graph therefore identifies no second code consumer, but it cannot
+  override Rei's still-open production gate.
 
 
 ## Decision Log
@@ -84,7 +106,12 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+The external-gate audit was refreshed on 2026-08-21 without changing any decoder, fixture,
+registration, or release note. Rei still imports the parsers and has not recorded the required
+clone and production proof or migrator-removal commit. Resume at Milestone 1 only after
+`mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`
+records Milestones 3 through 5 complete and supplies the exact Rei revision and checked-in
+cutover evidence it promises.
 
 
 ## Context and Orientation
@@ -111,8 +138,11 @@ and project-relative `rei-core/rei-core.cabal` still builds `rei-kioku-migrate`.
 upgrade is complete in
 `mori://shinzui/rei/plans/203-land-the-released-keiro-0-13-cohort-build-plan`, while the real-data
 cutover in `mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`
-is not yet complete. Mori may not resolve those plan artifact URIs until registry URI coverage is
-refreshed; they remain the intended canonical identities.
+is not yet complete. The dedicated follow-through is
+`mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`;
+it owns the exact production proof, migrator removal, and fallback-free handoff this plan needs.
+Mori may not resolve those plan artifact URIs until registry URI coverage is refreshed; they
+remain the intended canonical identities.
 
 [Kioku owns memory, not identity](../adr/kioku-owns-memory-not-identity.md) supports removing
 consumer-specific translation policy. [Legacy data lands in one explicit
@@ -133,7 +163,10 @@ Kioku. Inspect the authoritative source of each deployable dependent for imports
 Rei-to-Kioku migration executable. For Rei specifically, all of these conditions must be true:
 
 1. `mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`
-   is complete, including replay against the real production history;
+   is complete, including replay against the real production history, and Milestones 3 through 5
+   of
+   `mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`
+   record the dedicated migration proof and handoff;
 2. `rei-kioku-migrate` has been run everywhere it is required and is then removed, or rewritten
    so it owns its legacy decoder without importing the Kioku event-stream parsers;
 3. Rei's library, executable, and test components build and pass without relying on the foreign
@@ -280,7 +313,9 @@ the native Aeson instances retain their signatures. Use existing `aeson`, `text`
 only; no Haskell dependency changes.
 
 The external hard dependencies are the completed real-data cutover at
-`mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`
+`mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`,
+the completed migration/handoff at
+`mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`,
 and an empty consumer-import scan rooted through Mori. These are evidence dependencies, not
 authorization to edit the Rei repository. The Kioku package containing the behavior must advance
 to the next PVP major line before release.

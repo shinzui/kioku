@@ -94,7 +94,7 @@ convention.
 | EP-4 | Repair L1 watermark ownership and timer-space attribution | docs/plans/36-repair-l1-watermark-ownership-and-timer-space-attribution.md | None | EP-2 | Complete |
 | EP-5 | Scale full-text recall and embedding backfill by memory space | docs/plans/37-scale-full-text-recall-and-embedding-backfill-by-memory-space.md | None | None | Complete |
 | EP-6 | Use canonical schema and recall-strategy vocabularies | docs/plans/38-use-canonical-schema-and-recall-strategy-vocabularies.md | None | None | Complete |
-| EP-7 | Retire Rei legacy event decoders after consumer cutover | docs/plans/39-retire-rei-legacy-event-decoders-after-consumer-cutover.md | External Rei cutover gate | None | Not Started |
+| EP-7 | Retire Rei legacy event decoders after consumer cutover | docs/plans/39-retire-rei-legacy-event-decoders-after-consumer-cutover.md | External Rei cutover gate | None | In Progress |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3), or name an
@@ -118,9 +118,11 @@ payloads. The current Rei tree still contains `rei-kioku-migrate`, so EP-7 must 
 milestone until that executable has been used where required and retired. The intended related
 upgrade artifacts are
 `mori://shinzui/rei/plans/203-land-the-released-keiro-0-13-cohort-build-plan` and
-`mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`;
-current Mori plan-URI coverage may lag, so the package URI and source audit remain the executable
-proof.
+`mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`.
+The explicit migration and handoff is now owned by
+`mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`;
+current Mori plan-URI coverage may lag, so the canonical project URI and source audit remain the
+executable proof.
 
 ExecPlan 32 is coordinated but not a dependency. EP-5 must create the next migration with
 `just new-migration` at implementation time rather than assuming a number, so whichever plan
@@ -180,6 +182,7 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-5: push the settled-embedding skip predicate into both backfill SQL statements.
 - [x] EP-6: build the vector capability probe and CLI strategy reader from canonical constants.
 - [x] EP-6: prove every API recall strategy is accepted by the CLI with the canonical diagnostics.
+- [x] EP-7: refresh the Mori dependent graph and record the still-closed Rei handoff gate.
 - [ ] EP-7: prove every Rei consumer has completed or retired the foreign-event migration path.
 - [ ] EP-7: remove Rei decoders while preserving every native Kioku compatibility fixture.
 
@@ -211,6 +214,12 @@ interactions between child plans. Provide concise evidence.
   unavailable. EP-5 therefore proves the preferred FTS migration branch against the real
   extension, while its settled-candidate regression constructs the same nullable embedding/hash
   facts with test-only columns so the transfer boundary is never hidden behind a vector skip.
+- The Rei-side handoff is now explicitly owned by
+  `mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`,
+  but all six milestones remain unchecked at Rei revision `9c81561f`. The live migrator still
+  imports both Kioku parsers. Mori finds no second code consumer in the other registered
+  dependents, so the remaining blocker is the promised Rei production proof and removal commit,
+  not an unknown dependent.
 
 
 ## Decision Log
@@ -298,3 +307,9 @@ strategy enumeration, renderer, parser, and diagnostic without a second vocabula
 core/CLI suites pass (226/53 tests), the duplicate-literal scan is empty, and no new ADR was
 needed because the change applies the existing schema-ownership decisions. One child plan
 remains, subject to the external Rei cutover gate.
+
+EP-7's external gate was refreshed on 2026-08-21. The reverse-dependency scan identifies Rei as
+the only code consumer of the compatibility parsers, but its active migrator still imports both
+functions and the dedicated production-proof/removal plan has not completed any milestone. No
+Kioku decoder was edited. Implementation resumes only from the exact Rei evidence and removal
+commit promised by the canonical plan handoff.
