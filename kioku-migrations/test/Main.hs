@@ -16,6 +16,7 @@ import Data.Int (Int64)
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (mapMaybe)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text.Encoding
@@ -35,6 +36,7 @@ import Database.PostgreSQL.Migrate
     connectionProviderFromSettings,
     defaultImportOptions,
     defaultRunOptions,
+    migrationComponentFromEmbeddedSql,
     migrationId,
     migrationPlan,
     runMigrationPlan,
@@ -51,7 +53,8 @@ import Hasql.Encoders qualified as E
 import Hasql.Session (Session)
 import Hasql.Session qualified as Session
 import Hasql.Statement (Statement, preparable)
-import Kioku.Migrations (kiokuMigrationPlan)
+import Keiro.Migrations qualified as KeiroMigrations
+import Kioku.Migrations (kiokuMigrationPlan, kiokuMigrations)
 import Kioku.Migrations.History.Codd
   ( cohortCoddHistoryMappings,
     cohortCoddSourceConfig,
@@ -77,6 +80,9 @@ tests =
           testCase "public schema (long-lived dev databases)" (assertRegistryBump "public")
         ],
       testCase "the full migration chain applies to a fresh database" testFreshDatabase,
+      testGroup
+        "migration-session isolation"
+        [testCase "restores the host search path before later components" testHostSearchPathRestored],
       testCase "the migration manifest is complete and valid" testManifestIntegrity,
       testCase "the pinned Codd history maps 30 known plan targets" testHistoryMappings,
       testCase "the pre-cutover Codd cohort imports 30 rows and applies only the forward migrations" testCoddCohortImport,
@@ -224,6 +230,81 @@ registryTableExists :: Statement () Bool
 registryTableExists =
   preparable
     "SELECT to_regclass('keiro.keiro_read_models') IS NOT NULL"
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.bool)))
+
+-- * Migration-session isolation
+
+-- | A host component that follows Kioku on the same pg-migrate connection must inherit the
+-- database's configured search path, not session state left by a Kioku migration.
+testHostSearchPathRestored :: Assertion
+testHostSearchPathRestored =
+  withBareDatabase \connStr -> do
+    withConnection connStr \conn -> do
+      run conn (Session.script hostSchemaSetup)
+      databaseName <- run conn (Session.statement () quotedCurrentDatabase)
+      run conn (Session.script ("ALTER DATABASE " <> databaseName <> " SET search_path TO host_app, pg_catalog"))
+
+    plan <- hostComposedPlan
+    report <-
+      runMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan
+        >>= either (assertFailure . show) pure
+    hostMigration <- either (assertFailure . show) pure (migrationId "host" "0001-host-table")
+    let MigrationReport {results = migrationResults} = report
+    case reverse (toList migrationResults) of
+      MigrationResult {migration = finalMigration, outcome = finalOutcome} : _ -> do
+        finalMigration @?= hostMigration
+        finalOutcome @?= AppliedNow
+      [] -> assertFailure "the composed migration plan returned no results"
+    query connStr hostMigratedColumnExists >>= (@?= True)
+
+hostComposedPlan :: IO MigrationPlan
+hostComposedPlan = do
+  kiroku <- either (fail . show) pure KirokuMigrations.kirokuMigrations
+  keiro <- either (fail . show) pure KeiroMigrations.keiroMigrations
+  kioku <- either (fail . show) pure kiokuMigrations
+  host <-
+    either
+      (fail . show)
+      pure
+      ( migrationComponentFromEmbeddedSql
+          "host"
+          (Set.singleton "kioku")
+          ( ( "0001-host-table.sql",
+              Text.Encoding.encodeUtf8
+                "ALTER TABLE host_table ADD COLUMN migrated boolean NOT NULL DEFAULT true;"
+            )
+              :| []
+          )
+      )
+  either (fail . show) pure (migrationPlan (kiroku :| [keiro, kioku, host]))
+
+hostSchemaSetup :: Text
+hostSchemaSetup =
+  """
+  CREATE SCHEMA host_app;
+  CREATE TABLE host_app.host_table (id bigint PRIMARY KEY);
+  """
+
+quotedCurrentDatabase :: Statement () Text
+quotedCurrentDatabase =
+  preparable
+    "SELECT quote_ident(current_database())"
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
+
+hostMigratedColumnExists :: Statement () Bool
+hostMigratedColumnExists =
+  preparable
+    """
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'host_app'
+        AND table_name = 'host_table'
+        AND column_name = 'migrated'
+    )
+    """
     E.noParams
     (D.singleRow (D.column (D.nonNullable D.bool)))
 
@@ -638,7 +719,7 @@ testKirokuOnlyAdoption =
     adoption <- runMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let MigrationReport {results = adoptionResults} = adoption
     length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 11
-    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 43
+    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 44
 
     -- Verified and skipped, never re-executed: the stored rows keep their checksums and their
     -- original application timestamps.
@@ -651,7 +732,7 @@ testKirokuOnlyAdoption =
     verification <- verifyMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let VerificationReport {issues = adoptionIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     adoptionIssues @?= []
-    length appliedMigrations @?= 54
+    length appliedMigrations @?= 55
     pendingMigrations @?= []
     unknownMigrations @?= []
 
@@ -1002,13 +1083,13 @@ testCoddCohortImport =
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 54
+    length appliedMigrations @?= 55
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 54
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 55
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 fixtureMigrationNames :: Text -> [FilePath]
@@ -1095,6 +1176,7 @@ expectedForwardMigrationIds =
           migrationId "keiro" "0028",
           migrationId "keiro" "0029",
           migrationId "keiro" "0030",
+          migrationId "keiro" "0031",
           migrationId "kioku" "0011-kioku-memory-space-partition",
           migrationId "kioku" "0012-relocate-projections-to-kioku-schema",
           migrationId "kioku" "0013-partition-aware-fts-index"

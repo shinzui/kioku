@@ -58,7 +58,7 @@ library
     , containers               >=0.6       && <0.8
     , hasql                    >=1.10      && <1.11
     , hasql-transaction        >=1.2       && <1.3
-    , keiro-migrations         ^>=0.13.0.0
+    , keiro-migrations         ^>=0.14.0.0
     , kiroku-store-migrations  ^>=0.4.0.0
     , pg-migrate               ^>=1.1.0.0
     , pg-migrate-embed         ^>=1.1.0.0
@@ -89,8 +89,10 @@ test-suite kioku-migrations-test
   -- the bridge must keep working until the last codd-era database crosses over.
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N -Wno-deprecations
   build-depends:
-    , base                           >=4.18     && <5
+    , base                           >=4.18      && <5
+    , containers                     >=0.6       && <0.8
     , hasql                          >=1.6
+    , keiro-migrations               ^>=0.14.0.0
     , kioku-migrations               ^>=0.4.1.0
     , kioku-migrations:test-support
     , kiroku-store-migrations        ^>=0.4.0.0
@@ -99,4 +101,4 @@ test-suite kioku-migrations-test
     , pg-migrate-import-codd         ^>=1.1.0.0
     , tasty                          >=1.5
     , tasty-hunit                    >=0.10
-    , text                           >=2.0      && <2.2
+    , text                           >=2.0       && <2.2

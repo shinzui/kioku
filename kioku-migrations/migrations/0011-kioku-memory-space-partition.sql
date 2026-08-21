@@ -224,3 +224,10 @@ CREATE INDEX IF NOT EXISTS kioku_consolidation_space_scope_idx
 -- kioku_turns_session_idx was of UNIQUE (session_id, turn_index) before the schema-hardening
 -- migration dropped it. Keeping it would be pure write amplification.
 DROP INDEX IF EXISTS kioku_scenes_scope_idx;
+
+-- pg-migrate reuses one connection for the complete composed plan, so the plain SET at the
+-- start of this migration would survive transaction commit. Migration 0010 may already have
+-- supplied the same leaked value, which is why changing only this migration's opening SET to
+-- SET LOCAL would not restore the host configuration. Reset the session value explicitly so
+-- migration 0012 and every later component inherit the configured database or role default.
+RESET search_path;

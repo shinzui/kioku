@@ -46,12 +46,13 @@ and no application-facing Haskell API changes.
 
 ## Progress
 
-- [ ] Upgrade the composed Keiro migration component to 0.14.0.0, including migration `0031`, and
-      update the full-plan and post-Codd inventory assertions.
-- [ ] Add a composed-plan regression that gives the database a nonstandard default
+- [x] (2026-08-21T19:08:09Z) Upgrade the composed Keiro migration component to 0.14.0.0, including
+      migration `0031`, and update the full-plan and post-Codd inventory assertions.
+- [x] (2026-08-21T19:08:09Z) Add a composed-plan regression that gives the database a nonstandard default
       `search_path`, runs Kioku before a host component, and captures the current `42P01` failure.
-- [ ] Correct migration `0011-kioku-memory-space-partition.sql` so it resets the session before
-      commit, then make the composed-plan regression pass without adding a cleanup migration.
+- [x] (2026-08-21T19:10:20Z) Correct migration `0011-kioku-memory-space-partition.sql` so it resets
+      the session before commit, then make the composed-plan regression pass without adding a
+      cleanup migration.
 - [ ] Add and test the exact-checksum ledger re-baseline for databases that applied the withdrawn
       0.4.x payload, while preserving the 55-row plan and the pinned Codd import evidence.
 - [ ] Close BUG-1 as fixed on the default branch, update current user documentation and
@@ -115,6 +116,26 @@ and no application-facing Haskell API changes.
   Evidence: Hackage lists 0.14.0.0 as a normal version, upstream tag
   `keiro-migrations-0.14.0.0` exists, and the upstream 0.13.0.0-to-0.14.0.0 diff changes the
   manifest only by appending `0031.sql`.
+
+- Observation: The local Cabal package index initially lagged Hackage and knew only
+  `keiro-migrations` 0.13.0.0, so dependency solving rejected the new 0.14 bound before
+  compilation. Refreshing the index made 0.14.0.0 immediately resolvable.
+  Evidence: the first focused run reported `rejecting: keiro-migrations-0.13.0.0`; `cabal update`
+  advanced the index state to `2026-08-21T18:57:43Z`; the rerun downloaded and built 0.14.0.0.
+
+- Observation: The composed-plan regression detects BUG-1 exactly at the host boundary under
+  Keiro 0.14. With the uncorrected `0011`, all other 21 migration tests passed and only the host
+  component failed.
+  Evidence: the focused suite reported `DatabaseSessionFailed`, SQLSTATE `42P01`, and
+  `relation \"host_table\" does not exist` for the unqualified host migration, ending with
+  `1 out of 22 tests failed`.
+
+- Observation: Appending the explanatory cleanup and `RESET search_path;` changes migration
+  `0011`'s exact-byte SHA-256 to
+  `6c83d3f01f784d0d9395953d5bb1763b8eea6cd9439073df42f79775a85197a9`. No other Kioku
+  migration byte, manifest entry, or Codd lock changed.
+  Evidence: the focused host test passed in 1.02 seconds, the complete migration suite reported
+  `All 22 tests passed`, and the migration-directory diff names only `0011`.
 
 
 ## Decision Log
