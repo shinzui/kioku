@@ -70,8 +70,9 @@ and no application-facing Haskell API changes.
 - [x] (2026-08-21T19:36:44Z) Raise the remaining `keiro`, `keiro-core`, and optional `keiro-pgmq`
       bounds to 0.14.0.0, update current dependency documentation and changelogs, and pass the
       focused core and migration suites.
-- [ ] Re-run focused and repository-wide validation for the full Keiro cohort, perform another ADR
-      distillation pass, and record the results here.
+- [x] (2026-08-21T19:42:34Z) Re-run focused and repository-wide validation for the full Keiro
+      cohort, recover one stale incremental Cabal artifact with a clean rebuild, perform another
+      ADR distillation pass, and record the results here.
 
 
 ## Surprises & Discoveries
@@ -211,6 +212,23 @@ and no application-facing Haskell API changes.
   Evidence: `nix develop -c cabal build kioku-core kioku-migrations` exited zero, followed by
   `All 24 tests passed` in `kioku-migrations-test` and `All 226 tests passed` in `kioku-test`.
 
+- Observation: The first repository-wide test invocation reused a stale in-place `kioku-cli`
+  archive compiled against Keiro 0.13 and failed to link against 0.14 symbols, even though Cabal
+  had replanned and the focused 0.14 suites passed. This was generated build state, not a missing
+  package edge or source incompatibility: `kioku-cli` does not import Keiro directly. Running
+  `nix develop -c cabal clean` and rebuilding all packages from scratch removed the mixed archive;
+  the clean CLI linked and all 53 CLI tests passed.
+  Evidence: the failed linker named `_krzm0zi13...KeiroziReadModel...` symbols inside
+  `libHSkioku-cli-0.4.1.0-inplace.a`; the clean `cabal build all` and subsequent full test command
+  both exited zero.
+
+- Observation: Final validation remained green for the complete 0.14 cohort and preserved the
+  migration behavior delivered earlier in this plan.
+  Evidence: the clean full run passed 125 API, 53 CLI, 24 migration, and 226 core tests;
+  `nix flake check` passed treefmt and pre-commit; `nix fmt` changed no files; strict bug-report OKF
+  validation reported `OK: 1 concepts (okf_version 0.2)`; every current Keiro Cabal reference is
+  0.14.0.0; and `git diff --check` exited zero.
+
 
 ## Decision Log
 
@@ -315,6 +333,13 @@ and no application-facing Haskell API changes.
   repository's incomplete-pattern warnings remains the final proof.
   Date: 2026-08-21
 
+- Decision: Do not create or update an ADR for the complete Keiro 0.14 cohort alignment.
+  Rationale: The lockstep rule is the upstream package family's release constraint, and the current
+  selected versions belong in Cabal bounds, changelogs, user baseline documentation, and this
+  execution record. It does not change Kioku's architecture, ownership boundaries, persistence
+  policy, or exported interface. The existing ADR-10 migration policy remains unchanged.
+  Date: 2026-08-21
+
 
 ## Outcomes & Retrospective
 
@@ -342,7 +367,9 @@ Reopened 2026-08-21 at the user's request to finish the Keiro cohort upgrade. Th
 was already on 0.14.0.0, but `kioku-core` still admitted only `keiro` and `keiro-core` 0.13, and the
 optional PGMQ constraint still selected `keiro-pgmq` 0.13. Those three references now target
 0.14.0.0, current dependency documentation names the real cohort, and both affected focused suites
-pass. Repository-wide validation and the repeated ADR distillation remain.
+pass. A clean repository build and all four test suites pass against the resolved Hackage releases;
+the 55-row migration plan is unchanged. The repeat ADR pass found no durable Kioku architecture
+change, and no work remains.
 
 
 ## Context and Orientation
@@ -785,6 +812,12 @@ new immutable history; any later defect is repaired forward rather than by chang
 The existing workaround for older uncorrected releases remains to rerun the plan: the leaking
 Kioku migrations are then already applied, so the pending host migration starts on a fresh
 connection. That workaround is recovery for old artifacts, not the corrected contract.
+
+Changing a transitive package cohort can leave an existing `dist-newstyle` with in-place archives
+compiled against the previous package identity. If a local incremental link names 0.13 Keiro
+symbols after the bounds select 0.14, run `nix develop -c cabal clean` and rebuild; this deletes
+only generated Cabal artifacts. A clean checkout does not carry that state. Do not add a redundant
+direct Keiro dependency merely to repair an incremental cache.
 
 
 ## Interfaces and Dependencies
