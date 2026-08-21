@@ -59,9 +59,9 @@ and no application-facing Haskell API changes.
 - [x] (2026-08-21T19:19:47Z) Close BUG-1 as fixed on the default branch, update current user
       documentation and changelogs, regenerate the bug-report index/log, and validate the OKF
       bundle.
-- [ ] Validate and record the durable migration-correction policy in ADR-10, run focused and
-      repository-wide validation, perform the final ADR distillation pass, and record the results
-      in this plan.
+- [x] (2026-08-21T19:23:01Z) Validate and record the durable migration-correction policy in ADR-10,
+      run focused and repository-wide validation, perform the final ADR distillation pass, and
+      record the results in this plan.
 
 
 ## Surprises & Discoveries
@@ -153,6 +153,20 @@ and no application-facing Haskell API changes.
   Evidence: `okf validate ... --profile-enforce --log-enforce` printed
   `OK: 1 concepts (okf_version 0.2)`, and the subsequent whitespace check exited zero.
 
+- Observation: The complete repository validation remained green after the migration correction,
+  Keiro 0.14 upgrade, ledger recovery test, and documentation changes.
+  Evidence: `nix develop -c cabal build all` exited zero;
+  `nix develop -c cabal test all --test-show-details=direct` passed the 24 migration, 125 API,
+  53 CLI, and 226 core cases; `nix flake check` passed both the treefmt and pre-commit checks; and
+  the final strict OKF and whitespace validations exited zero.
+
+- Observation: The final ADR distillation found no implementation-time policy delta. ADR-10
+  already states the exact narrow released-payload correction rule used here and already links
+  this ExecPlan; its stable `docId` is `ADR-10`, its timestamp is
+  `2026-08-19T22:50:57Z`, and `docs/adr/log.md` contains the matching update entry.
+  Evidence: the prescribed `rg` checks found the metadata, two ExecPlan 32 references, and the
+  matching log record; the final whitespace check also covers both files.
+
 
 ## Decision Log
 
@@ -236,13 +250,35 @@ and no application-facing Haskell API changes.
   but not the `0011` correction or ledger recovery.
   Date: 2026-08-21
 
+- Decision: Make no additional ADR edit during final distillation.
+  Rationale: Implementation followed ADR-10's already-recorded rule exactly: one known-unsafe
+  released payload was corrected as a breaking change, the durable database outcome remained
+  equivalent, both exact checksums are known, and operators receive a guarded re-baseline. No
+  architecture boundary or recovery policy changed while executing the plan.
+  Date: 2026-08-21
+
 
 ## Outcomes & Retrospective
 
-Planning revision, 2026-08-19: the append-only `0013` design was retired before implementation.
-The replacement deliberately corrects `0011`, bounds the break to 0.4.x ledgers with one guarded
-checksum re-baseline, and preserves the Codd evidence. No implementation milestone
-has started; complete this section with behavioral and validation evidence as the work lands.
+Completed 2026-08-21. Migration `0011` now ends by resetting `search_path`, so the composed
+`kiroku -> keiro -> kioku -> host` plan preserves the host database's configured namespace on the
+same reused pg-migrate connection. The regression first failed at the host boundary with SQLSTATE
+`42P01` and then passed after the reset, providing the intended negative/positive proof rather
+than a source-only assertion.
+
+The change deliberately replaces the released `0011` checksum with
+`6c83d3f01f784d0d9395953d5bb1763b8eea6cd9439073df42f79775a85197a9`. The published, guarded
+ledger fixup accepts only the withdrawn 0.4.x checksum, is a tested no-op on a second run, and does
+not alter schema or data. All pre-Codd migration bytes and lock evidence remain untouched. The
+Keiro dependency is now 0.14.0.0, so the verified composed inventory is 11 Kiroku, 31 Keiro, and
+13 Kioku rows: 55 total, with 25 migrations after the Codd pin.
+
+BUG-1 is fixed on the default branch, operator guidance distinguishes applied 0.4.x ledgers from
+fresh, pending, and Codd-era databases, and the fixup is included in the source distribution.
+Focused migration tests, repository-wide build and tests, strict OKF validation, Nix flake checks,
+formatting, and whitespace validation all pass. The final ADR pass found that ADR-10 already
+captures the implemented exception and its recovery constraints, so no additional architecture
+record change was necessary. No implementation work remains.
 
 
 ## Context and Orientation
