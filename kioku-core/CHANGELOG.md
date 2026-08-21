@@ -19,6 +19,12 @@
   exist in the source memory's space before the first transition. Missing and cross-space targets
   both return `MemoryNotFound` without appending an event, while an accepted supersede or merge
   remains idempotent after its winner retires.
+- L1 watermark upserts now repair a row whose `memory_space_id` diverged from its globally unique
+  session while keeping `last_turn_index` monotonic, so one successful pass restores cheap
+  watermark skips instead of repeating extraction.
+- Timer dead letters and fire spans now attribute only an explicitly valid `memorySpaceId`.
+  Missing, null, and unreadable ownership is reported as `unknown`; native pre-partition timer
+  actions still execute in `kioku_legacy`, and the eight-attempt ceiling is unchanged.
 
 ### Changed
 

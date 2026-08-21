@@ -38,7 +38,7 @@ This section must always reflect the actual current state of the work.
 - [x] (2026-08-21) Add a corrupt-watermark regression proving the next pass heals and the following one skips.
 - [x] (2026-08-21) Separate optional diagnostic space parsing from legacy-defaulting action parsing.
 - [x] (2026-08-21) Add malformed/foreign/explicit-space diagnostic tests.
-- [ ] Update operator documentation and the core changelog.
+- [x] (2026-08-21) Update operator documentation and the core changelog.
 
 
 ## Surprises & Discoveries
@@ -83,7 +83,21 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Completed on 2026-08-21. The L1 upsert now moves the single session watermark back to the
+validated session space while preserving the highest stored turn index. A PostgreSQL regression
+corrupts both owner and index, proves one repair pass invokes extraction once, and proves the next
+pass returns `L1SkippedUpToDate` without invoking it.
+
+Diagnostics now parse only an explicitly valid `memorySpaceId`; absent, null, and unreadable
+ownership is `unknown`, while native pre-partition action codecs retain the `kioku_legacy`
+default. Keiro's pre-callback attempt ceiling could not apply that attribution, so Kioku preserves
+the same ninth-claim terminal boundary inside its callback. ADR-7 records that durable integration
+constraint. Operator docs and the core changelog describe the distinction.
+
+Validation passed: `nix fmt`; both focused suites (2 watermark tests and 13 timer-worker tests);
+`cabal build kioku-core`; `cabal test kioku-core:kioku-test`; and `git diff --check`. The full core
+suite reports 225 passing tests; pgvector-only cases retain their environment skips. No
+migration, metric label, package dependency, or native compatibility behavior changed.
 
 
 ## Context and Orientation

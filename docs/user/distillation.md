@@ -204,6 +204,12 @@ A timer fire reports one of four outcomes:
 - **not mine** — a timer no handler in this build owns. Requeued 600s out rather than killed, so a
   rolling deploy is safe.
 
+Every dead-letter `last_error` starts with the payload's diagnostic ownership. An explicitly
+named space is printed verbatim, including `[memory space kioku_legacy]`. If the field is absent,
+null, or unreadable, the prefix is `[memory space unknown]` and the fire span omits
+`kioku.memory_space_id`. `unknown` is diagnostic only: a known native timer written before memory
+spaces still executes in `kioku_legacy` through the action decoder's compatibility default.
+
 A dead **L1** timer means that session is never distilled; a dead **L2/L3** timer means that scope's
 scene or persona never regenerates. See
 [Troubleshooting](troubleshooting.md#dead-letters-and-worker-halts) for how to find them.

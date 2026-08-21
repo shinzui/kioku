@@ -91,7 +91,7 @@ convention.
 | EP-1 | Make workspace artifact migration no-clobber and share slug derivation | docs/plans/33-make-workspace-artifact-migration-no-clobber-and-share-slug-derivation.md | None | None | Complete |
 | EP-2 | Enforce distillation permissions through shared timer primitives | docs/plans/34-enforce-distillation-permissions-through-shared-timer-primitives.md | None | None | Complete |
 | EP-3 | Enforce memory lineage and centralize write-context gates | docs/plans/35-enforce-memory-lineage-and-centralize-write-context-gates.md | None | None | Complete |
-| EP-4 | Repair L1 watermark ownership and timer-space attribution | docs/plans/36-repair-l1-watermark-ownership-and-timer-space-attribution.md | None | EP-2 | In Progress |
+| EP-4 | Repair L1 watermark ownership and timer-space attribution | docs/plans/36-repair-l1-watermark-ownership-and-timer-space-attribution.md | None | EP-2 | Complete |
 | EP-5 | Scale full-text recall and embedding backfill by memory space | docs/plans/37-scale-full-text-recall-and-embedding-backfill-by-memory-space.md | None | None | Not Started |
 | EP-6 | Use canonical schema and recall-strategy vocabularies | docs/plans/38-use-canonical-schema-and-recall-strategy-vocabularies.md | None | None | Not Started |
 | EP-7 | Retire Rei legacy event decoders after consumer cutover | docs/plans/39-retire-rei-legacy-event-decoders-after-consumer-cutover.md | External Rei cutover gate | None | Not Started |
@@ -274,3 +274,10 @@ lineage targets identically before appending, while stored-transition comparison
 idempotence after a winner retires. Memory and Session consume one access-layer context gate with
 their existing error types and branch order. The full API/core suites pass (125/224 tests), ADR-1
 and ADR-4 record the durable rules, and four child plans remain.
+
+EP-4 completed on 2026-08-21. L1 watermark upserts self-heal divergent ownership without rewinding
+the turn index, and timer diagnostics distinguish explicit legacy ownership from absent or
+unreadable attribution while preserving native pre-partition execution. The unchanged attempt
+ceiling now runs inside Kioku's callback so terminal rows and spans receive the same attribution.
+The full core suite passes (225 tests), ADR-7 records the durable Keiro integration constraint,
+and three child plans remain.

@@ -255,6 +255,13 @@ SELECT timer_id, process_manager_name, correlation_id, attempts, last_error
  WHERE status = 'dead' AND process_manager_name LIKE 'kioku-%';
 ```
 
+The `last_error` prefix distinguishes explicit ownership from missing attribution. A payload that
+names the legacy space says `[memory space kioku_legacy]`; an absent, null, or unreadable
+`memorySpaceId` says `[memory space unknown]`. Treat `unknown` as a prompt to inspect or repair the
+payload, not as another space. Native Kioku timers from before memory-space partitioning still
+execute in `kioku_legacy`; only their generic diagnostic attribution is unknown when the stored
+payload does not name the field.
+
 Failures are logged to stderr as `kioku-distill-timer[<process-manager> attempt N]: …`. For a dead
 L1 timer, the simplest recovery is `kioku distill session <id> --force`.
 
