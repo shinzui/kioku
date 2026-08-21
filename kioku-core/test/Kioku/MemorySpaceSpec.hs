@@ -35,7 +35,7 @@ import Kioku.Distill.L1 (L1Error (..), L1RunMode (..), distillSessionL1, scopedS
 import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText)
 import Kioku.Memory qualified as Memory
-import Kioku.Memory.Domain (ArchiveMemoryData (..), MemoryEvent (..), MemoryRecordedData (..), RecordMemoryData (..))
+import Kioku.Memory.Domain (ArchiveMemoryData (..), MemoryEvent (..), MemoryRecordedData (..), RecordMemoryData (..), SupersedeMemoryData (..))
 import Kioku.Memory.EventStream (memoryStream, parseMemoryEvent)
 import Kioku.Memory.ReadModel (MemoryRow (..))
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
@@ -86,6 +86,12 @@ tests =
         [ testCase "record refuses a non-legacy payload" testWrapperRefusesNonLegacy,
           testCase "record accepts a legacy payload" testWrapperAcceptsLegacy,
           testCase "the wrapper cannot mutate another space's memory" testWrapperCannotTouchOtherSpace
+        ],
+      testGroup
+        "lineage targets stay inside the source space"
+        [ testCase "record rejects absent and cross-space supersedes targets" testRecordLineageTargetRejected,
+          testCase "supersede rejects absent and cross-space winners" testSupersedeLineageTargetRejected,
+          testCase "merge rejects absent and cross-space winners" testMergeLineageTargetRejected
         ],
       testCase "the same scope in two spaces is two independent memories" testSameScopeTwoSpaces
     ]
@@ -354,6 +360,75 @@ testSameScopeTwoSpaces =
   where
     recordedSpaces events = [d.memorySpaceId | MemoryRecorded d <- events]
 
+-- | Every lineage-bearing public write uses the same scoped target lookup. These three tests
+-- exercise each payload shape and compare the errors directly: an id in another space must not
+-- become an existence oracle, and neither rejected attempt may append to the source stream.
+testRecordLineageTargetRejected :: Assertion
+testRecordLineageTargetRejected =
+  withApp do
+    source <- liftIO genMemoryId
+    absent <- liftIO genMemoryId
+    elsewhere <- recordFixture otherContext "record lineage target in another space"
+    now <- liftIO getCurrentTime
+    missingResult <-
+      Memory.recordWithContext testContext (recordData source testContext now) {supersedes = Just absent}
+    crossSpaceResult <-
+      Memory.recordWithContext testContext (recordData source testContext now) {supersedes = Just elsewhere}
+    assertHiddenTarget "record" missingResult crossSpaceResult
+    assertMemoryEventCount source 0
+
+testSupersedeLineageTargetRejected :: Assertion
+testSupersedeLineageTargetRejected =
+  withApp do
+    source <- recordFixture testContext "supersede lineage source"
+    absent <- liftIO genMemoryId
+    elsewhere <- recordFixture otherContext "supersede lineage target in another space"
+    now <- liftIO getCurrentTime
+    let supersedeBy target =
+          Memory.supersedeWithContext
+            testContext
+            SupersedeMemoryData
+              { memoryId = source,
+                memorySpaceId = testSpace,
+                actorPrincipal = testActorPrincipal,
+                supersededBy = target,
+                supersededAt = now
+              }
+    missingResult <- supersedeBy absent
+    crossSpaceResult <- supersedeBy elsewhere
+    assertHiddenTarget "supersede" missingResult crossSpaceResult
+    assertMemoryEventCount source 1
+
+testMergeLineageTargetRejected :: Assertion
+testMergeLineageTargetRejected =
+  withApp do
+    source <- recordFixture testContext "merge lineage source"
+    absent <- liftIO genMemoryId
+    elsewhere <- recordFixture otherContext "merge lineage target in another space"
+    missingResult <- Memory.mergeWithContext testContext source absent
+    crossSpaceResult <- Memory.mergeWithContext testContext source elsewhere
+    assertHiddenTarget "merge" missingResult crossSpaceResult
+    assertMemoryEventCount source 1
+
+assertHiddenTarget ::
+  (IOE :> es) =>
+  String ->
+  Either Memory.MemoryWriteError MemoryId ->
+  Either Memory.MemoryWriteError MemoryId ->
+  Eff es ()
+assertHiddenTarget label missingResult crossSpaceResult =
+  liftIO do
+    assertMemoryNotFound (label <> " missing target") missingResult
+    assertMemoryNotFound (label <> " cross-space target") crossSpaceResult
+    assertEqual
+      (label <> " renders absent and cross-space targets identically")
+      (show missingResult)
+      (show crossSpaceResult)
+  where
+    assertMemoryNotFound resultLabel = \case
+      Left Memory.MemoryNotFound -> pure ()
+      other -> assertFailure (resultLabel <> ": expected MemoryNotFound, got " <> show other)
+
 -- * Fixtures
 
 recordFixture ::
@@ -460,6 +535,15 @@ readMemoryEvents mid = do
       case parseMemoryEvent recorded.payload of
         Left err -> liftIO (assertFailure ("parseMemoryEvent: " <> show err))
         Right event -> pure event
+
+assertMemoryEventCount ::
+  (IOE :> es, Store :> es) =>
+  MemoryId ->
+  Int ->
+  Eff es ()
+assertMemoryEventCount mid expected = do
+  recorded <- readStreamForward (Stream.streamName (memoryStream mid)) (StreamVersion 0) 100
+  liftIO $ assertEqual "the rejected lineage write appended no event" expected (Vector.length recorded)
 
 readSessionEvents :: (IOE :> es, Store :> es) => SessionId -> Eff es [SessionEvent]
 readSessionEvents sid = do

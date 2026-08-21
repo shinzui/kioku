@@ -182,9 +182,13 @@ recordIn cmdData = do
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
     Right (Just row) -> pure (idempotentOr "record" recordMismatch row cmdData.memoryId)
-    Right Nothing ->
-      runMemoryCommand cmdData.memoryId (RecordMemory cmdData)
-        >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.memoryId (isNothing . recordMismatch)
+    Right Nothing -> do
+      targetResult <- requireOptionalLineageTarget cmdData.memorySpaceId cmdData.supersedes
+      case targetResult of
+        Left err -> pure (Left err)
+        Right () ->
+          runMemoryCommand cmdData.memoryId (RecordMemory cmdData)
+            >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.memoryId (isNothing . recordMismatch)
   where
     recordMismatch = mismatchOf memoryRecordFields cmdData
 
@@ -219,9 +223,13 @@ supersedeIn cmdData = do
       -- Already retired: only a supersession by the *same* winner is this request's own
       -- echo. Superseding by a different winner is a conflict, not a duplicate.
       | row.status /= "active" -> pure (idempotentOr "supersede" supersedeMismatch row cmdData.memoryId)
-      | otherwise ->
-          runMemoryCommand cmdData.memoryId (SupersedeMemory cmdData)
-            >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.memoryId (isNothing . supersedeMismatch)
+      | otherwise -> do
+          targetResult <- requireLineageTarget cmdData.memorySpaceId cmdData.supersededBy
+          case targetResult of
+            Left err -> pure (Left err)
+            Right () ->
+              runMemoryCommand cmdData.memoryId (SupersedeMemory cmdData)
+                >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.memoryId (isNothing . supersedeMismatch)
   where
     supersedeMismatch = mismatchOf memorySupersedeFields cmdData
 
@@ -332,8 +340,9 @@ updateConfidenceIn cmdData = do
 -- different one is a conflict.
 --
 -- Both memories must live in the authorized space. The loser is checked by the aggregate guard
--- on the command below; the winner is only referenced, and 'Kioku.Distill.L1' — the one caller
--- that supplies a winner it did not just write — resolves both from the same session.
+-- on the command below; the referenced winner is resolved through the same space-scoped read
+-- model before the first transition. 'Kioku.Distill.L1' keeps its earlier planning check so a
+-- bad model response can degrade without partially applying its batch.
 mergeWithContext ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   MemoryAccessContext ->
@@ -374,19 +383,23 @@ mergeIn memorySpaceId actorPrincipal loser winner = do
     Right (Just row)
       | row.status /= "active" -> pure (idempotentOr "merge" mergeMismatch row loser)
       | otherwise -> do
-          now <- liftIO getCurrentTime
-          runMemoryCommand
-            loser
-            ( MergeMemory
-                MergeMemoryData
-                  { memoryId = loser,
-                    memorySpaceId,
-                    actorPrincipal,
-                    mergedInto = winner,
-                    mergedAt = now
-                  }
-            )
-            >>= acceptRejectedIfMatches memorySpaceId loser (isNothing . mergeMismatch)
+          targetResult <- requireLineageTarget memorySpaceId winner
+          case targetResult of
+            Left err -> pure (Left err)
+            Right () -> do
+              now <- liftIO getCurrentTime
+              runMemoryCommand
+                loser
+                ( MergeMemory
+                    MergeMemoryData
+                      { memoryId = loser,
+                        memorySpaceId,
+                        actorPrincipal,
+                        mergedInto = winner,
+                        mergedAt = now
+                      }
+                )
+                >>= acceptRejectedIfMatches memorySpaceId loser (isNothing . mergeMismatch)
   where
     mergeMismatch = mismatchOf memoryMergeFields winner
 
@@ -481,6 +494,28 @@ memoryMergeFields =
   [ ("status", \_ row -> row.status == "merged"),
     ("mergedInto", \winner row -> row.supersededBy == Just (idText winner))
   ]
+
+-- | Require a lineage id to resolve inside the source memory's space. The scoped query makes a
+-- target in another space indistinguishable from one that does not exist, preserving the same
+-- no-oracle behavior as source-memory lookups.
+requireLineageTarget ::
+  (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
+  MemoryId ->
+  Eff es (Either MemoryWriteError ())
+requireLineageTarget space target =
+  lookupMemory space target <&> \case
+    Left err -> Left (MemoryReadFailed err)
+    Right Nothing -> Left MemoryNotFound
+    Right (Just _) -> Right ()
+
+requireOptionalLineageTarget ::
+  (IOE :> es, Store :> es) =>
+  MemorySpaceId ->
+  Maybe MemoryId ->
+  Eff es (Either MemoryWriteError ())
+requireOptionalLineageTarget _ Nothing = pure (Right ())
+requireOptionalLineageTarget space (Just target) = requireLineageTarget space target
 
 -- | Look a memory up inside one space. A memory that lives elsewhere is 'Nothing' here, which
 -- is what makes the write paths' idempotency prechecks unable to answer questions about it.

@@ -62,11 +62,12 @@ tests =
         "memories"
         [ testCase "an identical record is a duplicate" testRecordDuplicate,
           testCase "a record retried with a fresh clock is a duplicate" testRecordRetriedWithNewClock,
+          testCase "a record can supersede a same-space target" testRecordLineageTarget,
           testCase "a record with different content is a conflict" testRecordConflict,
-          testCase "an identical supersede is a duplicate" testSupersedeDuplicate,
+          testCase "an identical supersede remains a duplicate after its winner retires" testSupersedeDuplicate,
           testCase "superseding by a different winner is a conflict" testSupersedeConflict,
           testCase "archiving a superseded memory is a conflict" testArchiveAfterSupersede,
-          testCase "an identical merge is a duplicate" testMergeDuplicate,
+          testCase "an identical merge remains a duplicate after its winner retires" testMergeDuplicate,
           testCase "merging into a different winner is a conflict" testMergeConflict
         ]
     ]
@@ -212,6 +213,21 @@ testRecordConflict =
       =<< Memory.recordWithContext testContext (recordData mid now "something else entirely")
     assertMemoryEvents mid 1
 
+testRecordLineageTarget :: Assertion
+testRecordLineageTarget =
+  withApp do
+    target <- recordedMemory "record lineage target"
+    source <- liftIO genMemoryId
+    now <- liftIO getCurrentTime
+    void $
+      expectRightM "record with supersedes"
+        =<< Memory.recordWithContext
+          testContext
+          (recordData source now "record lineage source") {supersedes = Just target}
+    row <- getMemoryRow source
+    liftIO $ assertEqual "the record projection keeps its target" (Just (idText target)) row.supersedes
+    assertMemoryEvents source 1
+
 testSupersedeDuplicate :: Assertion
 testSupersedeDuplicate =
   withApp do
@@ -220,7 +236,12 @@ testSupersedeDuplicate =
     now <- liftIO getCurrentTime
     let cmd = SupersedeMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = loser, supersededBy = winner, supersededAt = now}
     void (expectRightM "first supersede" =<< Memory.supersedeWithContext testContext cmd)
-    void (expectRightM "duplicate supersede" =<< Memory.supersedeWithContext testContext cmd)
+    void $
+      expectRightM "retire the winner"
+        =<< Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = winner, archivedAt = now}
+    void (expectRightM "duplicate supersede after winner retirement" =<< Memory.supersedeWithContext testContext cmd)
+    row <- getMemoryRow loser
+    liftIO $ assertEqual "the supersede projection keeps its winner" (Just (idText winner)) row.supersededBy
     assertMemoryEvents loser 2
 
 -- | The other headline regression: supersede by X, then by Y, used to report success for Y
@@ -258,7 +279,13 @@ testMergeDuplicate =
     loser <- recordedMemory "loser"
     winner <- recordedMemory "winner"
     void (expectRightM "first merge" =<< Memory.mergeWithContext testContext loser winner)
-    void (expectRightM "duplicate merge" =<< Memory.mergeWithContext testContext loser winner)
+    now <- liftIO getCurrentTime
+    void $
+      expectRightM "retire the winner"
+        =<< Memory.archiveWithContext testContext ArchiveMemoryData {memorySpaceId = testSpace, actorPrincipal = testActorPrincipal, memoryId = winner, archivedAt = now}
+    void (expectRightM "duplicate merge after winner retirement" =<< Memory.mergeWithContext testContext loser winner)
+    row <- getMemoryRow loser
+    liftIO $ assertEqual "the merge projection keeps its winner" (Just (idText winner)) row.supersededBy
     assertMemoryEvents loser 2
 
 testMergeConflict :: Assertion
@@ -372,6 +399,16 @@ recordedMemory content = do
   now <- liftIO getCurrentTime
   void (expectRightM "Memory.recordWithContext" =<< Memory.recordWithContext testContext (recordData mid now content))
   pure mid
+
+getMemoryRow ::
+  (IOE :> es, Store :> es) =>
+  MemoryId ->
+  Eff es MemoryRow
+getMemoryRow mid = do
+  result <- Memory.getMemoryRowById testSpace mid
+  case result of
+    Right (Just row) -> pure row
+    other -> liftIO (assertFailure ("Memory.getMemoryRowById: expected a row, got " <> show other))
 
 -- * Assertions
 

@@ -34,8 +34,8 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
-- [ ] Add lineage-target validation to record, supersede, and merge write paths.
-- [ ] Add missing, cross-space, idempotent-retry, and happy-path lineage regressions.
+- [x] Add lineage-target validation to record, supersede, and merge write paths.
+- [x] Add missing, cross-space, idempotent-retry, and happy-path lineage regressions.
 - [ ] Move generic context and legacy-space gates into `Kioku.Api.Access` and migrate both callers.
 - [ ] Update API documentation and changelog; run API and core suites against PostgreSQL.
 
@@ -45,7 +45,12 @@ This section must always reflect the actual current state of the work.
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- Discovery: The plan's focused command using `-p Idempotency` selects zero tests because the
+  actual Tasty group is named `Idempotent accepts`; `-p "Idempotent accepts"` runs all 18
+  intended regressions.
+  Evidence: the first command reported `All 0 tests passed`; the corrected command reported
+  `All 18 tests passed`.
+  Date: 2026-08-21
 
 
 ## Decision Log
