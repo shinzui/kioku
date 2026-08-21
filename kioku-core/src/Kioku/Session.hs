@@ -62,10 +62,11 @@ import Kioku.Api.Access
     MemoryPermission (..),
     MemorySpaceId,
     RecordedPrincipal (..),
+    inLegacyMemorySpaceOnly,
     legacyMemorySpaceId,
-    memoryContextAllows,
     memoryContextRecordedActor,
     memoryContextSpace,
+    underMemoryContext,
   )
 import Kioku.Api.Scope (MemoryScope, Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Timer (l1TimerScheduleProjection)
@@ -129,17 +130,11 @@ underContext ::
   RecordedPrincipal ->
   f (Either SessionWriteError a) ->
   f (Either SessionWriteError a)
-underContext context permission space actor run
-  | not (memoryContextAllows permission context) =
-      pure (Left (SessionNotPermitted permission))
-  | space /= authorizedSpace =
-      pure (Left (SessionSpaceMismatch space authorizedSpace))
-  | actor /= authorizedActor =
-      pure (Left (SessionActorMismatch actor authorizedActor))
-  | otherwise = run
-  where
-    authorizedSpace = memoryContextSpace context
-    authorizedActor = memoryContextRecordedActor context
+underContext =
+  underMemoryContext
+    SessionNotPermitted
+    SessionSpaceMismatch
+    SessionActorMismatch
 
 -- | Gate a deprecated wrapper on the one space it is allowed to touch.
 inLegacySpaceOnly ::
@@ -147,9 +142,7 @@ inLegacySpaceOnly ::
   MemorySpaceId ->
   f (Either SessionWriteError a) ->
   f (Either SessionWriteError a)
-inLegacySpaceOnly space run
-  | space /= legacyMemorySpaceId = pure (Left (SessionSpaceMismatch space legacyMemorySpaceId))
-  | otherwise = run
+inLegacySpaceOnly = inLegacyMemorySpaceOnly SessionSpaceMismatch
 
 -- | The deepest delegation chain a session may declare. Far above any legitimate agent
 -- hierarchy; it exists to bound absurd input, not to express a product limit.

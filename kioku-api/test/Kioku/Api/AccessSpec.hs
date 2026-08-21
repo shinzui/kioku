@@ -26,7 +26,8 @@ tests =
       jsonRoundTripTests,
       objectRefTests,
       bindingTests,
-      contextTests
+      contextTests,
+      contextGateTests
     ]
 
 -- | A memory space id is Kioku's own object identifier, so Kioku owns its rules. It has to
@@ -297,6 +298,89 @@ contextTests =
         memoryContextAllows MemoryForget context @?= False
         memoryContextPermissions context @?= Set.singleton MemoryRead
     ]
+
+-- | The gate owns branch ordering but not an application's error type. Distinct sentinel
+-- constructors make both properties visible without importing either core write-error type.
+contextGateTests :: TestTree
+contextGateTests =
+  testGroup
+    "context operation gates"
+    [ testCase "permission denial precedes space and actor mismatches" do
+        let context = readOnlyContext
+        underMemoryContext
+          GatePermission
+          GateSpace
+          GateActor
+          context
+          MemoryRecord
+          spaceTwo
+          otherRecordedActor
+          successfulAction
+          @?= Just (Left (GatePermission MemoryRecord)),
+      testCase "space mismatch precedes actor mismatch" do
+        let context = assumeAuthorizedMemoryContext spaceOne testActor
+        underMemoryContext
+          GatePermission
+          GateSpace
+          GateActor
+          context
+          MemoryRecord
+          spaceTwo
+          otherRecordedActor
+          successfulAction
+          @?= Just (Left (GateSpace spaceTwo spaceOne)),
+      testCase "actor mismatch uses the injected constructor" do
+        let context = assumeAuthorizedMemoryContext spaceOne testActor
+        underMemoryContext
+          GatePermission
+          GateSpace
+          GateActor
+          context
+          MemoryRecord
+          spaceOne
+          otherRecordedActor
+          successfulAction
+          @?= Just (Left (GateActor otherRecordedActor (KnownPrincipal (actorPrincipal testActor)))),
+      testCase "a matching context runs the supplied action" do
+        let context = assumeAuthorizedMemoryContext spaceOne testActor
+        underMemoryContext
+          GatePermission
+          GateSpace
+          GateActor
+          context
+          MemoryRecord
+          spaceOne
+          (memoryContextRecordedActor context)
+          successfulAction
+          @?= successfulAction,
+      testCase "the legacy gate refuses another space through the injected constructor" do
+        inLegacyMemorySpaceOnly GateSpace spaceTwo successfulAction
+          @?= Just (Left (GateSpace spaceTwo legacyMemorySpaceId)),
+      testCase "the legacy gate runs an operation in the explicit legacy space" do
+        inLegacyMemorySpaceOnly GateSpace legacyMemorySpaceId successfulAction
+          @?= successfulAction
+    ]
+
+data GateError
+  = GatePermission !MemoryPermission
+  | GateSpace !MemorySpaceId !MemorySpaceId
+  | GateActor !RecordedPrincipal !RecordedPrincipal
+  deriving stock (Eq, Show)
+
+successfulAction :: Maybe (Either GateError Text)
+successfulAction = Just (Right "ran")
+
+readOnlyContext :: MemoryAccessContext
+readOnlyContext =
+  Internal.MemoryAccessContext
+    { Internal.memorySpaceId = spaceOne,
+      Internal.actor = testActor,
+      Internal.grantedPermissions = Set.singleton MemoryRead,
+      Internal.decisionToken = Nothing
+    }
+
+otherRecordedActor :: RecordedPrincipal
+otherRecordedActor = KnownPrincipal (expectRight (mkPrincipalRef "person_01h9xk3v7hf8b9c0d1e2f3g4h6"))
 
 testActor :: MemoryActor
 testActor = MemoryActor (expectRight (mkPrincipalRef "person_01h9xk3v7hf8b9c0d1e2f3g4h5"))

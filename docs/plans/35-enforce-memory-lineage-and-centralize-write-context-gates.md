@@ -36,7 +36,7 @@ This section must always reflect the actual current state of the work.
 
 - [x] Add lineage-target validation to record, supersede, and merge write paths.
 - [x] Add missing, cross-space, idempotent-retry, and happy-path lineage regressions.
-- [ ] Move generic context and legacy-space gates into `Kioku.Api.Access` and migrate both callers.
+- [x] Move generic context and legacy-space gates into `Kioku.Api.Access` and migrate both callers.
 - [ ] Update API documentation and changelog; run API and core suites against PostgreSQL.
 
 

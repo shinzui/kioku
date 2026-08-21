@@ -68,10 +68,11 @@ import Kioku.Api.Access
     MemoryPermission (..),
     MemorySpaceId,
     RecordedPrincipal (..),
+    inLegacyMemorySpaceOnly,
     legacyMemorySpaceId,
-    memoryContextAllows,
     memoryContextRecordedActor,
     memoryContextSpace,
+    underMemoryContext,
   )
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryType, confidenceToText, memoryTypeToText)
@@ -130,17 +131,11 @@ underContext ::
   RecordedPrincipal ->
   f (Either MemoryWriteError a) ->
   f (Either MemoryWriteError a)
-underContext context permission space actor run
-  | not (memoryContextAllows permission context) =
-      pure (Left (MemoryNotPermitted permission))
-  | space /= authorizedSpace =
-      pure (Left (MemorySpaceMismatch space authorizedSpace))
-  | actor /= authorizedActor =
-      pure (Left (MemoryActorMismatch actor authorizedActor))
-  | otherwise = run
-  where
-    authorizedSpace = memoryContextSpace context
-    authorizedActor = memoryContextRecordedActor context
+underContext =
+  underMemoryContext
+    MemoryNotPermitted
+    MemorySpaceMismatch
+    MemoryActorMismatch
 
 -- | Gate a deprecated wrapper on the one space it is allowed to touch.
 --
@@ -151,9 +146,7 @@ inLegacySpaceOnly ::
   MemorySpaceId ->
   f (Either MemoryWriteError a) ->
   f (Either MemoryWriteError a)
-inLegacySpaceOnly space run
-  | space /= legacyMemorySpaceId = pure (Left (MemorySpaceMismatch space legacyMemorySpaceId))
-  | otherwise = run
+inLegacySpaceOnly = inLegacyMemorySpaceOnly MemorySpaceMismatch
 
 -- | Record a new memory in the space the context authorizes.
 recordWithContext ::

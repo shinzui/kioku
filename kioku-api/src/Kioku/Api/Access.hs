@@ -110,6 +110,10 @@ module Kioku.Api.Access
     memoryContextRecordedActor,
     assumeAuthorizedMemoryContext,
     authorizeMemoryAccess,
+
+    -- * Applying an authorized decision
+    underMemoryContext,
+    inLegacyMemorySpaceOnly,
   )
 where
 
@@ -117,6 +121,42 @@ import Data.List.NonEmpty qualified as NonEmpty
 import Data.Set qualified as Set
 import Kioku.Api.Access.Internal
 import Kioku.Prelude
+
+-- | Gate an operation on the permission, space, and actor already captured by a context.
+--
+-- The three error constructors keep this policy independent of any caller's error vocabulary.
+-- Permission is deliberately checked first so an unauthorized caller cannot use later mismatch
+-- errors to inspect the context's space or actor.
+underMemoryContext ::
+  (Applicative f) =>
+  (MemoryPermission -> err) ->
+  (MemorySpaceId -> MemorySpaceId -> err) ->
+  (RecordedPrincipal -> RecordedPrincipal -> err) ->
+  MemoryAccessContext ->
+  MemoryPermission ->
+  MemorySpaceId ->
+  RecordedPrincipal ->
+  f (Either err a) ->
+  f (Either err a)
+underMemoryContext permissionError spaceError actorError context permission space actor run
+  | not (memoryContextAllows permission context) = pure (Left (permissionError permission))
+  | space /= authorizedSpace = pure (Left (spaceError space authorizedSpace))
+  | actor /= authorizedActor = pure (Left (actorError actor authorizedActor))
+  | otherwise = run
+  where
+    authorizedSpace = memoryContextSpace context
+    authorizedActor = memoryContextRecordedActor context
+
+-- | Confine a deprecated compatibility operation to the explicit legacy memory space.
+inLegacyMemorySpaceOnly ::
+  (Applicative f) =>
+  (MemorySpaceId -> MemorySpaceId -> err) ->
+  MemorySpaceId ->
+  f (Either err a) ->
+  f (Either err a)
+inLegacyMemorySpaceOnly spaceError space run
+  | space /= legacyMemorySpaceId = pure (Left (spaceError space legacyMemorySpaceId))
+  | otherwise = run
 
 -- | Run the three gates for one memory space and a set of requested actions, and mint a
 -- 'MemoryAccessContext' only if every one of them passes.
