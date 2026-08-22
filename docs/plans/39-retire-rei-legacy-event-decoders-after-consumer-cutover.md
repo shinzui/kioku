@@ -18,10 +18,12 @@ If durable project context changes, update or create ADRs in docs/adr/ in the sa
 ## Purpose / Big Picture
 
 Kioku's event-stream modules should decode Kioku history, not permanently embed a second
-application's retired wire protocol. Once Rei has completed its one-time migration and removed
-the last parser imports, this change deletes the `agent_memory_*` and `agent_session_*` fallback
-arms while preserving every native Kioku compatibility rule, including pre-partition events and
-`SessionResumed` payloads written before `force` existed.
+application's retired wire protocol. Rei has explicitly abandoned support for its barely-used
+legacy memory and session histories after preserving a verified recovery boundary, and has
+removed the one-time migrator and the last parser imports. This change therefore deletes the
+`agent_memory_*` and `agent_session_*` fallback arms while preserving every native Kioku
+compatibility rule, including pre-partition events and `SessionResumed` payloads written before
+`force` existed.
 
 The result is visible in codec tests: all captured native Kioku bytes still hydrate, a former Rei
 payload now fails through the ordinary native decoder, and no Kioku source or test names Rei's
@@ -40,7 +42,8 @@ This section must always reflect the actual current state of the work.
 - [x] (2026-08-22 13:59Z) Recheck Rei after its migration implementation and confirm that only
   the clone proof is complete; the production proof, migrator removal, and fallback-free handoff
   remain open.
-- [ ] Prove the external Rei migrator is complete and no deployable consumer imports the parsers.
+- [x] (2026-08-22 15:39Z) Reopen the external gate from Rei's verified abandonment evidence,
+  migrator-removal commit, durable support-boundary decision, and a refreshed dependent scan.
 - [ ] Move the two native pre-`force` fixtures out of the Rei-specific test module.
 - [ ] Remove the foreign fallback parsers, Rei fixtures, and test-suite registration.
 - [ ] Record decoder ownership in an ADR and stage the change for the next major release.
@@ -95,6 +98,26 @@ implementation. Provide concise evidence.
   `mori://shinzui/shikigami/repos/shikigami` revision
   `25e317090867ea21bc36226937c8902a720aeac3`. Rei remains the sole blocking consumer.
 
+- 2026-08-22: Rei deliberately replaced the copy-first gate with a support-retirement gate after
+  inventorying the real system database. Commit `96777dcf` records a checked-in, credential-free
+  evidence report for 4 legacy memory events, 243 legacy session events, 10 native Kioku memory
+  events, and 144 native Kioku session events, plus a fully restored PostgreSQL backup whose
+  SHA-256 is `fbf602b623d5a902f37101d617bf496cfc5f78036c1b3e164bc38b2685b92d61`.
+  The backup and all source rows remain intact; support is abandoned without deleting history.
+
+- 2026-08-22: At `mori://shinzui/rei/repos/rei` revision
+  `9928be30bbeccd108fdd88d2da214dcb99bb07de`, commit `9bef6488` has removed
+  `rei-kioku-migrate`, its implementation, tests, proof driver, Cabal wiring, and both public
+  parser imports. Commit `9928be30` records the durable boundary in Rei ADR 024 and revises the
+  related rollout plans. A source scan finds no Kioku parser or migrator reference in deployable
+  Rei code; the remaining `agent_*` names are Rei's own current identifiers, historical fixtures,
+  and documentation rather than calls into Kioku's decoder.
+
+- 2026-08-22: The final pre-edit Mori graph still reports Kikan, Mori, Rei, and Shikigami as
+  dependents. Deployable-code scans at revisions `3e7fcf88` (Kikan), `752296d2` (Mori),
+  `9928be30` (Rei), and `25e31709` (Shikigami) find no imports or calls to the two parser
+  functions and no Rei-to-Kioku migrator. The consumer gate is therefore open.
+
 
 ## Decision Log
 
@@ -119,6 +142,22 @@ Record every decision made while working on the plan.
   payloads observe a failure after the change. That is a public behavioral incompatibility.
   Date: 2026-08-20
 
+- Decision: Accept explicit support abandonment, a verified backup, and consumer-code removal as
+  an alternative to copying every foreign event into native Kioku streams.
+  Rationale: Kioku needs proof that no live consumer will ask it to decode the retired wire
+  protocol; it does not need to dictate whether the consumer copies, deletes, or retains that
+  history. Rei's evidence preserves recovery options while its explicit product decision makes a
+  low-value production copy unnecessary. This supersedes the 2026-08-20 requirement that the
+  real-data cutover itself must complete before decoder retirement.
+  Date: 2026-08-22
+
+- Decision: Treat the consumer's own identifiers and historical fixtures as outside Kioku's
+  import-absence gate.
+  Rationale: `agent_memory_*` and `agent_session_*` remain valid Rei concepts. The relevant gate
+  is the absence of calls to Kioku's foreign fallback and of a migrator that depends on it, not a
+  repository-wide ban on Rei's domain vocabulary.
+  Date: 2026-08-22
+
 
 ## Outcomes & Retrospective
 
@@ -127,18 +166,13 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-The external-gate audit was refreshed on 2026-08-21 without changing any decoder, fixture,
-registration, or release note. Rei still imports the parsers and has not recorded the required
-clone and production proof or migrator-removal commit. Resume at Milestone 1 only after
-`mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`
-records Milestones 3 through 5 complete and supplies the exact Rei revision and checked-in
-cutover evidence it promises.
-
-The 2026-08-22 recheck confirms meaningful Rei progress but does not open the gate: the finite
-migrator and disposable-clone proof now exist, while the real production proof, migrator removal,
-and fallback-free handoff do not. No Kioku decoder, fixture, test registration, ADR, or changelog
-was changed. Resume only after Rei Plan 215 records Milestones 3 through 5 complete at an exact
-revision and the corresponding checked-in production evidence is present.
+The first two external-gate audits correctly stopped without changing a decoder: Rei still
+imported the parsers and had not made a final product decision about its retained history. The
+2026-08-22 completion attempt resumes from a different, explicit boundary. Rei Plan 215 now
+records a verified backup and real-database inventory, the user's decision to retain but stop
+supporting the foreign histories, the exact migrator-removal commit, and a durable ADR. This is
+sufficient consumer evidence even though Plan 215's Kioku and dependency-validation milestones
+remain open: those milestones depend on this plan and would otherwise make the two plans cyclic.
 
 
 ## Context and Orientation
@@ -159,15 +193,17 @@ the two native resume cases must move into `CodecCompatSpec`; the fallback group
 fixture there must also be removed. `kioku-core/test/Main.hs` and
 `kioku-core/kioku-core.cabal` register the Rei module.
 
-Mori identifies the current consumer package as `mori://shinzui/rei/packages/rei-core`. Its
-project-relative `rei-core/kioku-migrate/Rei/KiokuMigrate.hs` still imports both parser functions,
-and project-relative `rei-core/rei-core.cabal` still builds `rei-kioku-migrate`. The related build
-upgrade is complete in
+Mori identifies the former consumer package as `mori://shinzui/rei/packages/rei-core`. Rei commit
+`9bef6488` removed its project-relative migrator implementation and executable stanza, so no
+current component imports either parser function. The related build upgrade is complete in
 `mori://shinzui/rei/plans/203-land-the-released-keiro-0-13-cohort-build-plan`, while the real-data
 cutover in `mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`
-is not yet complete. The dedicated follow-through is
+retains all schema-safety gates but no longer requires copying this unsupported history. The
+dedicated follow-through is
 `mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`;
-it owns the exact production proof, migrator removal, and fallback-free handoff this plan needs.
+Its evidence report is currently addressed as `mori://shinzui/rei` plus the project-relative path
+`docs/dev/testing/rei-kioku-legacy-history-abandonment-20260822.md`, because Mori has no canonical
+artifact kind for testing evidence yet.
 Mori may not resolve those plan artifact URIs until registry URI coverage is refreshed; they
 remain the intended canonical identities.
 
@@ -182,28 +218,27 @@ foreign migration codec.
 
 ## Plan of Work
 
-### Milestone 1 — Satisfy the external cutover gate or stop
+### Milestone 1 — Satisfy the external support-retirement gate or stop
 
 Use Mori, not a remembered checkout path, to refresh all projects and packages that depend on
 Kioku. Inspect the authoritative source of each deployable dependent for imports of
-`parseMemoryEvent`, `parseSessionEvent`, `parseLegacyMemoryEvent`, legacy `agent_*` tags, or a
-Rei-to-Kioku migration executable. For Rei specifically, all of these conditions must be true:
+`parseMemoryEvent`, `parseSessionEvent`, `parseLegacyMemoryEvent`, or a Rei-to-Kioku migration
+executable. For Rei specifically, all of these conditions must be true:
 
-1. `mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`
-   is complete, including replay against the real production history, and Milestones 3 through 5
-   of
-   `mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`
-   record the dedicated migration proof and handoff;
-2. `rei-kioku-migrate` has been run everywhere it is required and is then removed, or rewritten
-   so it owns its legacy decoder without importing the Kioku event-stream parsers;
+1. `mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`
+   records either a completed real-data copy or an explicit support-abandonment decision backed
+   by a verified recovery boundary and credential-free inventory evidence;
+2. `rei-kioku-migrate` is removed, or rewritten so it owns its legacy decoder without importing
+   the Kioku event-stream parsers;
 3. Rei's library, executable, and test components build and pass without relying on the foreign
    fallback; and
 4. `mori registry dependents shinzui/kioku --packages` reveals no other deployable consumer that
    relies on it.
 
 Record exact commands, source revisions, and evidence in this plan's Progress and Discoveries.
-If any condition fails, stop without editing a decoder. Coordinating the Rei-side removal is
-outside this Kioku plan's write scope; refer to it only by canonical `mori://` identity.
+Do not treat Rei's continued use of its own `agent_*` identifiers as a decoder dependency. If any
+condition fails, stop without editing a decoder. Coordinating the Rei-side removal is outside
+this Kioku plan's write scope; refer to it only by canonical `mori://` identity.
 
 ### Milestone 2 — Preserve native compatibility before removing foreign tests
 
@@ -266,13 +301,14 @@ Run the external read-only gate from `/Users/shinzui/Keikaku/bokuno/kioku`:
 mori registry dependents shinzui/kioku --packages
 mori registry show shinzui/rei --full
 rei_source="$(mori path mori://shinzui/rei)"
-rg -n 'parseMemoryEvent|parseSessionEvent|rei-kioku-migrate|agent_memory_|agent_session_' \
+rg -n 'parseMemoryEvent|parseSessionEvent|parseLegacyMemoryEvent|rei-kioku-migrate' \
   "$rei_source" --glob '!dist-newstyle/**' --glob '!result*'
 ```
 
-The first implementation attempt is expected to stop today because the Rei scan still names
-`rei-core/kioku-migrate/Rei/KiokuMigrate.hs`. Resume only after the gate conditions are recorded
-as satisfied.
+The 2026-08-21 and early 2026-08-22 attempts stopped because the Rei scan still named
+`rei-core/kioku-migrate/Rei/KiokuMigrate.hs`. The final 2026-08-22 recheck is expected to find no
+parser or migrator reference after Rei commit `9bef6488`; record the exact revision before
+editing production code.
 
 Before production edits, pin the native cases:
 
@@ -301,9 +337,10 @@ the new ADR may still name the retired behavior and are intentionally outside th
 
 ## Validation and Acceptance
 
-Do not accept the change on Kioku tests alone. The recorded external gate must show the Rei
-production cutover completed and every current dependent free of the parser fallback. With that
-evidence present, every captured native memory and session event still decodes, including
+Do not accept the change on Kioku tests alone. The recorded external gate must show that Rei
+either migrated or explicitly abandoned support with a verified recovery boundary, removed its
+dependency on the fallback, and that every current dependent is free of the parser fallback.
+With that evidence present, every captured native memory and session event still decodes, including
 pre-partition space/principal defaults and both pre-`force` resume forms. Native codec round trips
 remain unchanged.
 
@@ -317,8 +354,9 @@ suite, whole workspace build, and final dependent scan pass.
 
 The inspection and test steps are read-only and repeatable. Decoder deletion mutates no database,
 but releasing it before the consumer gate is irreversible for a consumer that then encounters an
-unmigrated event. That is why the plan stops before editing rather than relying on rollback after
-publication.
+unsupported event. That is why the plan stops before editing rather than relying on rollback after
+publication. Rei's verified backup and retained raw events remain the recovery boundary if its
+support decision is revisited.
 
 If a native fixture fails after removal, restore only the native upcast/defaulting path in the
 domain codec and diagnose it; do not restore the entire Rei fallback as a shortcut. If a new
@@ -339,10 +377,15 @@ Their accepted language narrows to native Kioku JSON. `Codec.decode`, all domain
 the native Aeson instances retain their signatures. Use existing `aeson`, `text`, and `base`
 only; no Haskell dependency changes.
 
-The external hard dependencies are the completed real-data cutover at
-`mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`,
-the completed migration/handoff at
+The external hard dependencies are the verified support decision and consumer-code handoff at
 `mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`,
 and an empty consumer-import scan rooted through Mori. These are evidence dependencies, not
 authorization to edit the Rei repository. The Kioku package containing the behavior must advance
 to the next PVP major line before release.
+
+
+## Revision Notes
+
+- 2026-08-22: Replaced the copy-only consumer gate with a migration-or-explicit-abandonment gate
+  after Rei preserved a verified recovery boundary, documented the support decision, and removed
+  its migrator. Recorded the exact Rei evidence and dependent revisions that open implementation.
