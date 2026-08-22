@@ -37,6 +37,9 @@ This section must always reflect the actual current state of the work.
 
 - [x] Refresh the Mori dependent graph and inspect the external gate at exact source revisions;
   the gate remains closed.
+- [x] (2026-08-22 13:59Z) Recheck Rei after its migration implementation and confirm that only
+  the clone proof is complete; the production proof, migrator removal, and fallback-free handoff
+  remain open.
 - [ ] Prove the external Rei migrator is complete and no deployable consumer imports the parsers.
 - [ ] Move the two native pre-`force` fixtures out of the Rei-specific test module.
 - [ ] Remove the foreign fallback parsers, Rei fixtures, and test-suite registration.
@@ -73,6 +76,24 @@ implementation. Provide concise evidence.
   Kikan has one historical documentation mention of the executable; Mori and Shikigami have no
   matches. The dependent graph therefore identifies no second code consumer, but it cannot
   override Rei's still-open production gate.
+
+- 2026-08-22: Rei's migration implementation has advanced through a fail-closed migrator and a
+  successful production-data clone proof, but not through the real production cutover. At
+  `mori://shinzui/rei/repos/rei` revision `2ade71b8a3907da2ed2d23f766bf2ba49397aaa1`,
+  `mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`
+  checks off Milestones 1 and 2 but leaves Milestones 3 through 6 open. Its Milestone 3 explicitly
+  says the clone proof does not authorize appending the two missing native session events to the
+  real database. All seven milestones in
+  `mori://shinzui/rei/plans/210-cut-the-production-database-over-to-the-0-13-cohort-and-prove-it`
+  remain unchecked. The same revision still declares the `rei-kioku-migrate` executable and its
+  implementation imports and calls both `parseMemoryEvent` and `parseSessionEvent`.
+
+- 2026-08-22: The refreshed dependent scan still finds no second parser consumer. Source scans
+  found no parser, migrator, or legacy-tag references in deployable code at
+  `mori://shinzui/mori/repos/mori` revision `eb386a54bfb63f3fa9007943f9d6f5c55be1e2a5`,
+  `mori://shinzui/kikan` revision `3e7fcf887aa3caff76f1002bfeef07e00eabaf54`, or
+  `mori://shinzui/shikigami/repos/shikigami` revision
+  `25e317090867ea21bc36226937c8902a720aeac3`. Rei remains the sole blocking consumer.
 
 
 ## Decision Log
@@ -112,6 +133,12 @@ clone and production proof or migrator-removal commit. Resume at Milestone 1 onl
 `mori://shinzui/rei/plans/215-complete-the-rei-to-kioku-legacy-migration-and-retire-its-migrator`
 records Milestones 3 through 5 complete and supplies the exact Rei revision and checked-in
 cutover evidence it promises.
+
+The 2026-08-22 recheck confirms meaningful Rei progress but does not open the gate: the finite
+migrator and disposable-clone proof now exist, while the real production proof, migrator removal,
+and fallback-free handoff do not. No Kioku decoder, fixture, test registration, ADR, or changelog
+was changed. Resume only after Rei Plan 215 records Milestones 3 through 5 complete at an exact
+revision and the corresponding checked-in production evidence is present.
 
 
 ## Context and Orientation
