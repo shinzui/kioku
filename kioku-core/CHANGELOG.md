@@ -4,6 +4,11 @@
 
 ### Breaking Changes
 
+- `parseMemoryEvent` and `parseSessionEvent` retain their public types but no longer accept Rei's
+  retired `agent_memory_*`, `agent_session_*`, or `interactive_session_recorded` values. Kioku's
+  native pre-partition events and `SessionResumed` payloads written before `force` remain
+  supported. Consumers that still need a foreign wire format must own its finite migration codec;
+  this narrowing ships on the 0.5.0.0 line, not as a 0.4 patch.
 - Raised the lockstep `keiro` and `keiro-core` bounds to `^>=0.14.0.0`. Keiro's exported outbox
   types gain the terminal rejected outcome and audit fields. `kioku-core` neither exhaustively
   matches nor directly constructs the affected types, so its source and exported API are

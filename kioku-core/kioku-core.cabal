@@ -164,7 +164,6 @@ test-suite kioku-test
     Kioku.RecallSpec
     Kioku.RecallSqlSpec
     Kioku.RecallTargetSpec
-    Kioku.ReiCompatSpec
     Kioku.SchemaSpec
     Kioku.ScopeIdentitySpec
     Kioku.SessionInvariantsSpec

@@ -44,10 +44,14 @@ This section must always reflect the actual current state of the work.
   remain open.
 - [x] (2026-08-22 15:39Z) Reopen the external gate from Rei's verified abandonment evidence,
   migrator-removal commit, durable support-boundary decision, and a refreshed dependent scan.
-- [ ] Move the two native pre-`force` fixtures out of the Rei-specific test module.
-- [ ] Remove the foreign fallback parsers, Rei fixtures, and test-suite registration.
-- [ ] Record decoder ownership in an ADR and stage the change for the next major release.
-- [ ] Run native compatibility, full core, and cross-consumer dependency validation.
+- [x] (2026-08-22 15:50Z) Move the two native pre-`force` fixtures out of the Rei-specific test
+  module and prove all 27 focused codec cases.
+- [x] (2026-08-22 15:50Z) Remove the foreign fallback parsers, Rei fixtures, and test-suite
+  registration; retain one negative native-parser case.
+- [x] (2026-08-22 15:51Z) Record decoder ownership in ADR-11 and both Unreleased changelogs for
+  the next major release.
+- [ ] Run final native compatibility, full core, workspace-build, and exact-revision dependent
+  validation.
 
 
 ## Surprises & Discoveries
@@ -118,6 +122,12 @@ implementation. Provide concise evidence.
   `9928be30` (Rei), and `25e31709` (Shikigami) find no imports or calls to the two parser
   functions and no Rei-to-Kioku migrator. The consumer gate is therefore open.
 
+- 2026-08-22: A direct post-edit `cabal test` shell lost the Nix-provided `libpq` pkg-config
+  database and stopped during dependency resolution, before compilation. Running the same check
+  through `nix develop -c` restored the repository environment: all 27 focused codec cases, all
+  219 core cases, and `cabal build all` pass. This was an invocation-environment failure, not a
+  decoder or test failure.
+
 
 ## Decision Log
 
@@ -174,24 +184,29 @@ supporting the foreign histories, the exact migrator-removal commit, and a durab
 sufficient consumer evidence even though Plan 215's Kioku and dependency-validation milestones
 remain open: those milestones depend on this plan and would otherwise make the two plans cyclic.
 
+Implementation replaced 224 lines of private foreign parser machinery with two native parser
+expressions, while leaving the public signatures and codec wiring unchanged. The two native
+pre-`force` fixtures now live beside the rest of Kioku's captured history, and a negative case
+proves the former consumer-specific payload fails. The focused 27-case compatibility slice, all
+219 core tests, the whole workspace build, the retired-vocabulary scan, and strict validation of
+all 11 ADRs pass. The remaining completion action is to repeat the dependent scan at the exact
+committed implementation revision.
+
 
 ## Context and Orientation
 
 `kioku-core/src/Kioku/Memory/EventStream.hs` and
 `kioku-core/src/Kioku/Session/EventStream.hs` expose `parseMemoryEvent` and `parseSessionEvent`.
-Each first runs the native `FromJSON` parser, then falls back to private functions that recognize
-Rei tags such as `agent_memory_recorded`, `agent_session_started`, and
-`interactive_session_recorded`. Those functions also translate Rei ids, anchors, focus values,
-and un-attributed actors into Kioku's model. This is one-time migration policy embedded in the
-normal event-store codec.
+Both now run the native `FromJSON` parser directly. Before this plan they fell back to private
+functions that recognized Rei tags, translated Rei ids, anchors, focus values, and unattributed
+actors, and thereby embedded one-time consumer migration policy in the normal event-store codec.
 
-`kioku-core/test/Kioku/ReiCompatSpec.hs` holds most foreign fixtures. It also contains two tests
-that are not Rei-specific: native `session_resumed` events written before the `force` field
-existed. `kioku-core/test/Kioku/CodecCompatSpec.hs` separately has a "two-arm fallback" group and
-a Rei fixture in addition to the native golden payloads. Before deleting the Rei test module,
-the two native resume cases must move into `CodecCompatSpec`; the fallback group and foreign
-fixture there must also be removed. `kioku-core/test/Main.hs` and
-`kioku-core/kioku-core.cabal` register the Rei module.
+The deleted `kioku-core/test/Kioku/ReiCompatSpec.hs` held most foreign fixtures as well as two
+native `session_resumed` cases written before the `force` field existed. Those two cases now live
+in `kioku-core/test/Kioku/CodecCompatSpec.hs` beside Kioku's other native golden payloads. That
+module retains one negative case showing the former foreign form fails native decoding;
+`kioku-core/test/Main.hs` and `kioku-core/kioku-core.cabal` no longer register a Rei-specific
+suite.
 
 Mori identifies the former consumer package as `mori://shinzui/rei/packages/rei-core`. Rei commit
 `9bef6488` removed its project-relative migrator implementation and executable stanza, so no
@@ -211,9 +226,10 @@ remain the intended canonical identities.
 consumer-specific translation policy. [Legacy data lands in one explicit
 space](../adr/legacy-data-lands-in-one-explicit-space.md) and [historical attribution is marked,
 never invented](../adr/historical-attribution-is-marked-never-invented.md) continue to govern
-native Kioku replay and are not weakened. The long-lived ownership boundary is new and should be
-recorded in an ADR: Kioku decodes its own history; a consumer owns and retires any one-time
-foreign migration codec.
+native Kioku replay and are not weakened. [Consumers own one-time foreign event migration
+codecs](../adr/consumers-own-one-time-foreign-event-migration-codecs.md) records the long-lived
+boundary: Kioku decodes its own history; a consumer owns and retires any one-time foreign
+migration codec.
 
 
 ## Plan of Work
@@ -318,13 +334,18 @@ rg -n 'pre-force|SessionResumed|legacy Rei|legacy decode failed|ReiCompatSpec' \
 cabal test kioku-core:kioku-test --test-options='-p "pre-force"'
 ```
 
-After removal, format and validate:
+After removal, format only this plan's Haskell files so unrelated work in the shared checkout is
+not rewritten, then validate:
 
 ```bash
-nix fmt
-cabal test kioku-core:kioku-test --test-options='-p "event payloads"'
-cabal test kioku-core:kioku-test
-cabal build all
+nix develop -c fourmolu -i \
+  kioku-core/src/Kioku/Memory/EventStream.hs \
+  kioku-core/src/Kioku/Session/EventStream.hs \
+  kioku-core/test/Kioku/CodecCompatSpec.hs \
+  kioku-core/test/Main.hs
+nix develop -c cabal test kioku-core:kioku-test --test-options='-p "event payloads"'
+nix develop -c cabal test kioku-core:kioku-test
+nix develop -c cabal build all
 rg -n 'parseLegacyMemory|parseLegacySession|agent_memory_|agent_session_|legacy decode failed|ReiCompatSpec' \
   kioku-core/src kioku-core/test kioku-core/kioku-core.cabal
 mori registry dependents shinzui/kioku --packages
@@ -389,3 +410,6 @@ to the next PVP major line before release.
 - 2026-08-22: Replaced the copy-only consumer gate with a migration-or-explicit-abandonment gate
   after Rei preserved a verified recovery boundary, documented the support decision, and removed
   its migrator. Recorded the exact Rei evidence and dependent revisions that open implementation.
+- 2026-08-22: Recorded the native-only implementation, narrow formatting command, ADR-11, and
+  passing focused/full/build evidence. The final exact-revision dependent scan remains before
+  completion.

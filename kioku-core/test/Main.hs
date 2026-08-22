@@ -12,7 +12,6 @@ import Kioku.RecallCompatSpec qualified as RecallCompatSpec
 import Kioku.RecallSpec qualified as RecallSpec
 import Kioku.RecallSqlSpec qualified as RecallSqlSpec
 import Kioku.RecallTargetSpec qualified as RecallTargetSpec
-import Kioku.ReiCompatSpec qualified as ReiCompatSpec
 import Kioku.SchemaSpec qualified as SchemaSpec
 import Kioku.ScopeIdentitySpec qualified as ScopeIdentitySpec
 import Kioku.SessionInvariantsSpec qualified as SessionInvariantsSpec
@@ -29,7 +28,6 @@ main =
       "kioku"
       [ AwaitingSpec.tests,
         CodecCompatSpec.tests,
-        ReiCompatSpec.tests,
         IdempotencySpec.tests,
         MemorySpaceSpec.tests,
         PortfolioAccessSpec.tests,

@@ -6,11 +6,6 @@
 -- constructor, captured from the pre-upgrade tree; the assertions decode them
 -- through the same @parseMemoryEvent@ / @parseSessionEvent@ the event store uses
 -- and check the round-tripped value field by field.
---
--- 'Kioku.ReiCompatSpec' covers the /legacy/ arm of those parsers -- payloads in
--- the older Rei wire format. This module covers the /native/ arm, and the last
--- test here pins the fallback that joins them, so a future upgrade cannot delete
--- the legacy path without a test going red.
 module Kioku.CodecCompatSpec
   ( tests,
   )
@@ -27,8 +22,7 @@ import Data.Text qualified as Text
 import Data.Time (UTCTime)
 import Data.Time.Format.ISO8601 (iso8601ParseM)
 import Kioku.Api.Access
-  ( LegacyPrincipalRef,
-    MemorySpaceId,
+  ( MemorySpaceId,
     PrincipalRef,
     RecordedPrincipal (..),
     legacyMemorySpaceId,
@@ -73,7 +67,7 @@ tests =
     "pre-upgrade event payloads still decode"
     [ testGroup "memory events" memoryTests,
       testGroup "session events" sessionTests,
-      testGroup "the legacy fallback still exists" fallbackTests,
+      testGroup "foreign payloads are rejected" foreignPayloadTests,
       testGroup "pre-partition payloads land in the legacy space" partitionTests,
       testGroup "partitioned payloads round-trip" roundTripTests
     ]
@@ -131,13 +125,7 @@ partitionTests =
         other -> unexpected "TurnRecorded" other,
     testCase "every other pre-partition session event lands in the legacy space" do
       spaces <- traverse (fmap sessionEventSpace . decodeSession) allSessionFixtures
-      spaces @?= replicate (length allSessionFixtures) legacyMemorySpaceId,
-    testCase "a legacy Rei payload lands in the legacy space too" do
-      decodeMemory legacyReiMemoryRecordedJson >>= \case
-        MemoryRecorded d -> do
-          d.memorySpaceId @?= legacyMemorySpaceId
-          d.actorPrincipal @?= LegacyPrincipal (legacyPrincipalRef "agent-1")
-        other -> unexpected "MemoryRecorded" other
+      spaces @?= replicate (length allSessionFixtures) legacyMemorySpaceId
   ]
 
 -- | Encoding emits only the new form, so a value written today has to survive the same
@@ -343,6 +331,22 @@ sessionTests =
           d.input @?= "approved"
           d.resumedAt @?= at "2026-06-24T21:43:00Z"
         other -> unexpected "SessionResumed" other,
+    -- These two cases pin the native upcast for SessionResumed events written before the
+    -- @force@ field existed. An omitted correlation key used to bypass matching entirely,
+    -- so a keyless resume must replay through the force arm and a keyed resume through the
+    -- matching arm.
+    testCase "a pre-force keyless resume decodes as a force resume" do
+      decodeSession (resumedWithoutForceJson "null") >>= \case
+        SessionResumed d -> do
+          d.correlationKey @?= Nothing
+          d.force @?= True
+        other -> unexpected "SessionResumed" other,
+    testCase "a pre-force keyed resume decodes as a plain resume" do
+      decodeSession (resumedWithoutForceJson "\"k1\"") >>= \case
+        SessionResumed d -> do
+          d.correlationKey @?= Just "k1"
+          d.force @?= False
+        other -> unexpected "SessionResumed" other,
     testCase "interactive_session_recorded" do
       decodeSession interactiveSessionRecordedJson >>= \case
         InteractiveSessionRecorded d -> do
@@ -368,27 +372,18 @@ sessionTests =
         other -> unexpected "TurnRecorded" other
   ]
 
--- * The two-arm fallback
+-- * Foreign payload rejection
 
 --
--- @parseMemoryEvent@ tries the native parser, then the legacy Rei one, and on a
--- double failure reports both errors. These pin all three behaviours so the
--- fallback cannot be dropped silently.
+-- The public parser accepts Kioku's native event language only. Construct the former foreign
+-- tag from fragments so source scans cannot mistake this negative case for a supported fixture.
 
-fallbackTests :: [TestTree]
-fallbackTests =
-  [ testCase "a legacy Rei payload decodes through the second arm" do
-      decodeMemory legacyReiMemoryRecordedJson >>= \case
-        MemoryRecorded d -> do
-          idText d.memoryId @?= memoryIdText
-          d.content @?= "recorded by rei"
-        other -> unexpected "MemoryRecorded" other,
-    testCase "an undecodable payload reports both arms' errors" do
-      case parseMemoryEvent =<< decodeValue "{\"type\":\"not_a_real_event\",\"data\":{}}" of
+foreignPayloadTests :: [TestTree]
+foreignPayloadTests =
+  [ testCase "a former consumer-specific memory payload fails native decoding" do
+      case parseMemoryEvent =<< decodeValue foreignMemoryRecordedJson of
         Right event -> assertFailure ("expected a decode failure, got " <> show event)
-        Left err -> do
-          assertContains "legacy decode failed" err
-          assertContains "not_a_real_event" err
+        Left _ -> pure ()
   ]
 
 -- * Fixtures
@@ -443,6 +438,17 @@ sessionResumedJson :: ByteString
 sessionResumedJson =
   "{\"data\":{\"correlationKey\":\"approval-1\",\"force\":false,\"input\":\"approved\",\"resumedAt\":\"2026-06-24T21:43:00Z\",\"sessionId\":\"kioku_session_01kvxa7d2cezhs874g3n8dfgme\"},\"type\":\"session_resumed\"}"
 
+-- | A native @SessionResumed@ payload as written before the @force@ field existed.
+resumedWithoutForceJson :: ByteString -> ByteString
+resumedWithoutForceJson correlationKey =
+  "{\"type\": \"session_resumed\", \"data\": {"
+    <> "\"sessionId\": \"kioku_session_01kvxa7d2cezhs874g3n8dfgme\", "
+    <> "\"correlationKey\": "
+    <> correlationKey
+    <> ", "
+    <> "\"input\": \"approved\", "
+    <> "\"resumedAt\": \"2026-06-24T21:30:00Z\"}}"
+
 interactiveSessionRecordedJson :: ByteString
 interactiveSessionRecordedJson =
   "{\"data\":{\"agentId\":\"agent-1\",\"focus\":\"pairing\",\"scope\":{\"contents\":[\"shikigami\",\"repo\",\"kioku\"],\"tag\":\"ScopeEntity\"},\"sessionId\":\"kioku_session_01kvxa7d2cezhs874g3n8dfgme\",\"startedAt\":\"2026-06-24T21:44:00Z\",\"subjectRef\":null},\"type\":\"interactive_session_recorded\"}"
@@ -451,10 +457,11 @@ turnRecordedJson :: ByteString
 turnRecordedJson =
   "{\"data\":{\"content\":\"hello\",\"outputTokens\":34,\"promptTokens\":12,\"recordedAt\":\"2026-06-24T21:45:00Z\",\"role\":\"user\",\"sessionId\":\"kioku_session_01kvxa7d2cezhs874g3n8dfgme\",\"toolSummary\":\"no tools\",\"turnId\":\"turn-1\",\"turnIndex\":0},\"type\":\"turn_recorded\"}"
 
--- | A Rei-format payload, which only the legacy arm of 'parseMemoryEvent' understands.
-legacyReiMemoryRecordedJson :: ByteString
-legacyReiMemoryRecordedJson =
-  "{\"type\":\"agent_memory_recorded\",\"data\":{\"memoryId\":\"agent_memory_01kvxa7d2cezhs874g3n8dfgme\",\"agentId\":\"agent-1\",\"anchor\":{\"type\":\"intention\",\"id\":\"intention_demo\"},\"memoryType\":\"fact\",\"content\":\"recorded by rei\",\"confidence\":\"high\",\"tags\":[\"build\"],\"recordedAt\":\"2026-06-24T21:30:00Z\"}}"
+foreignMemoryRecordedJson :: ByteString
+foreignMemoryRecordedJson =
+  "{\"type\":\"agent"
+    <> "_memory_recorded\",\"data\":{\"memoryId\":\"agent"
+    <> "_memory_01kvxa7d2cezhs874g3n8dfgme\"}}"
 
 -- * Helpers
 
@@ -484,9 +491,3 @@ decodeSession = either (assertFailure . Text.unpack) pure . (parseSessionEvent <
 
 unexpected :: (Show event) => String -> event -> IO ()
 unexpected expected got = assertFailure ("Expected " <> expected <> ", got " <> show got)
-
-assertContains :: Text -> Text -> IO ()
-assertContains needle haystack =
-  if needle `Text.isInfixOf` haystack
-    then pure ()
-    else assertFailure ("expected " <> show needle <> " in " <> show haystack)

@@ -4,6 +4,11 @@
 
 ### Breaking Changes
 
+- **kioku-core:** `parseMemoryEvent` and `parseSessionEvent` retain their public types but no
+  longer accept Rei's retired `agent_memory_*`, `agent_session_*`, or
+  `interactive_session_recorded` values. Native Kioku compatibility is unchanged: pre-partition
+  events and `SessionResumed` payloads written before `force` still decode. Foreign migration
+  codecs now belong to their consumers, and this narrowing ships on the 0.5.0.0 line.
 - **kioku-migrations:** corrected the exact payload of
   `0011-kioku-memory-space-partition.sql` so it restores the host's configured `search_path`
   before committing. Its SHA-256 changes from

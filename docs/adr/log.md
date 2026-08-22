@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-08-22
+* **Addition**: ADR-11 records that Kioku's normal codecs own native Kioku history only; consumers own finite foreign-event migration codecs and may retire them after evidenced migration or explicit unsupported retention, an empty behavioral-use scan, and a breaking release boundary.
+
 ## 2026-08-21
 * **Update**: ADR-9 distinguishes target semantics from access-path choice: migration 0013 prefers an active-only `(memory_space_id, namespace, content_tsv)` GIN so FTS work does not grow with unrelated tenants, retains the content-only GIN when `btree_gin` is unavailable, and proves all three FTS families against planner-scale two-space fixtures.
 * **Update**: ADR-7 records that Kioku enforces its unchanged eight-attempt timer ceiling inside the fire callback so every terminal path receives memory-space diagnostics and a fire-span outcome; absent or unreadable ownership is reported as `unknown`, while native pre-partition actions still execute in `kioku_legacy`.
