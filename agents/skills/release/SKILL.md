@@ -190,11 +190,50 @@ For each package's `CHANGELOG.md`, add a section for the new version above previ
 - Attribute each entry to the package it actually affects; don't copy the same list into all five.
 - Update the root `CHANGELOG.md` with a combined summary for the release.
 
-Show the user **all** changes — version bumps, dependency bounds, changelog entries — for review before committing.
+#### d. The `kioku-upgrade` blueprint edge
+
+`blueprints/kioku-upgrade/` is the Seihou blueprint that guides a *consuming project* across a Kioku version window. It is a repo artifact, not part of any sdist, but it must be authored **in the release commit** — an edge written later is an edge reconstructed from hindsight, and the whole point of one-edge-per-window is that each edge is written from the evidence of the release it describes.
+
+**First decide whether this release needs an edge at all.** Most do not.
+
+An edge is needed when crossing this version window requires **judgement work in a consumer's own source or operations**. Ask:
+
+- Did anything a consumer calls change what it accepts, returns, or requires?
+- Did a released migration's payload change, so an existing database needs a ledger fixup?
+- Did the composed migration plan's count change, breaking count assertions?
+- Did an upstream cohort member move in a way that reaches consumers through Kioku?
+
+If none of those, **declare no edge**. A gap between edges is deliberate and legal — it means no agent intervention was needed in that interval. `0.4.0.0 -> 0.4.1.0` is exactly such a gap: a bounds-only move onto the Baikai 0.5 cohort with no source change. Do not invent busywork to fill it, and do not add an edge merely because the version is major; a version shared across five packages goes major whenever *any* of them breaks, which is often not the package a given consumer uses.
+
+**If an edge is needed**, add it to `blueprints/kioku-upgrade/blueprint.dhall` and write its prompt at `migrations/<from>-to-<to>.md`, dashed (`0-4-1-0-to-0-5-0-0.md`). Edges are append-only: never edit or delete a published edge, because a consumer's receipts are keyed to it.
+
+**Determine `entails` from the cabal history, not from memory.** An entailed edge is one exact upstream edge, matched on both `from` and `to`, that this release's cohort move implies. Diff the bounds across the window:
+
+```bash
+LAST=$(git tag --list 'v*' --sort=-v:refname | head -1)
+for f in kioku-core/kioku-core.cabal kioku-migrations/kioku-migrations.cabal; do
+  echo "=== $f"; diff \
+    <(git show "$LAST:$f"      | grep -E '^\s*,\s*(keiro|keiki|kiroku|shibuya|baikai|pg-migrate)' | sed 's/  */ /g' | sort -u) \
+    <(cat "$f"                 | grep -E '^\s*,\s*(keiro|keiki|kiroku|shibuya|baikai|pg-migrate)' | sed 's/  */ /g' | sort -u)
+done
+```
+
+`diff` exits 1 when it finds differences — here that is the *useful* outcome, not a failure. Empty output with exit 0 means no upstream member moved and nothing is entailed.
+
+Every upstream library that moved is a candidate. Declare the edge in *that* library's own version space and blueprint (`keiro-upgrade`, `kiroku-upgrade`) rather than copying its guidance here — Seihou runs entailed edges first, expands them recursively, and files the receipt under the entailed blueprint's identity, so a shared edge is crossed exactly once no matter which command the consumer ran.
+
+**Two Kioku-specific hazards the edge must be written for:**
+
+- **A narrowing of accepted input is invisible to the compiler.** `parseMemoryEvent` kept the type `Value -> Either Text Event` across 0.5.0.0 while values that used to decode began returning `Left`. There is no build error to follow, so such an edge must tell the agent what to grep for and must explicitly refuse to treat a passing build as evidence.
+- **A corrected migration payload is not an additive migration.** When a release changes the bytes of an already-released migration, every database that applied the old bytes needs a one-time ledger re-baseline before its next `up` or `verify`. The edge **names the script and stops** — running it is the operator's decision on their own backup and maintenance window, and a Seihou receipt records that a provider interaction returned, not that a database was remediated. Point at the `cohort-migrate` skill for databases holding real data.
+
+Also update `blueprints/kioku-upgrade/files/kioku-cohort-versions.md`: add a row to both bound tables, a row to the composed-plan table if the count moved, and an entry under "Releases requiring a ledger fixup" if this release corrected a payload.
+
+Show the user **all** changes — version bumps, dependency bounds, changelog entries, and any blueprint edge — for review before committing.
 
 ### 5. Verify
 
-Run every gate. All five are mandatory.
+Run every gate. All five are mandatory; the sixth applies only if step 4d added a blueprint edge.
 
 ```bash
 nix fmt              # treefmt: fourmolu, cabal-fmt, nixpkgs-fmt
@@ -203,6 +242,10 @@ cabal test all
 nix flake check
 for p in kioku-api kioku-migrations kioku-core kioku-cli kioku-migrate; do
   echo "=== $p ==="; (cd "$p" && cabal check); done
+
+# only if this release added a blueprint edge (step 4d)
+seihou validate-blueprint blueprints/kioku-upgrade
+dhall format --check blueprints/kioku-upgrade/blueprint.dhall
 ```
 
 **Run `cabal check` here, before the tag** — not in step 7 as this skill previously said. A packaging error found after tagging and pushing leaves a published tag pointing at a tree that cannot be uploaded; found here, it costs nothing. All five should report "No errors or warnings could be found in the package."
@@ -235,13 +278,31 @@ Notes:
 
   As of 0.5.0.0 that is 421 tests: api 125, migrations 24, cli 53, core 219. (0.4.0.0 was 397: api 119, migrations 18, cli 50, core 210.) Treat the count as a floor that drifts upward, not a target — a *lower* number than the last release means a suite silently stopped running, which is worth investigating before publishing.
 
-- **`nix flake check` only sees git-tracked files.** Any newly created file (LICENSE, new CHANGELOG.md) must be `git add`-ed before Nix evaluation will pick it up.
+- **`nix flake check` only sees git-tracked files.** Any newly created file (LICENSE, new CHANGELOG.md, a new blueprint edge) must be `git add`-ed before Nix evaluation will pick it up.
+
+- **`seihou validate-blueprint` does not check the edge you just wrote.** It validates name, version, prompt body, reference-file existence, tags, and tools — it reports nothing about `migrations`, `entails`, or `versionProbe`, so a passing run is *not* evidence your edge parsed. Confirm those separately:
+
+  ```bash
+  echo '(./blueprint.dhall).migrations' | dhall | grep -A2 entails   # from blueprints/kioku-upgrade/
+  echo '(./blueprint.dhall).versionProbe' | dhall
+  ```
+
+  Then run the probe itself against this repo's own build plan and check it prints the new version — it is the one part of the blueprint that can be tested here rather than in a consumer:
+
+  ```bash
+  jq -r '."install-plan"[] | select(."pkg-name"|startswith("kioku-")) | ."pkg-version"' \
+    dist-newstyle/cache/plan.json 2>/dev/null | sort -u | tail -1 | grep .
+  ```
+
+  `seihou` and `dhall` live in the user profile, not this flake's devShell. If neither is available, say so rather than claiming the blueprint was validated.
+
+  Whether the *entailed* blueprint actually declares the edge you named is resolved only at `seihou agent migrate` time, in a project that has both installed — it cannot be checked from this repo. Verify by reading the upstream blueprint's own `blueprint.dhall` and matching `from`/`to` exactly.
 - The flake exposes `checks` / `devShells` / `formatter` only — there is no `packages.default`, so `nix flake check` is the gate, not `nix build`.
 - If any gate fails, **stop** and fix it. Never proceed to publish on a failing gate.
 
 ### 6. Commit, tag, and push
 
-- Stage the modified `.cabal`, `CHANGELOG.md`, and any new `LICENSE` files.
+- Stage the modified `.cabal`, `CHANGELOG.md`, any new `LICENSE` files, and any blueprint edge from step 4d.
 - Create one commit with a Conventional Commits message: `chore(release): <new-version>`. The body should summarize what's in the release and justify the chosen bump level.
 - Create one annotated tag: `git tag -a v<version> -m "Release <version>"`
 - Push: `git push && git push --tags`
@@ -364,6 +425,7 @@ Report the GitHub release URL when done.
 - If any step fails, stop and report the error rather than continuing.
 - If a Hackage *package* upload fails, do **not** continue uploading packages that depend on it. A *docs* upload failure does not block downstream.
 - `kioku-migrations` docs always need a hand-repack (ustar, main-library tree). `kioku-migrate` has no docs at all. Never judge a docs tarball before `cabal haddock` has exited — it is rewritten on completion, and an in-progress read makes the repack look unnecessary.
-- Because all packages share a version, a breaking change anywhere majors everything.
+- Because all packages share a version, a breaking change anywhere majors everything. That is also why a major bump does **not** by itself mean the `kioku-upgrade` blueprint needs an edge — decide from consumer-visible judgement work (step 4d), not from the version digit.
+- A blueprint edge, when one is needed, is authored **in the release commit** and is append-only. Never edit or delete a published edge: consumer receipts are keyed to it.
 - Run `nix fmt` before committing, and `git add` new files before `nix flake check`.
 - The commit and tag are created only after the user approves all changes.
