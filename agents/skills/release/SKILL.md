@@ -233,7 +233,7 @@ Notes:
   cabal test all 2>&1 | grep -E 'Test suite|tests passed|tests failed|FAIL'
   ```
 
-  As of 0.4.0.0 that is 397 tests: api 119, migrations 18, cli 50, core 210.
+  As of 0.5.0.0 that is 421 tests: api 125, migrations 24, cli 53, core 219. (0.4.0.0 was 397: api 119, migrations 18, cli 50, core 210.) Treat the count as a floor that drifts upward, not a target — a *lower* number than the last release means a suite silently stopped running, which is worth investigating before publishing.
 
 - **`nix flake check` only sees git-tracked files.** Any newly created file (LICENSE, new CHANGELOG.md) must be `git add`-ed before Nix evaluation will pick it up.
 - The flake exposes `checks` / `devShells` / `formatter` only — there is no `packages.default`, so `nix flake check` is the gate, not `nix build`.
@@ -259,7 +259,7 @@ cabal sdist all      # writes dist-newstyle/sdist/<pkg>-<ver>.tar.gz
 Sanity-check the `kioku-migrations` tarball before uploading, since that package is worthless without its SQL:
 
 ```bash
-tar tzf dist-newstyle/sdist/kioku-migrations-<ver>.tar.gz | grep -cE 'migrations/.*\.sql'  # expect 12 as of 0.4.0.0
+tar tzf dist-newstyle/sdist/kioku-migrations-<ver>.tar.gz | grep -cE 'migrations/.*\.sql'  # expect 13 as of 0.5.0.0
 tar tzf dist-newstyle/sdist/kioku-migrations-<ver>.tar.gz | grep 'migrations/manifest'
 ```
 
@@ -275,6 +275,8 @@ Then, for each package in order — `kioku-api` → `kioku-migrations` → `kiok
 #### Documentation upload quirks
 
 Two failures are reproducible every release. Both cost a debugging round in 0.4.0.0.
+
+**Let `cabal haddock` finish before inspecting anything it wrote.** The docs tarball is not final until the command exits: for a multi-library package cabal writes the main-library tarball first and then *overwrites* it with the sublibrary tree on completion. Inspecting mid-build shows a clean, colon-free, correctly-rooted archive and hides the quirk below entirely — that happened in 0.5.0.0, where a `tar tzf` run against the in-progress file reported 7 HTML files and zero `test-support` entries, and the upload then 400'd on the colon anyway. If `cabal haddock` was backgrounded or timed out into the background, wait for its exit before drawing any conclusion from the tarball. Note also that cabal buffers its output, so an empty log file is not evidence that nothing is happening — check for a running process instead.
 
 **`kioku-migrate` has no library**, so `cabal haddock` correctly prints *"No documentation was generated as this package does not contain a library."* There is no docs tarball to upload. Expected — not a failure to chase.
 
@@ -303,7 +305,8 @@ Ignore cabal's own tarball, copy that directory to a scratch dir, and repack it 
 ```bash
 tar tzf <tarball> | grep ':' || echo clean      # no colon filenames
 tar tzf <tarball> | grep '/\._' || echo clean   # no AppleDouble entries
-tar tzf <tarball> | grep -c '\.html$'           # expect 7 as of 0.4.0.0
+tar tzf <tarball> | grep -c '\.html$'           # expect 7 as of 0.5.0.0
+tar tzf <tarball> | grep -c 'test-support'      # expect 0 — the sublibrary tree must not be in here
 ```
 
 After all uploads succeed, present a summary:
@@ -360,7 +363,7 @@ Report the GitHub release URL when done.
 - Internal bounds must be swept to the new version at **all 16 bindable sites**, including same-package self-deps. A stale self-dep bound breaks the build. The 17th, `kioku-migrations:test-support` in `kioku-migrations-test`, stays bare — `cabal-fmt` strips that bound every time.
 - If any step fails, stop and report the error rather than continuing.
 - If a Hackage *package* upload fails, do **not** continue uploading packages that depend on it. A *docs* upload failure does not block downstream.
-- `kioku-migrations` docs always need a hand-repack (ustar, main-library tree). `kioku-migrate` has no docs at all.
+- `kioku-migrations` docs always need a hand-repack (ustar, main-library tree). `kioku-migrate` has no docs at all. Never judge a docs tarball before `cabal haddock` has exited — it is rewritten on completion, and an in-progress read makes the repack look unnecessary.
 - Because all packages share a version, a breaking change anywhere majors everything.
 - Run `nix fmt` before committing, and `git add` new files before `nix flake check`.
 - The commit and tag are created only after the user approves all changes.

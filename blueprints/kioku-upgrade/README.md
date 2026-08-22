@@ -96,7 +96,7 @@ Mounted read-only for every edge of this blueprint:
 ## For maintainers
 
 **Add an edge in the same change that cuts a release**, or this blueprint rots.
-The release skill (`.claude/skills/release/SKILL.md`) should carry this as a
+The release skill (`agents/skills/release/SKILL.md`) should carry this as a
 step.
 
 Kioku's five packages share one version, so a breaking change anywhere majors
