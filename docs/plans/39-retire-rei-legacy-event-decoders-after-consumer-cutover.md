@@ -50,8 +50,8 @@ This section must always reflect the actual current state of the work.
   registration; retain one negative native-parser case.
 - [x] (2026-08-22 15:51Z) Record decoder ownership in ADR-11 and both Unreleased changelogs for
   the next major release.
-- [ ] Run final native compatibility, full core, workspace-build, and exact-revision dependent
-  validation.
+- [x] (2026-08-22 15:58Z) Run final native compatibility, all 219 core tests, the workspace
+  build, strict ADR validation, and the exact-revision dependent scan at commit `462c24ba`.
 
 
 ## Surprises & Discoveries
@@ -128,6 +128,12 @@ implementation. Provide concise evidence.
   219 core cases, and `cabal build all` pass. This was an invocation-environment failure, not a
   decoder or test failure.
 
+- 2026-08-22: At the committed implementation revision
+  `462c24ba33436b31ffe910b8458049e592709011`, the final Mori graph still names only Kikan, Mori,
+  Rei, and Shikigami. Source scans at `3e7fcf88`, `752296d2`, `9928be30`, and `25e31709`
+  respectively find no parser or migrator use. Kioku's live source, tests, and Cabal wiring also
+  contain none of the retired parser helpers, tags, namespace, diagnostic branch, or test module.
+
 
 ## Decision Log
 
@@ -190,7 +196,10 @@ pre-`force` fixtures now live beside the rest of Kioku's captured history, and a
 proves the former consumer-specific payload fails. The focused 27-case compatibility slice, all
 219 core tests, the whole workspace build, the retired-vocabulary scan, and strict validation of
 all 11 ADRs pass. The remaining completion action is to repeat the dependent scan at the exact
-committed implementation revision.
+committed implementation revision. That scan passed at `462c24ba`: every dependent is free of
+the behavior, so the plan is complete. Kioku remains on Unreleased package metadata; assigning,
+tagging, pushing, and publishing the lockstep 0.5.0.0 release remain owned by the explicit release
+workflow and were not performed here.
 
 
 ## Context and Orientation
@@ -413,3 +422,6 @@ to the next PVP major line before release.
 - 2026-08-22: Recorded the native-only implementation, narrow formatting command, ADR-11, and
   passing focused/full/build evidence. The final exact-revision dependent scan remains before
   completion.
+- 2026-08-22: Closed the plan after committing the implementation at `462c24ba` and confirming
+  the final Mori graph and every dependent source scan. Left lockstep package versioning and
+  publication to the separately authorized release workflow.
