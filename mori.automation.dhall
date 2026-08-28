@@ -9,11 +9,29 @@ in  Schema.Automation::{
         , signalTypes = [ "BaikaiReleased" ]
         , sourceProjects = [ "shinzui/baikai" ]
         }
+      , Schema.EventSelector.SignalSelector Schema.SignalSelector::{
+        , name = "shikumi-released"
+        ,
+          -- The second leg of the baikai -> shikumi -> kioku cascade, and the
+          -- one that closes it. `scripts/baikai-cohort.sh` already lists
+          -- shikumi and shikumi-trace as cohort members, because only their
+          -- newest patches carry bounds admitting a new baikai -- so the
+          -- upgrade this repo runs has always been waiting on shikumi, while
+          -- nothing woke it when shikumi moved.
+          --
+          -- That gap is observable: on 2026-08-28 baikai 0.6.0.0 woke this
+          -- reaction, the solver found no install plan because shikumi still
+          -- pinned baikai-effectful <0.4, and the run backed out cleanly. It
+          -- was then never re-triggered, because a skip is terminal until the
+          -- next signal. With this leg, shikumi's own release is that signal.
+          signalTypes = [ "ShikumiReleased" ]
+        , sourceProjects = [ "shinzui/shikumi" ]
+        }
       ]
     , reactions =
       [ Schema.Reaction::{
         , name = "upgrade-baikai-cohort"
-        , on = [ "baikai-released" ]
+        , on = [ "baikai-released", "shikumi-released" ]
         , actions =
           [ Schema.ReactionAction.RunCommand Schema.RunCommandAction::{
             , command = "just"
@@ -43,10 +61,13 @@ in  Schema.Automation::{
             -- their bounds to admit it are separate uploads by the same person.
             -- Observed practice is same-day -- baikai 0.5.0.0 and shikumi 0.3.0.2
             -- are both dated 2026-08-05 -- so wait the working day out rather
-            -- than waking into a cohort that cannot yet be solved. If the rest
-            -- of the cohort lands later than this, the run finds no install plan
-            -- and backs out cleanly; the next release, or `just upgrade-baikai`
-            -- by hand, picks it up.
+            -- than waking into a cohort that cannot yet be solved.
+            --
+            -- The wait is now a convenience rather than the only safety net. A
+            -- run that still finds no install plan backs out cleanly, and the
+            -- shikumi-released leg re-arms this reaction when the rest of the
+            -- cohort actually publishes; before that leg existed, a skip here
+            -- was terminal until the next baikai release.
             after = Some "PT12H"
           ,
             -- One baikai release pushes a tag per package, so this reaction is
