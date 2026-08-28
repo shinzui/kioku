@@ -56,12 +56,15 @@ in  Schema.Automation::{
             }
           ]
         ,
-          -- NOT IN EFFECT TODAY, and declared anyway. Only Mori's VCS router
-          -- branches on a reaction's `schedule`: AutomationRouter reads
-          -- `reactionDef ^. #schedule`, while SignalTriggerRouter never looks
-          -- at it. This reaction is signal-triggered, so it runs its actions
-          -- immediately and ignores the delay, the coalesce key, AND the
-          -- idempotency check below.
+          -- NOT IN EFFECT TODAY, and declared anyway. AutomationRouter (VCS
+          -- events) and ProjectAutomationRouter (Project facts) share
+          -- `resolveMatchedReaction`, whose closing branch decides queued vs
+          -- scheduled vs immediate. SignalTriggerRouter reimplements that
+          -- resolution and returns TriggerReaction unconditionally, reading
+          -- neither `queued` nor `schedule`. This reaction is signal-triggered,
+          -- so it runs its actions immediately and ignores the delay, the
+          -- coalesce key, AND the idempotency check below. Raised as
+          -- mori://shinzui/mori/okf/improvement-requests/concepts/IR-22.
           --
           -- Both deliveries on 2026-08-28 demonstrate it: each ran the action
           -- within seconds of arrival, and the second ran it even though
