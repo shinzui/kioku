@@ -55,7 +55,24 @@ in  Schema.Automation::{
               env = [] : List { mapKey : Text, mapValue : Text }
             }
           ]
-        , schedule = Some Schema.Schedule::{
+        ,
+          -- NOT IN EFFECT TODAY, and declared anyway. Only Mori's VCS router
+          -- branches on a reaction's `schedule`: AutomationRouter reads
+          -- `reactionDef ^. #schedule`, while SignalTriggerRouter never looks
+          -- at it. This reaction is signal-triggered, so it runs its actions
+          -- immediately and ignores the delay, the coalesce key, AND the
+          -- idempotency check below.
+          --
+          -- Both deliveries on 2026-08-28 demonstrate it: each ran the action
+          -- within seconds of arrival, and the second ran it even though
+          -- baikai-bump-needed.sh would have skipped for a dirty tree.
+          --
+          -- This is safe only because scripts/upgrade-baikai.sh repeats every
+          -- guard the check makes -- branch, clean tree, real cohort advance --
+          -- and exits 0 when any of them refuses. Do not let the two scripts
+          -- diverge while this is true; the check is documentation of intent,
+          -- not a gate that runs.
+          schedule = Some Schema.Schedule::{
           ,
             -- A baikai release and the shikumi/shikumi-trace patches that widen
             -- their bounds to admit it are separate uploads by the same person.
