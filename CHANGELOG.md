@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **kioku-core:** upgraded to the Baikai 0.6 cohort: `baikai ^>=0.6.0.0`,
+  `baikai-claude ^>=0.6.0.0`, `baikai-effectful ^>=0.4.0.0`, `shikumi
+  ^>=0.3.0.3`, and `shikumi-trace ^>=0.2.0.3`. `toEmbeddingModel` now starts
+  from Baikai's exported `emptyEmbeddingModel`, because Baikai 0.6 hides the
+  evolvable `EmbeddingModel` constructor. The project selects
+  `http-client-tls ^>=0.4.0`, whose removal of a direct `crypton` dependency
+  lets the cohort coexist with Kioku's `crypton ^>=1.1.4` requirement.
+
 ## 0.5.0.0 — 2026-08-22
 
 ### Breaking Changes

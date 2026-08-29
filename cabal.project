@@ -13,6 +13,7 @@ with-compiler: ghc-9.12.4
 -- Kioku does not build, keeping their released cohort explicit so a consumer
 -- cannot revive the former Git-pinned PGMQ stack at an older version.
 constraints:
+  http-client-tls ^>=0.4.0,
   keiki-codec-json ^>=0.9.0.0,
   keiro-pgmq ^>=0.14.0.0,
   pgmq-core ^>=0.5.0.0,
@@ -20,6 +21,18 @@ constraints:
   pgmq-hasql ^>=0.5.0.0,
   pgmq-migration ^>=0.5.0.0,
   shibuya-pgmq-adapter ^>=0.14.0.0
+
+-- Baikai 0.6 constrains http-client-tls to the 0.3 series, whose latest Cabal
+-- revision requires crypton <1.1. http-client-tls 0.4 removes that dependency;
+-- its changelog records only the internal digest-hash implementation swap and
+-- its public manager API is unchanged. Keep Kioku's crypton 1.1 requirement and
+-- admit the replacement in the Baikai packages that name the old series.
+-- mori://snoyberg/http-client/packages/http-client-tls
+allow-newer:
+  baikai:http-client-tls,
+  baikai-claude:http-client-tls,
+  baikai-openai:http-client-tls,
+  claude:http-client-tls
 
 package blake3
   flags: -avx512 -avx2 -sse41 -sse2

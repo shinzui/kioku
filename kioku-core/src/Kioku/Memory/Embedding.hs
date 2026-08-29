@@ -9,7 +9,7 @@ module Kioku.Memory.Embedding
 where
 
 import Baikai.Auth (ApiKeySource (..))
-import Baikai.Embedding (EmbeddingModel (..), embedOne)
+import Baikai.Embedding (EmbeddingModel (..), embedOne, emptyEmbeddingModel)
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Crypto.Hash (Digest, SHA256)
@@ -46,11 +46,11 @@ resolveEmbeddingConfig = do
 
 toEmbeddingModel :: EmbeddingConfig -> EmbeddingModel
 toEmbeddingModel cfg =
-  EmbeddingModel
+  emptyEmbeddingModel
     { modelId = cfg.model,
       baseUrl = cfg.baseUrl,
       dimensions = Just (fromIntegral @Int @Natural cfg.dimensions),
-      apiKey = ApiKeyLiteral cfg.apiKey
+      apiKey = Just (ApiKeyLiteral cfg.apiKey)
     }
 
 embedWithRetry :: EmbeddingModel -> Int -> Text -> IO (Either EmbedError (Vector Double))

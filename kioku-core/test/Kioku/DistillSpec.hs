@@ -5,7 +5,7 @@ module Kioku.DistillSpec
   )
 where
 
-import Baikai (Response, _Response, _TextContent)
+import Baikai (Response, emptyResponse, emptyTextContent)
 import Baikai.Content (AssistantContent (..))
 import Baikai.Embedding (EmbeddingModel)
 import Data.Aeson qualified as Aeson
@@ -1732,10 +1732,10 @@ runFixedLLM resp = interpret \_ -> \case
 
 mkResponse :: Text -> Response
 mkResponse responseText =
-  _Response
+  emptyResponse
     & #message
     . #content
-    .~ Vector.singleton (AssistantText (_TextContent & #text .~ responseText))
+    .~ Vector.singleton (AssistantText (emptyTextContent & #text .~ responseText))
 
 extractResponse :: Text
 extractResponse =
