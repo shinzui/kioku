@@ -50,11 +50,22 @@ touched.
 | From | To | Entails |
 |---|---|---|
 | `0.4.1.0` | `0.5.0.0` | `keiro-upgrade` `0.13.0.0 -> 0.14.0.0` |
+| `0.5.1.0` | `0.5.2.0` | `keiro-upgrade` `0.14.0.0 -> 0.15.0.0` |
 
 Gaps between edges are deliberate and legal: they mean no agent intervention was
 needed in that interval. `0.4.0.0 -> 0.4.1.0` is exactly such a gap — that
 release was a bounds-only move onto the Baikai 0.5 cohort with no source change,
 so a project coming from 0.4.0.0 crosses this edge and nothing else.
+`0.5.0.0 -> 0.5.1.0` is another: the Baikai 0.6 move changed Kioku's internals
+but nothing a consumer names.
+
+Note what the `0.5.1.0 -> 0.5.2.0` edge shows: **a bounds-only Kioku release can
+still need an edge.** Kioku itself requires nothing across that window, but
+taking it drags a project onto Keiro 0.15.0.0, whose `keiro-dsl` record API
+broke. A project depending on both Kioku and `keiro-dsl` would otherwise meet
+that break as an unexplained compile error. The test for declaring an edge is
+not "did Kioku change" but "does taking this release force a project onto an
+upstream change" — which is what `entails` is for.
 
 Edges are append-only — an edge stays correct for as long as the release it
 describes exists, which is why this blueprint does not go stale the way a single
