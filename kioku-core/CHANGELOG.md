@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Moved to the Keiro 0.15 cohort: `keiro ^>=0.15.0.0` and `keiro-core ^>=0.15.0.0`.
+  Keiro 0.15.0.0's only breaking change is in `keiro-dsl`, which this package does not
+  depend on; `keiro` and `keiro-core` are republished at the shared lockstep version with
+  no source change. `keiki`, `kiroku-store`, `shibuya-core`, and `shibuya-kiroku-adapter`
+  keep their existing bounds, because Keiro 0.15.0.0 requires the same versions of them
+  that 0.14.0.0 did. This is a bounds-only change: no source changed and this package's
+  API is unchanged.
+
 ## 0.5.1.0 — 2026-08-29
 
 ### Changed

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Version bump only, to stay on Kioku's shared version while `kioku-core` and
+  `kioku-migrations` move to the Keiro 0.15 cohort. Migration planning, application, and
+  verification are unchanged, and `plan`, `status`, and `verify` still report 55
+  migrations: Kiroku 11, Keiro 31, and Kioku 13.
+
 ## 0.5.1.0 — 2026-08-29
 
 ### Changed

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Version bump only, to stay on Kioku's shared version while `kioku-core` and
+  `kioku-migrations` move to the Keiro 0.15 cohort. This package's source and API are
+  unchanged.
+
 ## 0.5.1.0 — 2026-08-29
 
 ### Changed

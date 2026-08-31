@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Keiro cohort:** moved `keiro`, `keiro-core`, and `keiro-migrations` to `^>=0.15.0.0`, and
+  aligned the forward-looking `keiro-pgmq` constraint with the same lockstep release. Keiro
+  0.15.0.0's only breaking change is in `keiro-dsl`, which Kioku does not depend on; the three
+  packages Kioku consumes are republished at the shared version with no source change. No other
+  cohort member moves — `keiki`, `keiki-codec-json`, `kiroku-store`, `kiroku-store-migrations`,
+  `shibuya-core`, `shibuya-kiroku-adapter`, and `pg-migrate` keep their existing bounds — and the
+  composed migration plan stays at 55 migrations (Kiroku 11, Keiro 31, Kioku 13). This is a
+  bounds-only change: no Kioku source changed and nothing any package exports moved.
+
 ## 0.5.1.0 — 2026-08-29
 
 ### Changed

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Version bump only, to stay on Kioku's shared version while `kioku-core` moves to the
+  Keiro 0.15 cohort. This package's commands are unchanged.
+
 ## 0.5.1.0 — 2026-08-29
 
 ### Changed

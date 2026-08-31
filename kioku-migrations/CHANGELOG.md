@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Moved to `keiro-migrations ^>=0.15.0.0`. Keiro republishes `keiro-migrations` at the
+  shared lockstep version with no change to its migrations, so the composed plan is
+  unchanged at 55 migrations: Kiroku 11, Keiro 31, and Kioku 13. `kiroku-store-migrations`
+  and `pg-migrate` keep their existing bounds. No migration payload changed, and no ledger
+  fixup is required.
+
 ## 0.5.1.0 — 2026-08-29
 
 ### Changed
