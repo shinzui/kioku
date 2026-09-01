@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            kioku-cli
-version:         0.5.1.0
+version:         0.5.2.0
 synopsis:        kioku command-line interface
 description:
   Command-line entry point for kioku demos and operational commands.
@@ -76,8 +76,8 @@ library
     , containers            >=0.6      && <0.8
     , directory             >=1.3      && <1.4
     , effectful             >=2.5      && <2.7
-    , kioku-api             ^>=0.5.1.0
-    , kioku-core            ^>=0.5.1.0
+    , kioku-api             ^>=0.5.2.0
+    , kioku-core            ^>=0.5.2.0
     , kiroku-store          ^>=0.8.0.0
     , optparse-applicative  >=0.18     && <0.20
     , text                  >=2.1      && <2.2
@@ -90,7 +90,7 @@ executable kioku
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , base       >=4.21     && <5
-    , kioku-cli  ^>=0.5.1.0
+    , kioku-cli  ^>=0.5.2.0
 
 test-suite kioku-cli-test
   import:             warnings, shared
@@ -110,10 +110,10 @@ test-suite kioku-cli-test
   build-depends:
     , base                           >=4.21     && <5
     , effectful                      >=2.5      && <2.7
-    , kioku-api                      ^>=0.5.1.0
-    , kioku-cli                      ^>=0.5.1.0
-    , kioku-core                     ^>=0.5.1.0
-    , kioku-migrations:test-support  ^>=0.5.1.0
+    , kioku-api                      ^>=0.5.2.0
+    , kioku-cli                      ^>=0.5.2.0
+    , kioku-core                     ^>=0.5.2.0
+    , kioku-migrations:test-support  ^>=0.5.2.0
     , kiroku-store                   ^>=0.8.0.0
     , optparse-applicative           >=0.18
     , process                        >=1.6      && <1.7

@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            kioku-api
-version:         0.5.1.0
+version:         0.5.2.0
 synopsis:        Reusable agent memory wire types
 description:
   Wire contract for kioku: custom prelude, TypeID identifiers, memory
@@ -78,7 +78,7 @@ test-suite kioku-api-test
     , base         >=4.21     && <5
     , bytestring   >=0.11     && <0.13
     , containers   >=0.6      && <0.8
-    , kioku-api    ^>=0.5.1.0
+    , kioku-api    ^>=0.5.2.0
     , tasty        >=1.5      && <1.6
     , tasty-hunit  >=0.10     && <0.11
     , text         >=2.1      && <2.2
