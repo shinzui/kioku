@@ -2,17 +2,24 @@
 type: Bug Report
 title: Distillation hardcodes the Anthropic API in interactive-only hosts
 description: >-
-  Kioku's default distillation runtime unconditionally selects the Anthropic API,
+  Kioku's former default distillation runtime unconditionally selected the Anthropic API,
   bypassing the embedding host's interactive-only policy and repeatedly failing without an API key.
 generated:
   by: process:codex
-  at: "2026-09-08T00:11:53Z"
+  at: "2026-09-08T14:25:26Z"
 bugId: BUG-2
-status: reported
+status: fixed
 severity: unusable
 origin: mori://shinzui/rei
 affects: mori://shinzui/kioku/packages/kioku-core
 affectedVersion: unknown
+fixedVersion: unreleased
+resolution: >-
+  Fixed in source by explicit host-owned Baikai feature configuration, disabled defaults,
+  checked interactive results, and durable deferred-work recovery through released Keiro
+  0.16.0.0 APIs. Kioku and Rei regression evidence verifies background deferral and authorized
+  foreground completion without implicit API or batch fallback. The reporting host source
+  is updated; package release and deployed-worker adoption have not been performed.
 environment: >-
   Global Rei launchd worker on macOS, observed 2026-09-07 PDT. The operator requires
   interactive execution only and intentionally supplies no ANTHROPIC_API_KEY.
@@ -30,6 +37,23 @@ reproduction:
   - Use the default newDistillRuntime constructor, as Rei's timer dispatcher does.
   - Make an eligible L1 extraction or L2 scene timer due and allow the host worker to dispatch it.
   - Observe the missing ANTHROPIC_API_KEY ProviderFailure and repeated timer retries instead of interactive execution.
+reviews:
+  - kind: model
+    reviewer: codex
+    reviewed_at: "2026-09-08T14:25:26Z"
+    document_timestamp: "2026-09-08T14:25:26Z"
+    scope: content-and-metadata
+    outcome: approved
+    provider: openai
+    model: unspecified
+    effort: unspecified
+    context: >-
+      Implementation-author review against Kioku commits 4da73b0 and 6862915,
+      released Keiro 0.16 APIs and tags, actual core/CLI/migration logs, and the
+      corrected 40-test Rei host run. Verified that fixedVersion is unreleased,
+      the earlier malformed host fixture is not used as acceptance evidence,
+      and no live deployment or production timer replay is claimed.
+
 ---
 
 # Distillation hardcodes the Anthropic API in interactive-only hosts
@@ -37,7 +61,7 @@ reproduction:
 ## Evidence and cause
 
 In [Runtime.hs](../../kioku-core/src/Kioku/Distill/Runtime.hs), `newDistillRuntime`
-unconditionally calls `ClaudeApi.register`, builds `defaultLLMConfig globalProviderRegistry`,
+previously unconditionally called `ClaudeApi.register`, builds `defaultLLMConfig globalProviderRegistry`,
 and selects `Models.anthropic_claude_haiku_4_5`. It accepts no host provider or transport policy.
 The same runtime supplies extraction, consolidation, scene generation, and persona generation.
 
@@ -67,10 +91,10 @@ This report does not claim that the deployed worker uses that exact revision.
 ## Requirement and documentation discrepancy
 
 [Distillation](../user/distillation.md) and [Configuration](../user/configuration.md)
-currently document the Anthropic API requirement. The implementation therefore follows its
-current guide, but violates the reporting host operator's explicit requirement: use only
-interactive execution, never direct API execution. This is filed as the requested integration
-bug with status `reported`; it has not been reproduced independently in Kioku's test suite.
+documented the Anthropic API requirement at the time of the report. That implementation followed the
+guide of its time but violated the reporting host operator's explicit requirement: use only
+interactive execution, never direct API execution. This was filed as the requested integration
+bug with status `reported`; its missing policy boundary is now covered by Kioku and host regressions.
 There is no evidence of a previously working interactive default.
 
 Adding an API key is not an acceptable workaround: it enables the prohibited execution path.
@@ -94,3 +118,29 @@ interactive-only policy. The implementation must make the supported interaction 
 Keep any separately supported API mode explicitly selected. Do not address this report by
 provisioning ANTHROPIC_API_KEY. The unrelated action-projection/database errors found during
 the same Rei health investigation are outside this report.
+
+
+## Fix and acceptance (2026-09-08)
+
+[Plan 41](../plans/41-configure-all-kioku-ai-features-through-baikai-and-honor-host-execution-policy.md)
+records the implementation, dependency verification, and exact validation commands. Kioku
+commits `4da73b0` and `6862915` replace the implicit model/provider with explicit feature
+configuration and add authorized listing/resume of the original parked timer. All 235 core
+tests in the full adoption run passed; all 20 timer tests passed after the final recovery
+additions, alongside 58 CLI tests, 24 migration tests, and 125 API tests. Tests exercise a
+real-runtime interactive result-file fixture, concurrent resume exclusion, unavailable and
+denied preflights, cancellation cleanup, expired-claim recovery, and stale-token refusal.
+The earlier real Claude terminal smoke produced a validated preference atom without API or
+database credentials.
+
+The reporting host `mori://shinzui/rei` passed all 40 selected durable-timer tests using
+released Keiro 0.16 and a temporary local-Kioku validation overlay. Its corrected fixture
+checks the actual deferred reason, authorized listing, and foreground completion of the
+original valid scene timer once. The initial host test's malformed payload and dead-state-only
+assertion were insufficient evidence; that fixture is replaced, not relied upon for closure.
+
+`fixed` here means the source fix and required regression acceptance are complete. No new
+Kioku package has been published, no live worker has been redeployed, and no production timer
+has been replayed. The consumer's released-package index and deployment inputs need updating
+when adopting the forthcoming Kioku release; this report makes no claim that the observed
+launchd process is already repaired.

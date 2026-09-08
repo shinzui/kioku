@@ -1,6 +1,10 @@
 # Bundle Update Log
 
 ## 2026-09-08
+* **Fix**: BUG-2 is fixed in source by explicit host-owned AI policy and Keiro 0.16 deferred
+recovery. Records core, CLI, migration, and corrected Rei host acceptance plus the prior real
+interactive smoke. Package release and live-worker adoption remain separate; no production
+replay or deployment is claimed.
 * **Addition**: BUG-2 reports that the default distillation runtime hardcodes the Anthropic API in an interactive-only embedding host, causing missing-key failures and repeated retries. Records the operator policy, current documentation discrepancy, and required regression evidence.
 
 ## 2026-08-21

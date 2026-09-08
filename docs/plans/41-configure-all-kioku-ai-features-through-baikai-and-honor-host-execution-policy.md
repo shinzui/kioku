@@ -32,13 +32,21 @@ The scope includes extraction, consolidation, scene generation, persona generati
 - [x] (2026-09-08) Added typed deferred/permanent/transient timer outcomes and durable parking regression: repeated worker runs retain dead state, stable reason, and one claim.
 - [x] (2026-09-08) Milestone 4: implemented authorized deferred listing and renewable, token-checked resume using released Keiro 0.16.0.0; all 20 timer tests pass, including concurrent interactive execution, cancellation, expired-lease recovery, and ordinary-dead-letter refusal.
 - [x] (2026-09-08) Updated the user guides, library constructor reference, and ADR-12 for the new contract.
-- [x] (2026-09-08) Validated and committed the separate reporting-host integration as `b7081e39` in `mori://shinzui/rei`; its 40-test durable timer suite passed, including background interactive deferral.
-- [ ] Final acceptance: implement/test authorized deferred listing and atomic resume after the Keiro release prerequisite, then prove foreground host resume and close BUG-2. No deployment or live timer replay was performed.
+- [x] (2026-09-08) Validated and committed the separate reporting-host integration as `b7081e39` in `mori://shinzui/rei`; its 40-test durable timer suite passed. The initial parking assertion was subsequently found insufficient; see Surprises & Discoveries.
+- [x] (2026-09-08) Final acceptance: authorized listing/resume, corrected Rei foreground recovery, real interactive smoke, and documentation/ADR distillation are complete. BUG-2 is fixed in source and unreleased; no deployment or live timer replay was performed.
 
 - [x] (2026-09-08) Verified Keiro 0.16.0.0 on Hackage and upstream package tags (`2da45585b901271d4ac19af4acf3de790c394540`); IR-35/IR-36 APIs are now released.
-- [ ] (2026-09-08) Adopt released timer inspection and leased resume, finish CLI/host integration, and validate remaining acceptance.
+- [x] (2026-09-08) Adopted released inspection and leased resume, finished CLI/host integration, and passed the remaining acceptance checks. Rei adapter commit: `8446ca18` in `mori://shinzui/rei`.
 
 ## Surprises & Discoveries
+
+Rechecking the reporting-host fixture revealed that its original timer used a malformed
+payload, and asserted only dead state/attempt count. It therefore demonstrated permanent
+rejection rather than interactive deferral, despite the test name. The replacement uses a
+valid scene payload, asserts the stored deferred-reason prefix, lists authorized work, and
+resumes the original timer in an isolated workspace. Treat the earlier 40-test result as a
+passing suite, not proof of the claimed host deferral; final host acceptance uses this corrected
+fixture.
 
 The first real terminal prototype returned a result file with an invalid envelope. Kioku rejected it with `AIInteractiveFailed Extraction "missing, invalid, or mismatched result envelope"`. The signature's system-level output guide competed with the envelope instructions. Keeping the signature instructions/schema in the manifest and making the system prompt explicitly scope them to `result` resolved this. A second run returned a checked preference atom and exit status zero.
 
@@ -66,7 +74,7 @@ Decision (2026-09-08): Include the reporting host integration as the final miles
 
 ## Outcomes & Retrospective
 
-Configuration and execution policy are implemented. Deferred recovery is also implemented against Keiro 0.16; final reporting-host validation is in progress. The earlier full Nix-shell run passed 229 core, 54 CLI, 125 API, and 24 migration tests, with no skipped pgvector cases. Afterward, the added embedding-model refusal regression passed in the 12-test embedding selection; final routing regression evidence is recorded below. `cabal build all` passed. A real Baikai/Claude interactive extraction passed using only synthetic evidence, with no database connection. The release prerequisite is resolved. The updated core passed 235 tests; after final recovery and authorization additions, all 20 timer tests passed. Initial migration failures were expected-count changes from Keiro migration 0032 and are corrected; all 24 migration tests passed on rerun.
+Configuration and execution policy are implemented. Deferred recovery is also implemented against Keiro 0.16 and final reporting-host validation passed. All five milestones are complete; publishing the Kioku packages and updating the deployed host are separate release work. The earlier full Nix-shell run passed 229 core, 54 CLI, 125 API, and 24 migration tests, with no skipped pgvector cases. Afterward, the added embedding-model refusal regression passed in the 12-test embedding selection; final routing regression evidence is recorded below. `cabal build all` passed. A real Baikai/Claude interactive extraction passed using only synthetic evidence, with no database connection. The release prerequisite is resolved. The updated core passed 235 tests; after final recovery and authorization additions, all 20 timer tests passed. Initial migration failures were expected-count changes from Keiro migration 0032 and are corrected; all 24 migration tests passed on rerun.
 
 The successful interactive smoke command, run from the repository root in a PTY, was:
 
@@ -224,11 +232,11 @@ Revision (2026-09-08): Recorded implementation, released dependency verification
 
 Validation (2026-09-08): `nix develop -c cabal test all --test-show-details=direct` passed 432 tests across four suites (229 core + 54 CLI + 125 API + 24 migrations), with no `[skipped]` vector cases. The plain-shell run had exercised ephemeral PostgreSQL but lacked pgvector; the Nix-shell rerun supplied the extension. `nix develop -c cabal test kioku-core:kioku-test --test-show-details=direct --test-options='-p /Embedding/'` then passed all 12 selected tests, including the added model-mismatch/no-provider-call regression. Formatting and `git diff --check` passed.
 
-Host validation (2026-09-08): in `mori://shinzui/rei`, copy its `cabal.project` to a temporary `.plan41-validation.project` and append a `packages:` stanza containing the local paths returned by `mori path` for `mori://shinzui/kioku/packages/kioku-api`, `mori://shinzui/kioku/packages/kioku-core`, and `mori://shinzui/kioku/packages/kioku-migrations`. Run `nix develop -c cabal test rei-core:rei-core-test --project-file=.plan41-validation.project --test-options='-p /durable/'`. All 40 tests passed, including `interactive-only Kioku timers park without provider credentials`. The temporary project was removed; the committed project retains released-package resolution and requires a new Kioku release before building these source changes without the validation overlay.
+Host validation (2026-09-08): in `mori://shinzui/rei`, copy its `cabal.project` to a temporary `.plan41-validation.project` and append a `packages:` stanza containing the local paths returned by `mori path` for `mori://shinzui/kioku/packages/kioku-api`, `mori://shinzui/kioku/packages/kioku-core`, and `mori://shinzui/kioku/packages/kioku-migrations`. Run `nix develop -c cabal test rei-core:rei-core-test --project-file=.plan41-validation.project --test-options='-p /durable/'`. All 40 tests passed, including the test named `interactive-only Kioku timers park without provider credentials`; its original assertion was insufficient, as documented in Surprises & Discoveries. The temporary project was removed; the committed project retains released-package resolution and requires a new Kioku release before building these source changes without the validation overlay.
 
 Final routing validation (2026-09-08): `nix develop -c cabal test kioku-core:kioku-test --test-show-details=direct --test-options='-p /AI/'` passed all 10 tests, including the added per-feature batch override with separate registries, selected model/options, all interactive signatures, and adversarial result files. Core now contains 231 tests after these two final regression additions; the full-suite count above is the actual earlier full run, not a claim that all 231 were rerun together.
 
-The formerly blocked recovery implementation now uses released Keiro 0.16.0.0. `Kioku.Distill.Timer.Deferred`, CLI listing/resume, authorization/refusal/concurrency/recovery tests, and Rei foreground entry points are implemented. Final reporting-host validation remains before closing the plan and BUG-2. All independent configuration, interactive handoff, embedding policy, background parking, host-source integration, and documentation work is included in this implementation. The Rei integration is committed as `b7081e39` in `mori://shinzui/rei`.
+The formerly blocked recovery implementation now uses released Keiro 0.16.0.0. `Kioku.Distill.Timer.Deferred`, CLI listing/resume, authorization/refusal/concurrency/recovery tests, and Rei foreground entry points are implemented. Final reporting-host validation passed and BUG-2 is fixed in source. All independent configuration, interactive handoff, embedding policy, background parking, host-source integration, and documentation work is included in this implementation. The Rei integration is committed as `b7081e39` in `mori://shinzui/rei`.
 
 Final embedding validation (2026-09-08): reran the 12 embedding tests successfully after adding a backfill-wide stored-model compatibility preflight, including the case where there are no missing vectors to backfill. This prevents a changed configured model from silently accepting an existing incompatible vector set.
 
@@ -263,3 +271,25 @@ interactive result-file fixture with competing callers, cancellation cleanup, ex
 recovery, and stale-token completion refusal. Core now has 237 tests; the earlier full run
 covered 235 before the final two recovery additions. These are ephemeral database fixtures,
 not live timers or API calls.
+
+Build validation (2026-09-08): `cabal build all` passed against the released Keiro 0.16.0.0 packages. Implementation and Kioku regression evidence are committed as `6862915`; reporting-host validation subsequently passed, completing acceptance.
+
+
+Final host acceptance and closure (2026-09-08): in `mori://shinzui/rei`, the temporary
+`.plan41-validation.project` described above additionally sets `index-state: HEAD` to admit
+the verified Keiro 0.16 cohort and the host's current declared dependencies. The first rebuild
+found the fixture's missing `temporary` test dependency; Hackage and upstream `v1.3` verified
+version 1.3 before adding its bound. The corrected fixture uses `withKiokuTestStore`, an
+isolated temporary workspace, a valid scene payload, and real validated background/foreground
+AI runtimes. It asserts the actual deferred reason, authorized listing, original-timer
+completion, and repeated-resume refusal. Rerunning the documented durable selection passed
+all 40 tests. The host source and its evidence are committed as `8446ca18`; the temporary
+project was removed. Its normal released-package index and Nix deployment inputs still need
+updating when adopting the forthcoming Kioku release; this source validation is not a claim
+that the published consumer dependency set or live worker was updated.
+
+Plan 41 is complete. BUG-2 is fixed with `fixedVersion: unreleased`, and the corrected evidence
+explicitly distinguishes tested source behavior from an unverified deployed process. ADR-12
+now records leased ownership, bounded attempts, authorization-first recovery, and the limit
+of claim fencing: existing idempotent writes remain necessary across crashes. The verified
+Keiro release satisfies IR-35/IR-36; their status is reconciled with downstream acceptance.
