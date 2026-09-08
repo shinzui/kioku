@@ -17,6 +17,7 @@ module Kioku.Distill.Timer.Outcome
     fireRetryDelay,
     unknownTimerRetryDelay,
     timerMarkerEventId,
+    executionFireOutcome,
   )
 where
 
@@ -25,6 +26,7 @@ import Data.Text qualified as Text
 import Data.Time (NominalDiffTime)
 import Effectful (Eff)
 import Keiro.Timer (TimerId (..), TimerRow (..))
+import Kioku.AI.Config
 import Kioku.Api.Access
   ( MemoryContextProvider (..),
     MemoryPermission (MemoryDistill),
@@ -37,6 +39,7 @@ import Kioku.Api.Scope (MemoryScope)
 import Kioku.Partition (parsePartitionSpace)
 import Kioku.Prelude
 import Kiroku.Store.Types (EventId (..))
+import Shikumi.Error (isTransient)
 
 -- | Decode the partition and scope shared by L2 and L3 timer payloads.
 --
@@ -56,9 +59,10 @@ firePartitionedDistillTimer ::
   String ->
   MemoryContextProvider (Eff es) ->
   TimerRow ->
+  (err -> Maybe AIExecutionError) ->
   (MemorySpaceId -> MemoryScope -> Eff es (Either err result)) ->
   Eff es FireOutcome
-firePartitionedDistillTimer expectedProcessName payloadLabel contextProvider row regenerate
+firePartitionedDistillTimer expectedProcessName payloadLabel contextProvider row executionError regenerate
   | row.processManagerName /= expectedProcessName =
       pure FireNotMine
   | otherwise =
@@ -93,7 +97,7 @@ firePartitionedDistillTimer expectedProcessName payloadLabel contextProvider row
                   result <- regenerate (memoryContextSpace context) scope
                   pure case result of
                     Right _ -> FireCompleted (timerMarkerEventId row.timerId)
-                    Left err -> FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))
+                    Left err -> maybe (FireRetryLater (fireRetryDelay row.attempts) (Text.pack (show err))) (executionFireOutcome row.attempts) (executionError err)
   where
     label = Text.pack payloadLabel
 
@@ -108,9 +112,16 @@ data FireOutcome
   | -- | This can never succeed (a corrupt payload, an unparseable correlation
     -- id). Dead-letter it with this reason instead of faking success.
     FireFailedPermanently !Text
+  | FireDeferred !Text
   | -- | This timer's process manager is not mine; I did not touch the row.
     FireNotMine
   deriving stock (Generic, Eq, Show)
+
+executionFireOutcome :: Int -> AIExecutionError -> FireOutcome
+executionFireOutcome attempts = \case
+  InteractiveUnavailable feature -> FireDeferred ("kioku:deferred:interactive-unavailable feature=" <> featureName feature)
+  AIProgramFailed err | isTransient err -> FireRetryLater (fireRetryDelay attempts) (Text.pack (show err))
+  err -> FireFailedPermanently (Text.pack (show err))
 
 -- | Backoff for a transient fire failure, by post-claim attempt count:
 -- 30s, 60s, 120s, … doubling, capped at 900s.

@@ -1,7 +1,12 @@
 {-# LANGUAGE DataKinds #-}
 
 module Kioku.Distill.Runtime
-  ( DistillRuntime (..),
+  ( DistillRuntime,
+    TestRunners (..),
+    testDistillRuntime,
+    withTestRunners,
+    withDistillWorkspace,
+    distillAvailability,
     RuntimeSmokeInput (..),
     RuntimeSmokeOutput (..),
     distillWorkspaceRoot,
@@ -15,47 +20,51 @@ module Kioku.Distill.Runtime
   )
 where
 
-import Baikai.Model (Model)
-import Baikai.Models.Generated qualified as Models
-import Baikai.Provider.Claude.Api qualified as ClaudeApi
-import Baikai.Provider.Registry (globalProviderRegistry)
-import Effectful (runEff)
-import Effectful.Concurrent (runConcurrent)
-import Effectful.Error.Static (runErrorNoCallStack)
-import Kioku.Distill.Consolidate (ConsolidateInput, ConsolidationDecision, consolidateProgram)
-import Kioku.Distill.Extract (ExtractInput, ExtractOutput, extractProgram)
-import Kioku.Distill.Persona (PersonaInput, PersonaOutput, personaProgram)
-import Kioku.Distill.Scene (SceneInput, SceneOutput, sceneProgram)
+import Kioku.AI.Config
+import Kioku.AI.Interactive
+import Kioku.AI.Runtime
+import Kioku.Distill.Consolidate (ConsolidateInput, ConsolidationDecision, consolidateProgram, consolidateSignature)
+import Kioku.Distill.Extract (ExtractInput, ExtractOutput, extractProgram, extractSignature)
+import Kioku.Distill.Persona (PersonaInput, PersonaOutput, personaProgram, personaSignature)
+import Kioku.Distill.Scene (SceneInput, SceneOutput, sceneProgram, sceneSignature)
 import Kioku.Prelude
 import Shikumi.Adapter (ToPrompt)
 import Shikumi.Error (ShikumiError)
-import Shikumi.LLM (LLMConfig, defaultLLMConfig, runLLMResilient)
 import Shikumi.Module (predict)
-import Shikumi.Program (Program, runProgram)
-import Shikumi.Routing (routeLLM, runRouting)
+import Shikumi.Program (Program)
 import Shikumi.Schema (FromModel, ToSchema, Validatable)
 import Shikumi.Schema.Types (Field)
-import Shikumi.Signature (mkSignature)
+import Shikumi.Signature (Signature, mkSignature)
 import System.Directory (getCurrentDirectory)
 
-data DistillRuntime = DistillRuntime
-  { config :: !LLMConfig,
-    defaultModel :: !Model,
-    -- | Where the plaintext scene and persona mirrors are written and removed.
-    -- 'Nothing' means the process's working directory, which is what the CLI
-    -- wants: an agent's workspace is wherever it was invoked. Tests pin it to a
-    -- temp directory instead, because tasty runs cases concurrently and a
-    -- process-wide @chdir@ would race between them.
-    workspaceRoot :: !(Maybe FilePath),
-    runExtract :: !(ExtractInput -> IO (Either ShikumiError ExtractOutput)),
-    runConsolidate :: !(ConsolidateInput -> IO (Either ShikumiError ConsolidationDecision)),
-    runScene :: !(SceneInput -> IO (Either ShikumiError SceneOutput)),
-    runPersona :: !(PersonaInput -> IO (Either ShikumiError PersonaOutput))
+data DistillRuntime = DistillRuntime AIRuntime (Maybe FilePath) (Maybe TestRunners)
+
+-- | Explicit controlled-runner seam for tests. Production construction accepts
+-- only a validated AIRuntime; its captured settings cannot be record-updated.
+data TestRunners = TestRunners
+  { runExtract :: ExtractInput -> IO (Either ShikumiError ExtractOutput),
+    runConsolidate :: ConsolidateInput -> IO (Either ShikumiError ConsolidationDecision),
+    runScene :: SceneInput -> IO (Either ShikumiError SceneOutput),
+    runPersona :: PersonaInput -> IO (Either ShikumiError PersonaOutput)
   }
 
+testDistillRuntime :: IO DistillRuntime
+testDistillRuntime = pure (DistillRuntime disabledAIRuntime Nothing (Just emptyTestRunners))
+
+emptyTestRunners :: TestRunners
+emptyTestRunners = TestRunners (const missing) (const missing) (const missing) (const missing)
+  where
+    missing = fail "test distillation runner was not supplied"
+
+withTestRunners :: DistillRuntime -> (TestRunners -> TestRunners) -> DistillRuntime
+withTestRunners (DistillRuntime ai root runners) f =
+  DistillRuntime ai root (Just (f (fromMaybe emptyTestRunners runners)))
+
+withDistillWorkspace :: FilePath -> DistillRuntime -> DistillRuntime
+withDistillWorkspace root (DistillRuntime ai _ runners) = DistillRuntime ai (Just root) runners
+
 distillWorkspaceRoot :: DistillRuntime -> IO FilePath
-distillWorkspaceRoot rt =
-  maybe getCurrentDirectory pure rt.workspaceRoot
+distillWorkspaceRoot (DistillRuntime _ root _) = maybe getCurrentDirectory pure root
 
 newtype RuntimeSmokeInput = RuntimeSmokeInput
   { prompt :: Field "short input text to echo" Text
@@ -69,52 +78,50 @@ newtype RuntimeSmokeOutput = RuntimeSmokeOutput
   deriving stock (Generic, Eq, Show)
   deriving anyclass (ToSchema, FromModel, ToPrompt, Validatable)
 
-newDistillRuntime :: IO DistillRuntime
-newDistillRuntime = do
-  ClaudeApi.register
-  let config = defaultLLMConfig globalProviderRegistry
-      defaultModel = Models.anthropic_claude_haiku_4_5
-      liveRun = runLiveDistillProgram config defaultModel
-  pure
-    DistillRuntime
-      { config,
-        defaultModel,
-        workspaceRoot = Nothing,
-        runExtract = liveRun extractProgram,
-        runConsolidate = liveRun consolidateProgram,
-        runScene = liveRun sceneProgram,
-        runPersona = liveRun personaProgram
-      }
+newDistillRuntime :: AIRuntime -> Maybe FilePath -> DistillRuntime
+newDistillRuntime ai root = DistillRuntime ai root Nothing
 
-runDistillProgram :: DistillRuntime -> Program i o -> i -> IO (Either ShikumiError o)
-runDistillProgram rt prog input =
-  runLiveDistillProgram rt.config rt.defaultModel prog input
+distillAvailability :: DistillRuntime -> AIFeature -> Either AIExecutionError ()
+distillAvailability (DistillRuntime ai _ runners) feature =
+  maybe (executionAvailability ai feature) (const (Right ())) runners
 
-runExtraction :: DistillRuntime -> ExtractInput -> IO (Either ShikumiError ExtractOutput)
-runExtraction rt =
-  rt.runExtract
+runDistillProgram :: DistillRuntime -> AIFeature -> Program i o -> i -> IO (Either AIExecutionError o)
+runDistillProgram (DistillRuntime ai _ _) = runAIProgram ai
 
-runConsolidation :: DistillRuntime -> ConsolidateInput -> IO (Either ShikumiError ConsolidationDecision)
-runConsolidation rt =
-  rt.runConsolidate
+runTyped ::
+  (ToPrompt i, ToPrompt o, ToSchema o, FromModel o, Validatable o) =>
+  AIRuntime -> AIFeature -> Signature i o -> Program i o -> i -> IO (Either AIExecutionError o)
+runTyped ai feature signature program = case featureConfiguration ai feature of
+  InteractiveConfig {} -> runInteractiveSignature ai feature signature
+  _ -> runAIProgram ai feature program
 
-runSceneDistillation :: DistillRuntime -> SceneInput -> IO (Either ShikumiError SceneOutput)
-runSceneDistillation rt =
-  rt.runScene
+runExtraction :: DistillRuntime -> ExtractInput -> IO (Either AIExecutionError ExtractOutput)
+runExtraction (DistillRuntime ai _ runners) =
+  maybe
+    (runTyped ai Extraction extractSignature extractProgram)
+    (\r i -> either (Left . AIProgramFailed) Right <$> r.runExtract i)
+    runners
 
-runPersonaDistillation :: DistillRuntime -> PersonaInput -> IO (Either ShikumiError PersonaOutput)
-runPersonaDistillation rt =
-  rt.runPersona
+runConsolidation :: DistillRuntime -> ConsolidateInput -> IO (Either AIExecutionError ConsolidationDecision)
+runConsolidation (DistillRuntime ai _ runners) =
+  maybe
+    (runTyped ai Consolidation consolidateSignature consolidateProgram)
+    (\r i -> either (Left . AIProgramFailed) Right <$> r.runConsolidate i)
+    runners
 
-runLiveDistillProgram :: LLMConfig -> Model -> Program i o -> i -> IO (Either ShikumiError o)
-runLiveDistillProgram config model prog input =
-  runEff
-    . runErrorNoCallStack @ShikumiError
-    . runConcurrent
-    . runRouting model
-    . runLLMResilient config
-    . routeLLM
-    $ runProgram prog input
+runSceneDistillation :: DistillRuntime -> SceneInput -> IO (Either AIExecutionError SceneOutput)
+runSceneDistillation (DistillRuntime ai _ runners) =
+  maybe
+    (runTyped ai Scene sceneSignature sceneProgram)
+    (\r i -> either (Left . AIProgramFailed) Right <$> r.runScene i)
+    runners
+
+runPersonaDistillation :: DistillRuntime -> PersonaInput -> IO (Either AIExecutionError PersonaOutput)
+runPersonaDistillation (DistillRuntime ai _ runners) =
+  maybe
+    (runTyped ai Persona personaSignature personaProgram)
+    (\r i -> either (Left . AIProgramFailed) Right <$> r.runPersona i)
+    runners
 
 runtimeSmokeProgram :: Program RuntimeSmokeInput RuntimeSmokeOutput
 runtimeSmokeProgram =

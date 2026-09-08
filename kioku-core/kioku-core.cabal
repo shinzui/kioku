@@ -46,6 +46,10 @@ library
   import:           warnings, shared
   hs-source-dirs:   src
   exposed-modules:
+    Kioku.AI.Config
+    Kioku.AI.File
+    Kioku.AI.Interactive
+    Kioku.AI.Runtime
     Kioku.App
     Kioku.Distill.Consolidate
     Kioku.Distill.Extract
@@ -109,6 +113,7 @@ library
     , baikai                  ^>=0.6.0.0
     , baikai-claude           ^>=0.6.0.0
     , baikai-effectful        ^>=0.4.0.0
+    , baikai-openai           ^>=0.6.0.0
     , base                    >=4.21      && <5
     , bytestring              >=0.11      && <0.13
     , containers              >=0.6       && <0.8
@@ -147,6 +152,7 @@ test-suite kioku-test
   type:           exitcode-stdio-1.0
   main-is:        Main.hs
   other-modules:
+    Kioku.AIRuntimeSpec
     Kioku.AwaitingSpec
     Kioku.CodecCompatSpec
     Kioku.DistillSpec
@@ -182,6 +188,7 @@ test-suite kioku-test
     , effectful                      >=2.5
     , effectful-core                 >=2.5
     , filepath                       >=1.4
+    , generic-lens                   >=2.2       && <2.4
     , hasql                          >=1.6
     , hasql-transaction              >=1.0
     , keiro                          ^>=0.15.0.0

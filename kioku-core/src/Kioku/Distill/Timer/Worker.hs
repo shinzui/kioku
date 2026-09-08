@@ -31,7 +31,7 @@ import Keiro.Timer
     runTimerWorkerWith,
     scheduleTimerTx,
   )
-import Kioku.Api.Access (MemoryContextProvider (..), MemorySpaceId, memorySpaceIdText)
+import Kioku.Api.Access (MemoryContextProvider (..), MemorySpaceId, memoryContextSpace, memorySpaceIdText)
 import Kioku.Distill.L1 (FindMergeCandidates, L1Error (..), L1RunMode (..), distillSessionL1)
 import Kioku.Distill.L2 (fireL2SceneTimer)
 import Kioku.Distill.L3 (fireL3PersonaTimer)
@@ -39,6 +39,7 @@ import Kioku.Distill.Runtime (DistillRuntime)
 import Kioku.Distill.Timer (L1TimerPayload (..), l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Outcome
   ( FireOutcome (..),
+    executionFireOutcome,
     fireRetryDelay,
     timerMarkerEventId,
     unknownTimerRetryDelay,
@@ -112,6 +113,9 @@ fireL1Timer contexts rt finder row
                     ( FireFailedPermanently
                         ("L1 timer is not authorized for its memory space: " <> Text.pack (show denial))
                     )
+                Right context
+                  | memoryContextSpace context /= payload.memorySpaceId ->
+                      pure (FireFailedPermanently "L1 timer context belongs to a different memory space")
                 Right context -> do
                   result <- distillSessionL1 context RespectWatermark rt finder sid
                   pure $
@@ -120,6 +124,7 @@ fireL1Timer contexts rt finder row
                       Right _outcome -> FireCompleted (timerMarkerEventId row.timerId)
                       -- A session may legitimately be gone (deleted data); nothing to do.
                       Left (L1SessionNotFound _) -> FireCompleted (timerMarkerEventId row.timerId)
+                      Left (L1ExecutionFailed err) -> executionFireOutcome row.attempts err
                       -- Everything else — a failed LLM extraction or consolidation, a
                       -- read-model error, a failed write — is worth another attempt, and
                       -- the attempt ceiling bounds how many.
@@ -170,6 +175,11 @@ applyFireOutcome row = \case
   FireFailedPermanently reason -> do
     let annotated = spaceQualified row reason
     logTimer row ("dead-lettering: " <> annotated)
+    void (deadLetterTimer row.timerId annotated)
+    pure Nothing
+  FireDeferred reason -> do
+    let annotated = reason <> " " <> spaceQualified row "resume in an authorized interactive session"
+    logTimer row ("deferred: " <> annotated)
     void (deadLetterTimer row.timerId annotated)
     pure Nothing
   FireNotMine -> do
@@ -225,6 +235,7 @@ timerSpanAttributes row =
 -- reason is free text — an LLM provider message, a codec error — and stays on the span.
 fireOutcomeAttributes :: FireOutcome -> HashMap Text Attr.Attribute
 fireOutcomeAttributes = \case
+  FireDeferred reason -> HashMap.fromList [outcomeAttr "deferred", reasonAttr reason]
   FireCompleted _ -> HashMap.fromList [outcomeAttr "completed"]
   FireRetryLater _ note -> HashMap.fromList [outcomeAttr "retry", reasonAttr note]
   FireFailedPermanently reason -> HashMap.fromList [outcomeAttr "dead_letter", reasonAttr reason]

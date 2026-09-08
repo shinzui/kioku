@@ -8,6 +8,7 @@ module Kioku.Distill.L1
     L1Summary (..),
     distillSessionL1,
     recallCandidates,
+    recallCandidatesWithEmbeddingAdapter,
     scopedScanCandidates,
   )
 where
@@ -36,6 +37,8 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.ReadModel (ReadModelError)
+import Kioku.AI.Config
+import Kioku.AI.Runtime (AIRuntime, runtimeEmbeddingModel)
 import Kioku.Api.Access
   ( MemoryAccessContext,
     MemoryPermission (..),
@@ -55,15 +58,16 @@ import Kioku.Distill.Consolidate
     ExistingMemory (..),
   )
 import Kioku.Distill.Extract (ExtractInput (..), ExtractOutput (..), ExtractedAtom (..))
-import Kioku.Distill.Runtime (DistillRuntime, runConsolidation, runExtraction)
+import Kioku.Distill.Runtime (DistillRuntime, distillAvailability, runConsolidation, runExtraction)
 import Kioku.Id (MemoryId, SessionId, idText, parseIdLenient)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
+import Kioku.Memory.Embedding (embeddingModelCompatible)
 import Kioku.Memory.ReadModel (MemoryRow (..))
 import Kioku.Partition (memorySpaceParam)
 import Kioku.Prelude
 import Kioku.Recall qualified as Recall
-import Kioku.Recall.Capability (VectorCapability)
+import Kioku.Recall.Capability (VectorCapability (..))
 import Kioku.Session qualified as Session
 import Kioku.Session.ReadModel (SessionRow (..), TurnRow (..))
 import Kiroku.Store.Effect (Store)
@@ -94,6 +98,7 @@ data L1Error
   | L1SessionNotFound !SessionId
   | L1TurnReadFailed !ReadModelError
   | L1MemoryReadFailed !ReadModelError
+  | L1ExecutionFailed !AIExecutionError
   | L1ExtractionFailed !Text
   | L1ConsolidationFailed !Text
   | L1MemoryWriteFailed !Memory.MemoryWriteError
@@ -188,6 +193,9 @@ distillSessionL1 ::
 distillSessionL1 context mode rt finder sid =
   case find (not . (`memoryContextAllows` context)) requiredPermissions of
     Just missingPermission -> pure (Left (L1NotPermitted missingPermission))
+    Nothing
+      | Left err <- distillAvailability rt Extraction >> distillAvailability rt Consolidation ->
+          pure (Left (L1ExecutionFailed err))
     Nothing -> do
       sessionResult <- Session.getById space sid
       case sessionResult of
@@ -209,7 +217,7 @@ distillSessionL1 context mode rt finder sid =
                     Right input -> do
                       extractedResult <- liftIO (runExtraction rt input)
                       case extractedResult of
-                        Left err -> pure (Left (L1ExtractionFailed (Text.pack (show err))))
+                        Left err -> pure (Left (L1ExecutionFailed err))
                         Right output -> do
                           foldResult <-
                             foldM
@@ -293,13 +301,22 @@ scopedScanCandidates limit =
 -- Nobody chose that; it is what @ScopeGlobal@ meaning two things looked like from inside one
 -- module. See @docs\/plans\/30-migrate-recall-consumers-to-explicit-targets.md@ for the decision
 -- and what it costs: a globally-scoped session now stores where it used to merge across scopes.
-recallCandidates ::
+recallCandidates :: (IOE :> es, Store :> es) => AIRuntime -> VectorCapability -> Int -> FindMergeCandidates es
+recallCandidates ai capability limit = case runtimeEmbeddingModel ai CandidateEmbedding of
+  Left _ -> scopedScanCandidates limit
+  Right model -> FindMergeCandidates $ \context scope query -> do
+    compatible <- if capability == VectorAvailable then embeddingModelCompatible (memoryContextSpace context) model else pure True
+    if compatible
+      then let FindMergeCandidates findCandidates = recallCandidatesWithEmbeddingAdapter model capability limit in findCandidates context scope query
+      else pure (Left (L1ExecutionFailed (AIExecutionRefused CandidateEmbedding "stored embedding model differs; re-embed before semantic candidates")))
+
+recallCandidatesWithEmbeddingAdapter ::
   (IOE :> es, Store :> es) =>
   EmbeddingModel ->
   VectorCapability ->
   Int ->
   FindMergeCandidates es
-recallCandidates model capability limit =
+recallCandidatesWithEmbeddingAdapter model capability limit =
   FindMergeCandidates \context scope query ->
     -- A limit of zero or less asks for no candidates, which is what the pre-'RecallLimit'
     -- @take (max 0 limit)@ produced. Anything above the bound is clamped rather than refused:
@@ -308,7 +325,7 @@ recallCandidates model capability limit =
       Left _ -> pure (Right [])
       Right maxResults -> do
         hits <-
-          Recall.recall
+          Recall.recallWithEmbeddingAdapter
             model
             capability
             context
@@ -390,7 +407,7 @@ applyAtom context rt finder sid session maxTurnIndex summary atom = do
                 existing = existingMemory <$> candidates
               }
       case decisionResult of
-        Left err -> pure (Left (L1ConsolidationFailed (Text.pack (show err))))
+        Left err -> pure (Left (L1ExecutionFailed err))
         Right decision -> do
           appliedResult <- applyDecision context sid session atom decision
           case appliedResult of

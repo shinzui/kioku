@@ -1,5 +1,9 @@
 # Bundle Update Log
 
+## 2026-09-08
+
+- Added [ADR-12](host-owned-ai-execution.md): explicit host-owned AI capabilities and durable interactive deferral.
+
 ## 2026-08-22
 * **Addition**: ADR-11 records that Kioku's normal codecs own native Kioku history only; consumers own finite foreign-event migration codecs and may retire them after evidenced migration or explicit unsupported retention, an empty behavioral-use scan, and a breaking release boundary.
 

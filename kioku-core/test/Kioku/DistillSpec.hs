@@ -44,11 +44,11 @@ import Kioku.Api.Types (Confidence (..), MemoryRecord (..), MemoryType (..))
 import Kioku.App (AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.Consolidate (ConsolidateInput (..), ConsolidationAction (..), ConsolidationDecision (..), ExistingMemory (..), consolidateProgram)
 import Kioku.Distill.Extract (ExtractOutput (..), ExtractedAtom (..), extractProgram)
-import Kioku.Distill.L1 (L1Error (..), L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
+import Kioku.Distill.L1 (L1Error (..), L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidatesWithEmbeddingAdapter, scopedScanCandidates)
 import Kioku.Distill.L2 (SceneRow (..), getScenesByScope, l2SceneProcessManagerName, regenerateScene, sceneMirrorPath)
 import Kioku.Distill.L3 (PersonaRow (..), getPersonaByScope, l3PersonaProcessManagerName, personaMirrorPath, regeneratePersona)
 import Kioku.Distill.Persona (personaProgram)
-import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
+import Kioku.Distill.Runtime (DistillRuntime, TestRunners (..), testDistillRuntime, withDistillWorkspace, withTestRunners)
 import Kioku.Distill.Scene (SceneInput (..), sceneProgram)
 import Kioku.Distill.Timer (idleFlushSeconds, l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Worker (runKiokuTimerWorkerOnce)
@@ -1132,7 +1132,7 @@ testRerunIdempotent = withDistillEnv \env -> do
 testConsolidationFailure :: Assertion
 testConsolidationFailure = withDistillEnv \env -> do
   base <- replayRuntime
-  let runtime = base {runConsolidate = \_ -> pure (Left (ValidationFailure "boom"))}
+  let runtime = withTestRunners base $ \r -> r {runConsolidate = \_ -> pure (Left (ValidationFailure "boom"))}
   sid <- genSessionId
   now <- getCurrentTime
   result <-
@@ -1146,7 +1146,7 @@ testConsolidationFailure = withDistillEnv \env -> do
     Left storeErr -> assertFailure ("store error: " <> show storeErr)
     Right (distilled, memories, audits) -> do
       case distilled of
-        Left (L1ConsolidationFailed _) -> pure ()
+        Left (L1ExecutionFailed _) -> pure ()
         other -> assertFailure ("expected L1ConsolidationFailed, got " <> show other)
       memories @?= []
       audits @?= 0
@@ -1160,10 +1160,11 @@ testMergeMissingTarget = withDistillEnv \env -> do
   ghostId <- genMemoryId
   let mergeResponse = mergeTargetsResponse [idText existingId, idText ghostId]
       runtime =
-        base
-          { runExtract = replayProgram singleAtomExtractResponse extractProgram,
-            runConsolidate = replayProgram mergeResponse consolidateProgram
-          }
+        withTestRunners base $ \r ->
+          r
+            { runExtract = replayProgram singleAtomExtractResponse extractProgram,
+              runConsolidate = replayProgram mergeResponse consolidateProgram
+            }
   sid <- genSessionId
   now <- getCurrentTime
   result <-
@@ -1202,7 +1203,7 @@ testWatermarkSkip :: Assertion
 testWatermarkSkip = withDistillEnv \env -> do
   working <- replayRuntime
   let exploding =
-        working {runExtract = \_ -> pure (Left (ValidationFailure "extractor must not run"))}
+        withTestRunners working $ \r -> r {runExtract = \_ -> pure (Left (ValidationFailure "extractor must not run"))}
   sid <- genSessionId
   now <- getCurrentTime
   result <-
@@ -1221,7 +1222,7 @@ testWatermarkSkip = withDistillEnv \env -> do
         Right L1SkippedUpToDate -> pure ()
         other -> assertFailure ("expected L1SkippedUpToDate, got " <> show other)
       case afterNewTurn of
-        Left (L1ExtractionFailed _) -> pure ()
+        Left (L1ExecutionFailed _) -> pure ()
         other -> assertFailure ("expected L1ExtractionFailed after a new turn, got " <> show other)
 
 -- | A watermark row is keyed by the globally unique session id, but reads are partitioned by
@@ -1232,13 +1233,14 @@ testWatermarkOwnershipRepair = withDistillEnv \env -> do
   working <- replayRuntime
   extractCalls <- newIORef (0 :: Int)
   let counted =
-        working
-          { runExtract = \input -> do
-              modifyIORef' extractCalls (+ 1)
-              working.runExtract input
-          }
+        withTestRunners working $ \r ->
+          r
+            { runExtract = \input -> do
+                modifyIORef' extractCalls (+ 1)
+                r.runExtract input
+            }
       exploding =
-        working {runExtract = \_ -> pure (Left (ValidationFailure "extractor must not run"))}
+        withTestRunners working $ \r -> r {runExtract = \_ -> pure (Left (ValidationFailure "extractor must not run"))}
       divergentTurnIndex = 99
   sid <- genSessionId
   now <- getCurrentTime
@@ -1323,13 +1325,14 @@ testRecallCandidateWindow = withDistillEnv \env -> do
       scanScope = ScopeEntity (Namespace "rei") (ScopeKind "intention") "intention_scan_window"
       -- Merge only when the consolidator was actually shown the duplicate.
       runtimeFor duplicateId =
-        base
-          { runExtract = replayProgram singleAtomExtractResponse extractProgram,
-            runConsolidate = \input ->
-              if any (\existing -> unField existing.memoryId == idText duplicateId) input.existing
-                then replayProgram (mergeTargetsResponse [idText duplicateId]) consolidateProgram input
-                else replayProgram storeAtomResponse consolidateProgram input
-          }
+        withTestRunners base $ \r ->
+          r
+            { runExtract = replayProgram singleAtomExtractResponse extractProgram,
+              runConsolidate = \input ->
+                if any (\existing -> unField existing.memoryId == idText duplicateId) input.existing
+                  then replayProgram (mergeTargetsResponse [idText duplicateId]) consolidateProgram input
+                  else replayProgram storeAtomResponse consolidateProgram input
+            }
   -- Inject the capability rather than probing the cluster. This case is about the candidate
   -- finder -- that recall reaches a duplicate the priority scan window hides -- and nothing
   -- about vectors. Pinning it to the keyword plan is what makes dummyEmbeddingModel safe: it
@@ -1345,7 +1348,7 @@ testRecallCandidateWindow = withDistillEnv \env -> do
           testContext
           RespectWatermark
           (runtimeFor recallDuplicateId)
-          (recallCandidates dummyEmbeddingModel capability 8)
+          (recallCandidatesWithEmbeddingAdapter dummyEmbeddingModel capability 8)
           recallSid
       recallSummary <- liftIO (expectDistilled "recall pass" recallOutcome)
       recallMemories <- loadMemoryStatuses recallScope
@@ -1383,7 +1386,7 @@ testRecallCandidateWindow = withDistillEnv \env -> do
 -- | The recall finder searches the session's own scope, not its whole namespace.
 --
 -- A globally-scoped session used to draw merge candidates from every entity scope beside it,
--- because 'recallCandidates' mapped the scope through @legacyRecallTarget@ and a global scope
+-- because 'recallCandidatesWithEmbeddingAdapter' mapped the scope through @legacyRecallTarget@ and a global scope
 -- means /namespace-wide/ to recall. The consolidator could then merge an atom into a memory
 -- belonging to a sibling entity — rewriting content that feeds a scene the session has nothing to
 -- do with, and one that 'scopedScanCandidates' would never have offered.
@@ -1404,19 +1407,20 @@ testRecallCandidateBreadth = withDistillEnv \env -> do
       -- keep it out of the candidate set.
       siblingContent = "The user prefers concise answers."
       runtime =
-        base
-          { runExtract = replayProgram singleAtomExtractResponse extractProgram,
-            runConsolidate = \input ->
-              if any (\existing -> unField existing.memoryId == idText siblingId) input.existing
-                then replayProgram (mergeTargetsResponse [idText siblingId]) consolidateProgram input
-                else replayProgram storeAtomResponse consolidateProgram input
-          }
+        withTestRunners base $ \r ->
+          r
+            { runExtract = replayProgram singleAtomExtractResponse extractProgram,
+              runConsolidate = \input ->
+                if any (\existing -> unField existing.memoryId == idText siblingId) input.existing
+                  then replayProgram (mergeTargetsResponse [idText siblingId]) consolidateProgram input
+                  else replayProgram storeAtomResponse consolidateProgram input
+            }
       -- Keyword only, so dummyEmbeddingModel is never called.
       recallWith target =
         case Recall.mkRecallQuery target siblingContent Recall.Keyword 8 of
           Left err -> liftIO (assertFailure ("mkRecallQuery: " <> Text.unpack err))
           Right request -> do
-            hits <- Recall.recall dummyEmbeddingModel VectorExtensionUnavailable testContext request
+            hits <- Recall.recallWithEmbeddingAdapter dummyEmbeddingModel VectorExtensionUnavailable testContext request
             case hits of
               Left recallErr -> liftIO (assertFailure ("recall: " <> show recallErr))
               Right found -> pure (fmap (\hit -> hit.memory.content) found)
@@ -1431,7 +1435,7 @@ testRecallCandidateBreadth = withDistillEnv \env -> do
           testContext
           RespectWatermark
           runtime
-          (recallCandidates dummyEmbeddingModel VectorExtensionUnavailable 8)
+          (recallCandidatesWithEmbeddingAdapter dummyEmbeddingModel VectorExtensionUnavailable 8)
           sid
       summary <- liftIO (expectDistilled "global-scoped pass" outcome)
       siblingMemories <- loadMemoryStatuses siblingScope
@@ -1622,14 +1626,15 @@ writeFixtureSession sid scope now = do
 
 replayRuntime :: IO DistillRuntime
 replayRuntime = do
-  rt <- newDistillRuntime
-  pure
-    rt
-      { runExtract = replayProgram extractResponse extractProgram,
-        runConsolidate = \input -> replayProgram (consolidateResponse input) consolidateProgram input,
-        runScene = replayProgram sceneResponse sceneProgram,
-        runPersona = replayProgram personaResponse personaProgram
-      }
+  rt <- testDistillRuntime
+  pure $
+    withTestRunners rt $ \r ->
+      r
+        { runExtract = replayProgram extractResponse extractProgram,
+          runConsolidate = \input -> replayProgram (consolidateResponse input) consolidateProgram input,
+          runScene = replayProgram sceneResponse sceneProgram,
+          runPersona = replayProgram personaResponse personaProgram
+        }
 
 -- | A replay runtime whose plaintext mirrors go to a private directory rather
 -- than the process's working directory. Any test that asserts on mirror files —
@@ -1638,7 +1643,7 @@ replayRuntime = do
 replayRuntimeIn :: FilePath -> IO DistillRuntime
 replayRuntimeIn workspace = do
   rt <- replayRuntime
-  pure rt {workspaceRoot = Just workspace}
+  pure (withDistillWorkspace workspace rt)
 
 -- | An 'AppEnv' plus the private workspace its mirrors are written into.
 withDistillWorkspaceEnv :: (AppEnv -> FilePath -> IO a) -> IO a
@@ -1660,15 +1665,16 @@ newDistillCalls =
 
 countingRuntime :: DistillCalls -> DistillRuntime -> DistillRuntime
 countingRuntime calls rt =
-  rt
-    { runScene = \input -> do
-        modifyIORef' calls.sceneCalls (+ 1)
-        modifyIORef' calls.sceneAtoms (<> [unField input.atoms])
-        rt.runScene input,
-      runPersona = \input -> do
-        modifyIORef' calls.personaCalls (+ 1)
-        rt.runPersona input
-    }
+  withTestRunners rt $ \r ->
+    r
+      { runScene = \input -> do
+          modifyIORef' calls.sceneCalls (+ 1)
+          modifyIORef' calls.sceneAtoms (<> [unField input.atoms])
+          r.runScene input,
+        runPersona = \input -> do
+          modifyIORef' calls.personaCalls (+ 1)
+          r.runPersona input
+      }
 
 -- | 'countingRuntime', but the scene body echoes the atoms it was built from, so
 -- the mirror file's bytes on disk are a direct function of which memories
@@ -1677,12 +1683,13 @@ countingRuntime calls rt =
 -- settling for the row metadata.
 echoingRuntime :: DistillCalls -> DistillRuntime -> DistillRuntime
 echoingRuntime calls rt =
-  (countingRuntime calls rt)
-    { runScene = \input -> do
-        modifyIORef' calls.sceneCalls (+ 1)
-        modifyIORef' calls.sceneAtoms (<> [unField input.atoms])
-        replayProgram (echoSceneResponse (unField input.atoms)) sceneProgram input
-    }
+  withTestRunners (countingRuntime calls rt) $ \r ->
+    r
+      { runScene = \input -> do
+          modifyIORef' calls.sceneCalls (+ 1)
+          modifyIORef' calls.sceneAtoms (<> [unField input.atoms])
+          replayProgram (echoSceneResponse (unField input.atoms)) sceneProgram input
+      }
 
 -- | Newlines are flattened because the response format is line-oriented: the
 -- atoms are a bulleted list, and each bullet would otherwise look like a field.

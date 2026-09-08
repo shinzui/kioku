@@ -45,6 +45,8 @@ import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
 import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
@@ -53,8 +55,25 @@ tests :: TestTree
 tests =
   testGroup
     "kioku recall end to end"
-    [ testCase "each flag reaches the database as its own target, inside one space" targetsReachPostgres
+    [ testCase "explicit AI file overrides environment and credentials do not enable AI" aiFilePrecedence,
+      testCase "each flag reaches the database as its own target, inside one space" targetsReachPostgres
     ]
+
+aiFilePrecedence :: IO ()
+aiFilePrecedence = withSystemTempDirectory "kioku-ai-config-test" $ \dir -> do
+  let path = dir </> "disabled.json"
+  writeFile path "{\"version\":1}"
+  inherited <- getEnvironment
+  let variables =
+        filter (\(name, _) -> name `notElem` ["KIOKU_AI_CONFIG", "PG_CONNECTION_STRING", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]) inherited
+          <> [("KIOKU_AI_CONFIG", dir </> "missing.json"), ("PG_CONNECTION_STRING", "host=/nonexistent connect_timeout=1"), ("ANTHROPIC_API_KEY", "sentinel-not-a-credential")]
+  (code, _, err) <- readCreateProcessWithExitCode (proc "kioku" ["worker", "--backfill", "--ai-config", path]) {env = Just variables} ""
+  assertBool "disabled backfill fails" (code /= ExitSuccess)
+  assertContains "explicit file wins" "AIDisabled MemoryEmbedding" err
+  assertMissing "credential redaction" "sentinel-not-a-credential" err
+  (environmentCode, _, environmentError) <- readCreateProcessWithExitCode (proc "kioku" ["worker", "--backfill"]) {env = Just variables} ""
+  assertBool "environment file is used without flag" (environmentCode /= ExitSuccess)
+  assertContains "environment fallback" "missing.json" environmentError
 
 -- | Two spaces holding the same namespace and the same two scopes, with content that names which
 -- space and which scope it came from — so a row appearing in the wrong answer is unmistakable.

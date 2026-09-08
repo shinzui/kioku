@@ -5,6 +5,7 @@ module Kioku.TimerWorkerSpec
   )
 where
 
+import Baikai.Interactive qualified as Interactive
 import Data.Aeson qualified as Aeson
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int64)
@@ -19,6 +20,8 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), scheduleTimerTx)
+import Kioku.AI.Config
+import Kioku.AI.Runtime
 import Kioku.Api.Access
   ( MemoryAccessContext,
     MemoryAccessDenial (..),
@@ -34,7 +37,7 @@ import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L1 (scopedScanCandidates)
 import Kioku.Distill.L2 (SceneTimerPayload (..), l2SceneProcessManagerName, l2SceneTimerId)
 import Kioku.Distill.L3 (partitionedCorrelationId)
-import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
+import Kioku.Distill.Runtime (DistillRuntime, TestRunners (..), newDistillRuntime, testDistillRuntime, withDistillWorkspace, withTestRunners)
 import Kioku.Distill.Timer (L1TimerPayload (..), l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
 import Kioku.Id (SessionId, genSessionId, idText)
@@ -57,7 +60,8 @@ tests :: TestTree
 tests =
   testGroup
     "Timer worker"
-    [ testCase "permanent failure dead-letters the timer" testPermanentFailureDeadLetters,
+    [ testCase "interactive unavailability stays parked across repeated worker runs" testInteractiveDeferred,
+      testCase "permanent failure dead-letters the timer" testPermanentFailureDeadLetters,
       testCase "transient failure reschedules with backoff" testTransientFailureReschedules,
       testCase "a timer scheduled before memory spaces fires in the legacy space" testPrePartitionPayloadFiresInLegacySpace,
       testCase "a pre-partition timer cannot reach a session in another space" testPrePartitionPayloadCannotReachAnotherSpace,
@@ -71,6 +75,33 @@ tests =
       testCase "a provider returning the wrong memory space dead-letters" testWrongSpaceContextDeadLetters,
       testCase "an explicit-space dead-letter names that exact space" testDeadLetterNamesTheSpace
     ]
+
+testInteractiveDeferred :: Assertion
+testInteractiveDeferred = withTimerEnv $ \env _ -> do
+  ai <-
+    expectRight "AI configuration"
+      =<< newAIRuntime
+        noHostCapabilities {allowInteractive = True}
+        disabledAIConfig {distillationDefault = InteractiveConfig Interactive.InteractiveClaude ((Interactive.interactiveLaunchRequest "") {Interactive.modelId = Just "fixture"})}
+  let rt = newDistillRuntime ai Nothing
+  timerId <- freshTimerId
+  sid <- genSessionId
+  before <- runOrFail env $ do
+    startFixtureSession sid
+    scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) (l1Payload testSpace) (-1)
+    fireOnce rt
+    fetchTimer timerId
+  before.status @?= "dead"
+  before.attempts @?= 1
+  assertBool "stable deferred prefix" (maybe False (Text.isPrefixOf "kioku:deferred:interactive-unavailable") before.lastError)
+  -- New runAppIO scopes model successive worker polls/restarts against durable state.
+  after <- runOrFail env $ do
+    fireOnce rt
+    fireOnce rt
+    fetchTimer timerId
+  after.status @?= "dead"
+  after.attempts @?= before.attempts
+  after.lastError @?= before.lastError
 
 -- | A correlation id that is not a session id can never become one. It used to
 -- be marked fired — a fake success that lost the distillation silently.
@@ -95,7 +126,7 @@ testTransientFailureReschedules =
   withTimerEnv \env rt -> do
     timerId <- freshTimerId
     sid <- genSessionId
-    let failing = rt {runExtract = \_ -> pure (Left (ProviderFailure "the model is down"))}
+    let failing = withTestRunners rt $ \r -> r {runExtract = \_ -> pure (Left (ProviderFailure "the model is down"))}
     before <- getCurrentTime
     row <- runOrFail env do
       startFixtureSession sid
@@ -123,7 +154,7 @@ testPrePartitionPayloadFiresInLegacySpace =
   withTimerEnv \env rt -> do
     timerId <- freshTimerId
     sid <- genSessionId
-    let failing = rt {runExtract = \_ -> pure (Left (ProviderFailure "the model is down"))}
+    let failing = withTestRunners rt $ \r -> r {runExtract = \_ -> pure (Left (ProviderFailure "the model is down"))}
     row <- runOrFail env do
       startFixtureSessionIn legacyContext legacyMemorySpaceId sid
       scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) prePartitionL1Payload (-1)
@@ -142,7 +173,7 @@ testPrePartitionPayloadCannotReachAnotherSpace =
   withTimerEnv \env rt -> do
     timerId <- freshTimerId
     sid <- genSessionId
-    let failing = rt {runExtract = \_ -> liftIO (assertFailure "the extractor must not run")}
+    let failing = withTestRunners rt $ \r -> r {runExtract = \_ -> liftIO (assertFailure "the extractor must not run")}
     row <- runOrFail env do
       startFixtureSession sid
       scheduleTestTimer timerId l1ExtractProcessManagerName (idText sid) prePartitionL1Payload (-1)
@@ -526,7 +557,7 @@ withTimerEnv :: (AppEnv -> DistillRuntime -> IO ()) -> Assertion
 withTimerEnv action =
   withKiokuMigratedDatabase \connStr ->
     withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
-      rt <- newDistillRuntime
+      rt <- testDistillRuntime
       action env rt
 
 runOrFail :: AppEnv -> Eff AppEffects a -> IO a

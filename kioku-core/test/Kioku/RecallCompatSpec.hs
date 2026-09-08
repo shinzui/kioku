@@ -38,7 +38,7 @@ import Kioku.Recall
     RecallTarget (..),
     legacyRecall,
     mkRecallLimit,
-    recall,
+    recallWithEmbeddingAdapter,
   )
 import Kioku.Recall.Capability (VectorCapability (..))
 import Kioku.SpaceFixtures (otherSpace, testContext, testSpace)
@@ -138,7 +138,7 @@ runLegacy :: (Store :> es, IOE :> es) => RecallRequest -> Eff es (Either RecallE
 runLegacy = legacyRecall undefinedModel VectorExtensionUnavailable testContext
 
 runExplicit :: (Store :> es, IOE :> es) => RecallQuery -> Eff es (Either RecallError [RecallHit])
-runExplicit = recall undefinedModel VectorExtensionUnavailable testContext
+runExplicit = recallWithEmbeddingAdapter undefinedModel VectorExtensionUnavailable testContext
 
 -- * Fixture
 

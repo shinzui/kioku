@@ -573,7 +573,7 @@ and the four programs. Read-only queries, timer helpers, and mirror-path helpers
 
 ```haskell
 -- Kioku.Distill.Runtime
-newDistillRuntime :: IO DistillRuntime         -- registers the Claude provider; needs ANTHROPIC_API_KEY
+newDistillRuntime :: AIRuntime -> Maybe FilePath -> DistillRuntime -- explicit validated AI and mirror workspace
 
 -- Kioku.Distill.L1
 data L1RunMode = RespectWatermark | IgnoreWatermark

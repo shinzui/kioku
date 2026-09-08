@@ -227,3 +227,23 @@ accepts the rendered principal id as opaque text at its boundary, and takes the 
 permission names from the host as a `MemoryAuthorizationBinding` rather than hard-coding names it
 does not own. When those packages ship, a **separate adapter package** maps them onto the types in
 `kioku-api/src/Kioku/Api/Access.hs`; neither `kioku-api` nor `kioku-core` changes.
+
+## Host-owned AI execution
+
+Build an `AIRuntime` with `newAIRuntime` from `Kioku.AI.Runtime`, supplying separate API/batch
+registries, explicit embedding permission, and an optional authorized interactive launcher.
+`Kioku.AI.Config.disabledAIConfig` enables nothing. Construction validates selected models and
+transports without reading credentials and snapshots handlers without mutating host registries.
+Pass the result to `newDistillRuntime ai workspaceRoot`. Its configuration and runners are
+immutable; controlled tests use `testDistillRuntime` and `withTestRunners` explicitly.
+
+`Kioku.AI.File.loadAIRuntime foreground explicitPath` is the common versioned file assembler.
+It falls back to `KIOKU_AI_CONFIG`, then disabled AI. Background hosts must pass `False`.
+An installed executable or a TTY never establishes interactive ownership by itself.
+`runDistillProgram` also requires an `AIFeature`; interactive execution of arbitrary programs is
+refused, since it lacks a typed signature handoff. The four built-in signatures support that
+handoff. Recall and the production embedding-worker constructor accept the same runtime.
+Explicitly named embedding adapters are independent host/test capabilities.
+
+Memory access remains a separate authorization decision. Deferred timers retain their original
+space and payload. Do not treat execution permission as permission to read or write memory.

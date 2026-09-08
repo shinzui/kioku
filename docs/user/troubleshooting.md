@@ -240,7 +240,7 @@ returns zero candidates.
 
 A failing distillation retries with backoff (`30s` doubling to `900s`) and is dead-lettered after
 **8 claims** — roughly an hour — so a structurally impossible pass stops burning LLM tokens. The
-most common cause is a missing or invalid `ANTHROPIC_API_KEY`.
+first check is the selected AI configuration and its explicitly named credential source.
 
 Authorization/configuration failures do not retry: provider refusal, an L2/L3 context without
 `MemoryDistill`, or a provider returning a context for a different space is dead-lettered on the
@@ -285,10 +285,9 @@ The **event log**. The `kioku.memories` row (with its `tsvector` and `embedding`
 projection of the memory's event stream. Recall reads the projection; writes append events.
 
 **Can I run without an embedding endpoint?**
-Yes, for keyword recall and the scene/persona *printing* commands. Hybrid/embedding recall falls
-back to keyword, but you lose semantic matching. Note that distillation does **not** use the
-embedding endpoint for its LLM work — it calls Anthropic and needs `ANTHROPIC_API_KEY`, a separate
-credential. See [Configuration](configuration.md).
+Yes. With embeddings disabled, hybrid recall reports keyword fallback; an explicit embedding-only
+request reports unavailable AI. Distillation uses its separately authorized API, batch, or
+interactive configuration. See [Configuration](configuration.md).
 
 **Do I have to record conversation turns?**
 No. Turns are opt-in L0 evidence. Without them, distillation can still work from recorded
@@ -314,3 +313,11 @@ scopes from colliding on one filename; don't construct these names by hand, deri
 directory. Mirroring is best-effort and the database remains authoritative. When a scope's last
 memory is forgotten, the scene/persona row **and** its mirror file are deleted. See
 [Distillation](distillation.md#workspace-mirroring).
+
+## Deferred interactive work
+
+A timer reason beginning `kioku:deferred:interactive-unavailable` means the host supplied no
+interactive session. It is stored as dead so polling and restarts do not consume retries. It is
+not successful distillation, and no API key should be added to bypass the policy. Authorized
+atomic resume/listing is still pending the Keiro prerequisite in plan 41. Keep these rows parked;
+generic dead-letter replay does not establish memory authorization or interactive ownership.

@@ -494,7 +494,7 @@ ns1Wide = NamespaceWide (Namespace "ns1")
 ns1Exact = ExactScope ns1Entity
 ns1ExactGlobal = ExactScope ns1Global
 
--- | A request resolved against the test space, the way 'Kioku.Recall.recall' resolves one. The
+-- | A request resolved against the test space, the way 'Kioku.Recall.recallWithEmbeddingAdapter' resolves one. The
 -- candidate statements are reached only through 'resolveRecall', so a test cannot hand the SQL a
 -- statement family that the target mapping would never choose.
 request :: RecallTarget -> Text -> ResolvedRecall

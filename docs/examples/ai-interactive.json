@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "permissions": ["interactive"],
+  "distillation": {"mode": "interactive", "provider": "claude", "model": "claude-haiku-4-5", "workingDir": "."},
+  "features": {},
+  "embeddings": {}
+}

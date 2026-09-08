@@ -7,13 +7,15 @@ module Kioku.Cli.Commands.Distill
 where
 
 import Data.Text qualified as Text
+import Kioku.AI.Config (AIFeature (CandidateEmbedding))
 import Kioku.App (runAppIO, withNoopAppEnv)
+import Kioku.Cli.AIConfig (aiConfigOption, loadAIRuntime)
 import Kioku.Cli.Context (cliMemoryContext)
 import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Distill.L1 (L1Outcome (..), L1RunMode (..), L1Summary (..), distillSessionL1, recallCandidates, scopedScanCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
 import Kioku.Id (SessionId, idText, parseId)
-import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
+import Kioku.Memory.Embedding (resolveEmbeddingConfig)
 import Kioku.Recall.Capability (detectVectorCapability)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Options.Applicative
@@ -26,7 +28,8 @@ data DistillOptions = DistillOptions
   { sessionId :: !SessionId,
     candidateSource :: !CandidateSource,
     candidateLimit :: !Int,
-    force :: !Bool
+    force :: !Bool,
+    aiConfig :: !(Maybe FilePath)
   }
   deriving stock (Eq, Show)
 
@@ -64,25 +67,21 @@ sessionOptionsParser =
       ( long "force"
           <> help "Re-run even when the session has no turns newer than the last successful pass"
       )
+    <*> aiConfigOption
 
 runDistill :: DistillOptions -> IO ()
 runDistill opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
-  rt <- newDistillRuntime
+  ai <- loadAIRuntime True opts.aiConfig
+  let rt = newDistillRuntime ai Nothing
   context <- cliMemoryContext
-  recallConfig <-
-    case opts.candidateSource of
-      CandidateScan -> pure Nothing
-      CandidateRecall -> Just <$> resolveEmbeddingConfig
   withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
     result <- runAppIO env do
-      finder <-
-        case (opts.candidateSource, recallConfig) of
-          (CandidateRecall, Just config) -> do
-            capability <- detectVectorCapability config.dimensions
-            pure (recallCandidates (toEmbeddingModel config) capability opts.candidateLimit)
-          _ ->
-            pure (scopedScanCandidates opts.candidateLimit)
+      finder <- case (opts.candidateSource, resolveEmbeddingConfig ai CandidateEmbedding) of
+        (CandidateRecall, Right _) -> do
+          capability <- detectVectorCapability 1536
+          pure (recallCandidates ai capability opts.candidateLimit)
+        _ -> pure (scopedScanCandidates opts.candidateLimit)
       distillSessionL1 context (runMode opts) rt finder opts.sessionId
     case result of
       Left storeErr -> ioError (userError ("kioku distill store error: " <> show storeErr))

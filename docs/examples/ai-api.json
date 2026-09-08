@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "permissions": ["api"],
+  "distillation": {
+    "mode": "api",
+    "api": "anthropic-messages",
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5",
+    "baseUrl": "https://api.anthropic.com",
+    "options": {"apiKeyEnv": "ANTHROPIC_API_KEY", "maxTokens": 4096}
+  },
+  "features": {},
+  "embeddings": {
+    "memory-embedding": {"mode": "api", "model": "text-embedding-3-small", "baseUrl": "https://api.openai.com", "dimensions": 1536, "apiKeyEnv": "OPENAI_API_KEY"},
+    "query-embedding": {"mode": "api", "model": "text-embedding-3-small", "baseUrl": "https://api.openai.com", "dimensions": 1536, "apiKeyEnv": "OPENAI_API_KEY"},
+    "candidate-embedding": {"mode": "api", "model": "text-embedding-3-small", "baseUrl": "https://api.openai.com", "dimensions": 1536, "apiKeyEnv": "OPENAI_API_KEY"}
+  }
+}

@@ -32,7 +32,7 @@ import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L1 (L1Error (..), L1RunMode (..), distillSessionL1, scopedScanCandidates)
-import Kioku.Distill.Runtime (DistillRuntime (..), newDistillRuntime)
+import Kioku.Distill.Runtime (DistillRuntime, TestRunners (..), testDistillRuntime, withDistillWorkspace, withTestRunners)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (ArchiveMemoryData (..), MemoryEvent (..), MemoryRecordedData (..), RecordMemoryData (..), SupersedeMemoryData (..))
@@ -245,8 +245,8 @@ testContextWithoutDistill :: Assertion
 testContextWithoutDistill =
   withApp do
     sid <- startFixture testContext
-    runtime <- liftIO newDistillRuntime
-    let refuse = runtime {runExtract = \_ -> liftIO (assertFailure "the extractor must not run")}
+    runtime <- liftIO testDistillRuntime
+    let refuse = withTestRunners runtime $ \r -> r {runExtract = \_ -> liftIO (assertFailure "the extractor must not run")}
     result <- distillSessionL1 (narrowContext testSpace [MemoryRecord]) RespectWatermark refuse (scopedScanCandidates 5) sid
     liftIO case result of
       Left (L1NotPermitted MemoryDistill) -> pure ()
@@ -272,8 +272,8 @@ assertL1RefusedBeforeExtraction :: [MemoryPermission] -> MemoryPermission -> Ass
 assertL1RefusedBeforeExtraction granted expectedMissing =
   withApp do
     sid <- startFixture testContext
-    runtime <- liftIO newDistillRuntime
-    let refuse = runtime {runExtract = \_ -> liftIO (assertFailure "the extractor must not run")}
+    runtime <- liftIO testDistillRuntime
+    let refuse = withTestRunners runtime $ \r -> r {runExtract = \_ -> liftIO (assertFailure "the extractor must not run")}
     result <- distillSessionL1 (narrowContext testSpace granted) RespectWatermark refuse (scopedScanCandidates 5) sid
     liftIO case result of
       Left (L1NotPermitted actualMissing) ->

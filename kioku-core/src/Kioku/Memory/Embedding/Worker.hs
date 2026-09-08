@@ -53,6 +53,8 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Codec (decodeRecorded)
+import Kioku.AI.Config
+import Kioku.AI.Runtime (AIRuntime, runtimeEmbeddingModel)
 import Kioku.Api.Access
   ( MemoryContextProvider (..),
     MemoryPermission (..),
@@ -64,7 +66,7 @@ import Kioku.Api.Access
 import Kioku.Database.Schema (memoriesTable)
 import Kioku.Id (MemoryId, idText)
 import Kioku.Memory.Domain (MemoryEvent (..), MemoryRecordedData (..))
-import Kioku.Memory.Embedding (EmbedError, embedWithRetry, sha256Hex)
+import Kioku.Memory.Embedding (EmbedError (..), embedWithRetry, embeddingModelCompatible, embeddingModelsCompatible, sha256Hex)
 import Kioku.Memory.EventStream (memoryCodec)
 import Kioku.Partition (memorySpaceColumn, memorySpaceParam)
 import Kioku.Prelude
@@ -149,9 +151,10 @@ data EmbeddingWorkerEnv = EmbeddingWorkerEnv
 -- | The production environment: the real provider, retried three times
 -- in-process (~0.6s of jitter-free backoff) before the failure is reported to
 -- the caller, which then decides whether the /event/ should be redelivered.
-mkEmbeddingWorkerEnv :: EmbeddingModel -> Int -> EmbeddingWorkerEnv
-mkEmbeddingWorkerEnv model dims =
-  EmbeddingWorkerEnv {model, dimensions = dims, embed = embedWithRetry model 3}
+mkEmbeddingWorkerEnv :: AIRuntime -> Either AIExecutionError EmbeddingWorkerEnv
+mkEmbeddingWorkerEnv ai = do
+  model <- runtimeEmbeddingModel ai MemoryEmbedding
+  pure EmbeddingWorkerEnv {model, dimensions = 1536, embed = embedWithRetry model 3}
 
 -- | What one embedding attempt did.
 --
@@ -176,11 +179,11 @@ runEmbeddingWorkerHost ::
   KirokuStore ->
   MemoryContextProvider (Eff es) ->
   VectorCapability ->
-  EmbeddingModel ->
-  Int ->
+  AIRuntime ->
   Eff es ()
-runEmbeddingWorkerHost store contexts capability model dims = do
-  processor <- embeddingWorkerProcessor contexts capability model dims store
+runEmbeddingWorkerHost store contexts capability ai = do
+  env <- either (liftIO . ioError . userError . show) pure (mkEmbeddingWorkerEnv ai)
+  processor <- embeddingWorkerProcessor contexts capability env store
   started <- runApp defaultAppConfig [processor]
   case started of
     Left appErr ->
@@ -193,11 +196,10 @@ embeddingWorkerProcessor ::
   (IOE :> es, Store :> es, Error StoreError :> es) =>
   MemoryContextProvider (Eff es) ->
   VectorCapability ->
-  EmbeddingModel ->
-  Int ->
+  EmbeddingWorkerEnv ->
   KirokuStore ->
   Eff es (ProcessorId, QueueProcessor es)
-embeddingWorkerProcessor contexts capability model dims store = do
+embeddingWorkerProcessor contexts capability env store = do
   adapter <- kirokuAdapter store embeddingAdapterConfig
   pure
     ( ProcessorId embeddingWorkerName,
@@ -206,7 +208,7 @@ embeddingWorkerProcessor contexts capability model dims store = do
           -- The kiroku bridge is ack-coupled: a synchronous exception escaping
           -- the handler leaves the ack unfinalized and blocks the subscription
           -- worker forever. The guard turns that into a one-second retry.
-          handler = guardKirokuHandler (embeddingMessageHandler contexts capability (mkEmbeddingWorkerEnv model dims)),
+          handler = guardKirokuHandler (embeddingMessageHandler contexts capability env),
           ordering = StrictInOrder,
           concurrency = Serial
         }
@@ -302,6 +304,7 @@ handleEmbeddingEnvelope contexts capability env envelope =
                       (idText (d.memoryId :: MemoryId))
                       d.content
                   case outcome of
+                    EmbedFailed EmbedModelMismatch -> pure (AckDeadLetter (InvalidPayload "stored embedding model differs; re-embed this memory space"))
                     EmbedFailed err -> do
                       logWorker ("embedding failed, retrying: " <> Text.pack (show err))
                       pure (AckRetry retryDelay)
@@ -340,6 +343,8 @@ backfillMissingEmbeddings ::
   EmbeddingBackfillScope ->
   Eff es Int
 backfillMissingEmbeddings VectorAvailable env scope = do
+  compatible <- embeddingModelsCompatible (case scope of BackfillEverySpace -> Nothing; BackfillOneSpace space -> Just space) env.model
+  unless compatible (liftIO (ioError (userError "stored embedding model differs; re-embed the selected spaces before backfill")))
   candidates <- selectEmbeddingCandidates scope
   foldM embedCandidate 0 candidates
   where
@@ -347,6 +352,8 @@ backfillMissingEmbeddings VectorAvailable env scope = do
       | shouldSkipEmbedding candidate.hasEmbedding candidate.contentHash contentHash =
           pure count
       | otherwise = do
+          compatible <- embeddingModelCompatible candidate.memorySpaceId env.model
+          unless compatible (liftIO (ioError (userError "stored embedding model differs; re-embed the memory space before backfill")))
           outcome <-
             embedAndStore env candidate.memorySpaceId candidate.memoryId candidate.content contentHash
           case outcome of
@@ -418,8 +425,9 @@ embedMemoryContent VectorAvailable env memorySpaceId memoryId content = do
           pure (EmbedSpaceMismatch memorySpaceId state.memorySpaceId)
       | shouldSkipEmbedding state.hasEmbedding state.contentHash contentHash ->
           pure EmbedSkipped
-      | otherwise ->
-          embedAndStore env memorySpaceId memoryId content contentHash
+      | otherwise -> do
+          compatible <- embeddingModelCompatible memorySpaceId env.model
+          if compatible then embedAndStore env memorySpaceId memoryId content contentHash else pure (EmbedFailed EmbedModelMismatch)
   where
     contentHash = sha256Hex content
 embedMemoryContent _ _ _ _ _ = pure EmbedSkipped

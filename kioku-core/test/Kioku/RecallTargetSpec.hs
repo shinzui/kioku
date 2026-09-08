@@ -14,13 +14,13 @@
 --
 -- @embedding@ and @hybrid@ recall embed the query through
 -- 'Baikai.Embedding.EmbeddingModel', which is an HTTP endpoint; running them through
--- 'Kioku.Recall.recall' would need a live embedding service. The target predicate lives in the
+-- 'Kioku.Recall.recallWithEmbeddingAdapter' would need a live embedding service. The target predicate lives in the
 -- channels, not above them, so the matrix drives 'Kioku.Recall.selectFtsCandidates' and
 -- 'Kioku.Recall.selectVectorCandidates' directly and fuses their results with
 -- 'Kioku.Recall.fuseRecallCandidates' for the hybrid row — which is exactly what recall does with
 -- them. Fusion is pure and set-union-like, so it cannot introduce a row neither channel returned.
 --
--- The keyword row is /also/ run through the public 'Kioku.Recall.recall', which needs no
+-- The keyword row is /also/ run through the public 'Kioku.Recall.recallWithEmbeddingAdapter', which needs no
 -- embedding, so the whole entry point is proven for all three targets and not just the SQL under
 -- it.
 module Kioku.RecallTargetSpec (tests) where
@@ -56,7 +56,7 @@ import Kioku.Recall
     ftsCandidateSql,
     fuseRecallCandidates,
     mkRecallLimit,
-    recall,
+    recallWithEmbeddingAdapter,
     resolveRecall,
     selectFtsCandidates,
     selectVectorCandidates,
@@ -183,7 +183,7 @@ channelIdsIn space strategy target = do
 
 -- * The public entry point
 
--- | The same three targets through 'Kioku.Recall.recall' itself, keyword-only so that no
+-- | The same three targets through 'Kioku.Recall.recallWithEmbeddingAdapter' itself, keyword-only so that no
 -- embedding endpoint is involved.
 --
 -- 'VectorExtensionUnavailable' makes the keyword plan a guarantee rather than a hope, which is
@@ -213,7 +213,7 @@ runKeywordRecall ::
   Eff es (Either RecallError [Text])
 runKeywordRecall context target =
   fmap (sort . fmap (\hit -> hit.memory.memoryId))
-    <$> recall
+    <$> recallWithEmbeddingAdapter
       undefinedModel
       VectorExtensionUnavailable
       context

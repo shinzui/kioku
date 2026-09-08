@@ -33,6 +33,7 @@ module Kioku.Recall
     RecallHit (..),
     RecallExecutionPlan (..),
     recall,
+    recallWithEmbeddingAdapter,
 
     -- * The pre-target API, kept for one release
     RecallRequest (..),
@@ -75,7 +76,7 @@ module Kioku.Recall
   )
 where
 
-import Baikai.Embedding (EmbeddingModel)
+import Baikai.Embedding (EmbeddingModel, emptyEmbeddingModel)
 import Data.Aeson qualified as Aeson
 import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as BL
@@ -97,6 +98,8 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
+import Kioku.AI.Config
+import Kioku.AI.Runtime (AIRuntime, runtimeEmbeddingModel)
 import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId, memoryContextSpace)
 import Kioku.Api.Recall
   ( RecallLimit,
@@ -120,7 +123,7 @@ import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeF
 import Kioku.Api.Types (MemoryRecord (..), MemoryType, memoryTypeToText)
 import Kioku.Database.Schema (memoriesTable)
 import Kioku.Id (MemoryId, SessionId, idText)
-import Kioku.Memory.Embedding (embedWithRetry)
+import Kioku.Memory.Embedding (embedWithRetry, embeddingModelCompatible)
 import Kioku.Memory.ReadModel
   ( MemoriesByNamespaceQuery (..),
     MemoriesByScopeQuery (..),
@@ -139,6 +142,7 @@ import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..))
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Transaction (runTransaction)
+import System.IO qualified
 
 -- $testSeams
 -- Exported so the candidate SQL can be exercised directly against a real database
@@ -198,6 +202,7 @@ data RecallError
     -- @RecallSpaceMismatch requested authorized@. Only 'legacyRecall' can produce this, because
     -- only the legacy request carries a space of its own.
     RecallSpaceMismatch !MemorySpaceId !MemorySpaceId
+  | RecallAIUnavailable !AIExecutionError
   deriving stock (Generic, Eq, Show)
 
 data RecallHit = RecallHit
@@ -346,14 +351,30 @@ data FusedCandidate = FusedCandidate
 -- The context is not asked for a second permission. A 'MemoryAccessContext' exists only for
 -- permissions 'Kioku.Api.Access.authorizeMemoryAccess' already checked against this space, which
 -- is the same reason the read functions below take only a space — see "Kioku.Memory".
-recall ::
+-- | Policy-aware recall. Hybrid degrades visibly to keyword; explicit vector
+-- requests retain an unavailable error rather than reporting an empty success.
+recall :: (IOE :> es, Store :> es) => AIRuntime -> VectorCapability -> MemoryAccessContext -> RecallQuery -> Eff es (Either RecallError [RecallHit])
+recall ai capability context request = case runtimeEmbeddingModel ai QueryEmbedding of
+  Right model -> do
+    compatible <- if capability == VectorAvailable && request.strategy /= Keyword then embeddingModelCompatible (memoryContextSpace context) model else pure True
+    if compatible
+      then recallWithEmbeddingAdapter model capability context request
+      else pure (Left (RecallAIUnavailable (AIExecutionRefused QueryEmbedding "stored embedding model differs; re-embed the memory space before semantic recall")))
+  Left err -> case request.strategy of
+    Embedding -> pure (Left (RecallAIUnavailable err))
+    _ -> do
+      when (request.strategy == Hybrid) (liftIO (System.IO.hPutStrLn System.IO.stderr "kioku recall: query embeddings disabled by AI policy; using keyword search"))
+      recallWithEmbeddingAdapter emptyEmbeddingModel VectorExtensionUnavailable context request {strategy = Keyword}
+
+-- | Explicit host/test adapter. The supplied model is an independent API capability.
+recallWithEmbeddingAdapter ::
   (IOE :> es, Store :> es) =>
   EmbeddingModel ->
   VectorCapability ->
   MemoryAccessContext ->
   RecallQuery ->
   Eff es (Either RecallError [RecallHit])
-recall model capability context request =
+recallWithEmbeddingAdapter model capability context request =
   Right <$> runResolvedRecall model capability (resolveRecall (memoryContextSpace context) request)
 
 {-# DEPRECATED legacyRecall "Use recall with a RecallQuery. ScopeGlobal in a RecallRequest means namespace-wide, which is legacyRecallTarget's mapping; the exact global bucket is ExactScope (ScopeGlobal ns)." #-}
@@ -384,7 +405,7 @@ legacyRecall model capability context req
       pure (Left (RecallSpaceMismatch req.memorySpaceId authorized))
   | req.maxResults <= 0 = pure (Right [])
   | otherwise =
-      recall
+      recallWithEmbeddingAdapter
         model
         capability
         context

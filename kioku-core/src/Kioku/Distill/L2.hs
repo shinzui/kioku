@@ -41,12 +41,13 @@ import Hasql.Transaction qualified as Tx
 import Keiro.Projection (InlineProjection (..))
 import Keiro.ReadModel (ReadModelError)
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
+import Kioku.AI.Config
 import Kioku.Api.Access (MemoryContextProvider, MemorySpaceId, legacyMemorySpaceId)
 import Kioku.Api.Scope (MemoryScope, scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.Database.Schema (memoriesTable, scenesTable)
 import Kioku.Distill.L3 (partitionedCorrelationId, scheduleL3PersonaTimerTx)
-import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runSceneDistillation)
+import Kioku.Distill.Runtime (DistillRuntime, distillAvailability, distillWorkspaceRoot, runSceneDistillation)
 import Kioku.Distill.Scene (SceneInput (..), SceneOutput (..))
 import Kioku.Distill.ScopeIdentity (escapeScopeComponent, scopeIdentity, scopeSlugFromColumns)
 import Kioku.Distill.Timer.Outcome
@@ -83,6 +84,7 @@ import System.FilePath ((</>))
 data L2Error
   = L2MemoryReadFailed !ReadModelError
   | L2SceneReadFailed
+  | L2ExecutionFailed !AIExecutionError
   | L2SceneGenerationFailed !Text
   deriving stock (Generic, Show)
 
@@ -278,7 +280,7 @@ regenerateScene rt memorySpaceId scope = do
                     atoms = field (renderAtoms atoms)
                   }
           case outputResult of
-            Left err -> pure (Left (L2SceneGenerationFailed (Text.pack (show err))))
+            Left err -> pure (Left (L2ExecutionFailed err))
             Right output -> do
               now <- liftIO getCurrentTime
               let row =
@@ -319,7 +321,11 @@ fireL2SceneTimer contextProvider rt row =
     "L2 scene timer"
     contextProvider
     row
-    (regenerateScene rt)
+    (\case L2ExecutionFailed err -> Just err; _ -> Nothing)
+    ( \space scope -> case distillAvailability rt Scene of
+        Left err -> pure (Left (L2ExecutionFailed err))
+        Right () -> regenerateScene rt space scope
+    )
 
 lookupScene ::
   (Store :> es) =>

@@ -279,7 +279,7 @@ testRecallReads =
     -- from the context rather than from the request -- so there is no argument a caller could
     -- pass here that would reach the other space.
     hits <-
-      Recall.recall
+      Recall.recallWithEmbeddingAdapter
         undefinedModel
         VectorExtensionUnavailable
         testContext

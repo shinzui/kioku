@@ -41,6 +41,7 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), TimerRow (..), scheduleTimerTx)
+import Kioku.AI.Config
 import Kioku.Api.Access
   ( MemoryContextProvider,
     MemorySpaceId,
@@ -50,7 +51,7 @@ import Kioku.Api.Access
 import Kioku.Api.Scope (MemoryScope, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Database.Schema (personasTable, scenesTable)
 import Kioku.Distill.Persona (PersonaInput (..), PersonaOutput (..))
-import Kioku.Distill.Runtime (DistillRuntime, distillWorkspaceRoot, runPersonaDistillation)
+import Kioku.Distill.Runtime (DistillRuntime, distillAvailability, distillWorkspaceRoot, runPersonaDistillation)
 import Kioku.Distill.ScopeIdentity (scopeIdentity, scopeSlugFromColumns)
 import Kioku.Distill.Timer.Outcome
   ( FireOutcome,
@@ -74,6 +75,7 @@ import System.FilePath ((</>))
 
 data L3Error
   = L3SceneGenerationUnavailable
+  | L3ExecutionFailed !AIExecutionError
   | L3PersonaGenerationFailed !Text
   deriving stock (Generic, Show)
 
@@ -202,7 +204,7 @@ regeneratePersona rt memorySpaceId scope = do
                     scenes = field (renderScenes scenes)
                   }
           case outputResult of
-            Left err -> pure (Left (L3PersonaGenerationFailed (Text.pack (show err))))
+            Left err -> pure (Left (L3ExecutionFailed err))
             Right output -> do
               now <- liftIO getCurrentTime
               let row =
@@ -239,7 +241,11 @@ fireL3PersonaTimer contextProvider rt row =
     "L3 persona timer"
     contextProvider
     row
-    (regeneratePersona rt)
+    (\case L3ExecutionFailed err -> Just err; _ -> Nothing)
+    ( \space scope -> case distillAvailability rt Persona of
+        Left err -> pure (Left (L3ExecutionFailed err))
+        Right () -> regeneratePersona rt space scope
+    )
 
 getPersonaByScope ::
   (Store :> es) =>

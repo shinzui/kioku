@@ -17,10 +17,13 @@ Each upward step is driven by a **pure LLM program** (a shikumi/baikai program w
 input/output signature). The programs are deterministic in structure: typed inputs in, typed
 outputs out, with the model filling the schema.
 
-All four programs call **Claude Haiku 4.5** and need **`ANTHROPIC_API_KEY`**. This is a *different*
-credential from the embeddings endpoint: the `KIOKU_EMBEDDING_*` settings in
-[Configuration](configuration.md) govern embeddings only. The model is currently hard-coded and is
-not configurable.
+All four programs use the explicit Baikai configuration described in
+[Configuration](configuration.md). There is no implicit provider or model. API, batch, and
+interactive execution have separate permissions; absent configuration disables generation.
+Interactive output must pass the same Shikumi schema and domain validation as completion output.
+Background interactive work is parked durably with a deferred reason. Atomic authorized resume
+is pending the Keiro prerequisite recorded in plan 41; this is not yet a complete interactive
+worker workflow.
 
 ## L0 — the evidence floor
 
@@ -91,7 +94,7 @@ The candidate finder is pluggable. The CLI exposes two:
 - **scan** (`--candidates scan`, default) — a recency/scope SQL scan. No embedding endpoint
   required.
 - **recall** (`--candidates recall`) — uses hybrid [recall](recall.md) to find the most similar
-  existing memories. A valid `KIOKU_EMBEDDING_*` endpoint enables semantic candidates; an
+  existing memories. An explicitly enabled `candidate-embedding` setting enables semantic candidates; an
   embedding failure falls back to FTS for that request.
 
 `--limit N` caps how many candidates are considered per atom (default `5`, range 1–50).

@@ -6,6 +6,7 @@ module Kioku.EmbeddingWorkerSpec
 where
 
 import Baikai.Embedding (EmbeddingModel)
+import Baikai.Embedding qualified as Embedding
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Functor.Contravariant ((>$<))
@@ -79,6 +80,7 @@ tests =
       testCase "provider failure acks retry" testProviderFailureRetries,
       testCase "undecodable payload acks dead-letter" testUndecodablePayloadDeadLetters,
       testCase "successful embedding acks ok and stores the vector" testSuccessStoresEmbedding,
+      testCase "changing embedding model refuses before invoking the provider" testModelMismatchRefuses,
       testCase "dimension mismatch halts the processor" testDimensionMismatchHalts,
       testCase "a refused memory space acks dead-letter" testRefusedSpaceDeadLetters,
       testCase "an envelope naming another space acks dead-letter and writes nothing" testForgedSpaceDeadLetters,
@@ -152,6 +154,20 @@ testSuccessStoresEmbedding =
         pure (decision, stored)
     decision @?= AckOk
     assertBool "the memory row has an embedding and a content hash" stored
+
+testModelMismatchRefuses :: Assertion
+testModelMismatchRefuses = withVectorEnv "model compatibility" $ \app capability -> do
+  decision <- runOrFail app $ do
+    (_, recorded) <- recordFixtureMemory testContext "first model's vector"
+    let original = mkTestEnv (\_ -> pure (Right (Vector.replicate embeddingDims 0.1)))
+    first <- embeddingHandler testContextProvider capability original (mkIngested recorded (Just 0))
+    liftIO (first @?= AckOk)
+    (_, second) <- recordFixtureMemory testContext "must not mix another model"
+    let changed = original {model = testModel {Embedding.modelId = "different-model"}, embed = \_ -> assertFailure "incompatible embedding provider was called"}
+    embeddingHandler testContextProvider capability changed (mkIngested second (Just 0))
+  case decision of
+    AckDeadLetter (InvalidPayload _) -> pure ()
+    other -> assertFailure ("expected permanent model mismatch, got " <> show other)
 
 -- | The one case where halting is right. A dimension mismatch is a permanent,
 -- systemic store error: every subsequent event would fail identically, so

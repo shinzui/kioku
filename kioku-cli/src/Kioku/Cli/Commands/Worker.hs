@@ -5,19 +5,23 @@ module Kioku.Cli.Commands.Worker
   )
 where
 
+import Baikai.Embedding (EmbeddingModel)
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (race)
 import Control.Exception (SomeException, displayException, try)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Effectful (Eff, IOE, (:>))
+import Kioku.AI.Config (AIFeature (MemoryEmbedding))
+import Kioku.AI.Runtime (AIRuntime)
 import Kioku.Api.Access (MemorySpaceId, memorySpaceIdText, mkMemorySpaceId)
 import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
+import Kioku.Cli.AIConfig (aiConfigOption, loadAIRuntime)
 import Kioku.Cli.Context (cliContextProvider)
 import Kioku.Distill.L1 (FindMergeCandidates, recallCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
-import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
+import Kioku.Memory.Embedding (resolveEmbeddingConfig)
 import Kioku.Memory.Embedding.Worker
   ( EmbeddingBackfillScope (..),
     backfillMissingEmbeddings,
@@ -44,13 +48,17 @@ import System.IO (hPutStrLn, stderr)
 -- operator run a backfill, see a count, and never learn that the other spaces are still
 -- unsearchable.
 data WorkerOptions
-  = WorkerContinuous
+  = WorkerConfigured !FilePath !WorkerOptions
+  | WorkerContinuous
   | WorkerBackfill !EmbeddingBackfillScope
   | WorkerTimersOnce
   deriving stock (Eq, Show)
 
 workerOptionsParser :: Parser WorkerOptions
-workerOptionsParser =
+workerOptionsParser = (\config mode -> maybe mode (`WorkerConfigured` mode) config) <$> aiConfigOption <*> workerModeParser
+
+workerModeParser :: Parser WorkerOptions
+workerModeParser =
   ( flag'
       WorkerBackfill
       ( long "backfill"
@@ -84,22 +92,34 @@ parseMemorySpace raw =
     Right space -> Right space
 
 runWorker :: WorkerOptions -> IO ()
-runWorker opts = do
+runWorker opts = case opts of
+  WorkerConfigured path mode -> runConfiguredWorker (Just path) mode
+  _ -> runConfiguredWorker Nothing opts
+
+runConfiguredWorker :: Maybe FilePath -> WorkerOptions -> IO ()
+runConfiguredWorker path opts = do
+  ai <- loadAIRuntime False path
+  case opts of
+    WorkerBackfill _ -> either (dieWorker . show) (const (pure ())) (resolveEmbeddingConfig ai MemoryEmbedding)
+    _ -> pure ()
   connStr <- requireEnv "PG_CONNECTION_STRING"
-  config <- resolveEmbeddingConfig
   let settings = defaultConnectionSettings (Text.pack connStr)
   withStore settings $ \st ->
-    withNoopAppEnv settings \env ->
-      case opts of
-        WorkerTimersOnce -> runTimerOnce env config
-        WorkerBackfill scope -> withCapability env config \capability ->
-          runBackfill env capability config scope
-        WorkerContinuous -> withCapability env config \capability ->
-          runContinuousWorker env st capability config
+    withNoopAppEnv settings \env -> case opts of
+      WorkerTimersOnce -> runTimerOnce ai env
+      WorkerBackfill scope -> case resolveEmbeddingConfig ai MemoryEmbedding of
+        Left err -> dieWorker (show err)
+        Right model -> withCapability env model $ \capability -> runBackfill ai env capability scope
+      WorkerContinuous -> case resolveEmbeddingConfig ai MemoryEmbedding of
+        Left _ -> do
+          putStrLn "Memory embeddings disabled by AI policy; running timer worker only."
+          runTimerLoop ai env VectorExtensionUnavailable
+        Right model -> withCapability env model $ \capability -> runContinuousWorker ai env st capability model
+      WorkerConfigured nested mode -> runConfiguredWorker (Just nested) mode
 
-withCapability :: AppEnv -> EmbeddingConfig -> (VectorCapability -> IO a) -> IO a
-withCapability env config k = do
-  result <- runAppIO env (detectVectorCapability config.dimensions)
+withCapability :: AppEnv -> EmbeddingModel -> (VectorCapability -> IO a) -> IO a
+withCapability env _config k = do
+  result <- runAppIO env (detectVectorCapability 1536)
   case result of
     Left storeErr -> ioError (userError ("kioku worker store error: " <> show storeErr))
     Right capability -> k capability
@@ -111,25 +131,25 @@ withCapability env config k = do
 -- so no capability gating is needed here.
 mergeCandidateFinder ::
   (IOE :> es, Store :> es) =>
-  EmbeddingConfig ->
+  AIRuntime ->
   VectorCapability ->
   FindMergeCandidates es
-mergeCandidateFinder config capability =
-  recallCandidates (toEmbeddingModel config) capability mergeCandidateLimit
+mergeCandidateFinder ai capability =
+  recallCandidates ai capability mergeCandidateLimit
 
 mergeCandidateLimit :: Int
 mergeCandidateLimit = 8
 
-runBackfill :: AppEnv -> VectorCapability -> EmbeddingConfig -> EmbeddingBackfillScope -> IO ()
-runBackfill env capability config scope = do
+runBackfill :: AIRuntime -> AppEnv -> VectorCapability -> EmbeddingBackfillScope -> IO ()
+runBackfill ai env capability scope = do
   -- Refuse before any event is touched: a backfill under a mismatched dimension count would
   -- embed every memory in the store and fail the ::vector cast on every single one.
   case capability of
     VectorDimensionMismatch configured actual ->
       dieWorker (dimensionMismatchMessage configured actual)
     _ -> pure ()
-  let model = toEmbeddingModel config
-  result <- runAppIO env (backfillMissingEmbeddings capability (mkEmbeddingWorkerEnv model config.dimensions) scope)
+  embeddingEnv <- either (ioError . userError . show) pure (mkEmbeddingWorkerEnv ai)
+  result <- runAppIO env (backfillMissingEmbeddings capability embeddingEnv scope)
   case result of
     Left storeErr -> ioError (userError ("kioku worker backfill store error: " <> show storeErr))
     Right count ->
@@ -152,18 +172,17 @@ backfillScopeLabel = \case
 -- 'race' makes both directions loud: whichever pipeline stops first ends the
 -- race, and the process exits non-zero with a reason so a supervisor restarts
 -- it. Neither side is expected to return at all.
-runContinuousWorker :: AppEnv -> KirokuStore -> VectorCapability -> EmbeddingConfig -> IO ()
-runContinuousWorker env store capability config = do
-  let model = toEmbeddingModel config
+runContinuousWorker :: AIRuntime -> AppEnv -> KirokuStore -> VectorCapability -> EmbeddingModel -> IO ()
+runContinuousWorker ai env store capability _config = do
   contexts <- cliContextProvider @(Eff AppEffects)
   case capability of
     VectorAvailable -> do
-      startupBackfill env capability config
+      startupBackfill ai env capability
       outcome <-
         try @SomeException $
           race
-            (runTimerLoop env capability config)
-            (runAppIO env (runEmbeddingWorkerHost store contexts capability model config.dimensions))
+            (runTimerLoop ai env capability)
+            (runAppIO env (runEmbeddingWorkerHost store contexts capability ai))
       case outcome of
         -- A halted processor can tear its own machinery down hard enough to
         -- surface as an exception rather than a clean return (shibuya's halt path
@@ -181,16 +200,16 @@ runContinuousWorker env store capability config = do
           dieWorker "embedding worker stopped (processor halted or subscription ended)"
     VectorExtensionUnavailable -> do
       putStrLn "pgvector is not available; recall will run FTS-only; running kioku timer worker only."
-      runTimerLoop env capability config
+      runTimerLoop ai env capability
     VectorColumnsUnavailable missing -> do
       putStrLn ("pgvector columns are missing (" <> Text.unpack (Text.intercalate ", " missing) <> "); running kioku timer worker only.")
-      runTimerLoop env capability config
+      runTimerLoop ai env capability
     -- Loud, but not fatal. Every embedding write would fail on the ::vector cast, so there
     -- is no point starting the embedding host — but distillation timers have nothing to do
     -- with embeddings, and killing the whole worker would stop them too.
     VectorDimensionMismatch configured actual -> do
       hPutStrLn stderr ("kioku worker: " <> dimensionMismatchMessage configured actual <> "; running kioku timer worker only.")
-      runTimerLoop env capability config
+      runTimerLoop ai env capability
 
 -- | A dimension mismatch would otherwise be discovered one failed event at a time, forever.
 dimensionMismatchMessage :: Int -> Int -> String
@@ -209,14 +228,15 @@ dimensionMismatchMessage configured actual =
 -- It covers every space, not @KIOKU_MEMORY_SPACE@: this process is about to subscribe to every
 -- space's memory events, so recovering only one space's would leave the others' recall degraded
 -- with nothing to say so.
-startupBackfill :: AppEnv -> VectorCapability -> EmbeddingConfig -> IO ()
-startupBackfill env capability config = do
+startupBackfill :: AIRuntime -> AppEnv -> VectorCapability -> IO ()
+startupBackfill ai env capability = do
+  embeddingEnv <- either (ioError . userError . show) pure (mkEmbeddingWorkerEnv ai)
   result <-
     runAppIO
       env
       ( backfillMissingEmbeddings
           capability
-          (mkEmbeddingWorkerEnv (toEmbeddingModel config) config.dimensions)
+          embeddingEnv
           BackfillEverySpace
       )
   case result of
@@ -230,14 +250,14 @@ dieWorker msg = do
   hPutStrLn stderr ("kioku worker: " <> msg <> "; exiting")
   exitWith (ExitFailure 1)
 
-runTimerOnce :: AppEnv -> EmbeddingConfig -> IO ()
-runTimerOnce env config = do
-  rt <- newDistillRuntime
+runTimerOnce :: AIRuntime -> AppEnv -> IO ()
+runTimerOnce ai env = do
+  let rt = newDistillRuntime ai Nothing
   contexts <- cliContextProvider @(Eff AppEffects)
   now <- getCurrentTime
   result <- runAppIO env do
-    capability <- detectVectorCapability config.dimensions
-    runKiokuTimerWorkerOnce Nothing contexts rt (mergeCandidateFinder config capability) now
+    capability <- detectVectorCapability 1536
+    runKiokuTimerWorkerOnce Nothing contexts rt (mergeCandidateFinder ai capability) now
   case result of
     Left storeErr -> ioError (userError ("kioku timer worker store error: " <> show storeErr))
     Right Nothing -> putStrLn "No due kioku distillation timers."
@@ -255,13 +275,13 @@ runTimerOnce env config = do
 -- This never returns normally, so 'race' seeing it finish genuinely means
 -- something impossible happened. Non-store exceptions propagate to 'race', which
 -- is equally loud.
-runTimerLoop :: AppEnv -> VectorCapability -> EmbeddingConfig -> IO ()
-runTimerLoop env capability config = do
-  rt <- newDistillRuntime
+runTimerLoop :: AIRuntime -> AppEnv -> VectorCapability -> IO ()
+runTimerLoop ai env capability = do
+  let rt = newDistillRuntime ai Nothing
   contexts <- cliContextProvider @(Eff AppEffects)
   putStrLn "kioku timer worker started."
   let go failures = do
-        result <- runAppIO env (drainKiokuTimers Nothing contexts rt (mergeCandidateFinder config capability))
+        result <- runAppIO env (drainKiokuTimers Nothing contexts rt (mergeCandidateFinder ai capability))
         case result of
           Left storeErr -> do
             hPutStrLn stderr ("kioku timer worker: store error (will retry): " <> show storeErr)

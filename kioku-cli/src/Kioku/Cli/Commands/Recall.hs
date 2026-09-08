@@ -37,10 +37,10 @@ import Kioku.Api.Access (memoryContextSpace, memorySpaceIdText)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (MemoryRecord (..))
 import Kioku.App (runAppIO, withNoopAppEnv)
+import Kioku.Cli.AIConfig (aiConfigOption, loadAIRuntime)
 import Kioku.Cli.Context (cliMemoryContext)
 import Kioku.Cli.Options (boundedIntReader)
 import Kioku.Cli.Scope (parseNamespaceOnly, parseScope)
-import Kioku.Memory.Embedding (EmbeddingConfig (..), resolveEmbeddingConfig, toEmbeddingModel)
 import Kioku.Recall
   ( RecallHit (..),
     RecallStrategy (..),
@@ -63,7 +63,8 @@ data RecallOptions = RecallOptions
     target :: !RecallTarget,
     strategy :: !RecallStrategy,
     limit :: !Int,
-    showScores :: !Bool
+    showScores :: !Bool,
+    aiConfig :: !(Maybe FilePath)
   }
   deriving stock (Eq, Show)
 
@@ -90,6 +91,7 @@ recallOptionsParser =
       ( long "show-scores"
           <> help "Print fused scores and component ranks"
       )
+    <*> aiConfigOption
 
 -- | Exactly one of the three target flags, and never two.
 --
@@ -168,7 +170,7 @@ describeTarget = \case
 runRecall :: RecallOptions -> IO ()
 runRecall opts = do
   connStr <- requireEnv "PG_CONNECTION_STRING"
-  config <- resolveEmbeddingConfig
+  ai <- loadAIRuntime False opts.aiConfig
   context <- cliMemoryContext
   request <-
     case mkRecallQuery opts.target opts.query opts.strategy opts.limit of
@@ -185,10 +187,9 @@ runRecall opts = do
         <> Text.unpack (memorySpaceIdText (memoryContextSpace context))
     )
   withNoopAppEnv (defaultConnectionSettings (Text.pack connStr)) \env -> do
-    let model = toEmbeddingModel config
     result <- runAppIO env do
-      capability <- detectVectorCapability config.dimensions
-      recall model capability context request
+      capability <- detectVectorCapability 1536
+      recall ai capability context request
     case result of
       Left storeErr -> ioError (userError ("kioku recall store error: " <> show storeErr))
       Right (Left recallErr) -> ioError (userError ("kioku recall error: " <> show recallErr))

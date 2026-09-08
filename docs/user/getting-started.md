@@ -12,12 +12,9 @@ This guide takes you from an empty checkout to writing and recalling your first 
 - The **Nix dev shell** (recommended). kioku is a kikan project; the flake provides GHC, Cabal,
   `psql`, `process-compose`, a Postgres that **ships with pgvector**, and the `PG*` /
   `PG_CONNECTION_STRING` environment variables used by the `Justfile`.
-- An **OpenAI-compatible embedding endpoint** if you want semantic recall. By default kioku calls
-  `https://api.openai.com` with `text-embedding-3-small` (1536 dimensions — the embedding column is
-  fixed at that width). See [Configuration](configuration.md).
-- An **`ANTHROPIC_API_KEY`** if you want the distillation pyramid. Distillation calls Claude, which
-  is a **separate credential** from the embedding endpoint — setting up embeddings does not set up
-  distillation. This trips people up constantly.
+- An explicit [AI configuration file](configuration.md) if you want generation or semantic
+  recall. No configuration means disabled AI. The interactive example needs an authorized
+  foreground session; embeddings require a separate API capability.
 
 ## 1. Enter the dev shell
 
@@ -167,7 +164,7 @@ kioku demo-session --yes-write-events
 To turn a session's evidence into memory atoms (L1 distillation), run:
 
 ```bash
-export ANTHROPIC_API_KEY='sk-ant-…'          # distillation calls Claude
+export KIOKU_AI_CONFIG=/path/to/ai-api.json  # explicit API authorization; supply its named credentials
 kioku distill session <SESSION_ID>
 ```
 
