@@ -73,7 +73,7 @@ library
   ghc-prof-options: -fno-opt-coercion
   build-depends:
     , async                 >=2.2       && <2.3
-    , baikai                ^>=0.6.0.0
+    , baikai                ^>=0.7.0.0
     , base                  >=4.21      && <5
     , containers            >=0.6       && <0.8
     , directory             >=1.3       && <1.4

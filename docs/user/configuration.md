@@ -64,7 +64,8 @@ Start with [the API example](../examples/ai-api.json) or
 per-feature replacements for `extraction`, `consolidation`, `scene`, and `persona`.
 Each replacement must be authorized by the same permissions.
 
-`api` selects a Baikai HTTP transport, model, provider, endpoint, and options.
+`api` selects a Baikai HTTP transport (`anthropic-messages`, `openai-completions`, or
+`openai-responses`), model, provider, endpoint, and options.
 `batch` selects a Baikai batch transport such as `anthropic-messages-cli` or
 `openai-completions-cli`; batch is a separate permission. `interactive` selects Claude or Codex,
 an explicit model, working directory, and optional effort. It launches the genuine terminal

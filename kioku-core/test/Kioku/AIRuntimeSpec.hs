@@ -8,6 +8,7 @@ import Baikai.Options qualified as O
 import Baikai.Provider.Registry qualified as R
 import Baikai.Response (emptyResponse)
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (IOException, try)
 import Control.Lens ((&), (.~))
 import Data.Aeson qualified as A
 import Data.Aeson.KeyMap qualified as KM
@@ -20,7 +21,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding (encodeUtf8)
 import Data.Vector qualified as V
 import Kioku.AI.Config
-import Kioku.AI.File (parseAIConfig)
+import Kioku.AI.File (loadAIRuntime, parseAIConfig)
 import Kioku.AI.Runtime
 import Kioku.Distill.Consolidate
 import Kioku.Distill.Extract
@@ -29,6 +30,8 @@ import Kioku.Distill.Runtime
 import Kioku.Distill.Scene
 import Shikumi.Schema.Types (field)
 import System.Exit (ExitCode (..))
+import System.IO (hClose)
+import System.IO.Temp (withSystemTempFile)
 import System.Posix.Files (createSymbolicLink)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -48,6 +51,30 @@ tests =
             "{\"version\":1,\"features\":{\"unknown\":{\"mode\":\"disabled\"}}}",
             "{\"version\":1,\"distillation\":{\"mode\":\"api\"}}"
           ],
+      testCase "file assembler authorizes Responses only with API permission" $
+        withSystemTempFile "kioku-responses.json" $ \path handle -> do
+          hClose handle
+          let config permissions =
+                A.object
+                  [ "version" A..= (1 :: Int),
+                    "permissions" A..= (permissions :: [T.Text]),
+                    "distillation"
+                      A..= A.object
+                        [ "mode" A..= ("api" :: T.Text),
+                          "api" A..= ("openai-responses" :: T.Text),
+                          "provider" A..= ("openai" :: T.Text),
+                          "model" A..= ("fixture-model" :: T.Text),
+                          "baseUrl" A..= ("https://example.invalid/v1" :: T.Text)
+                        ]
+                  ]
+          LBS.writeFile path (A.encode (config ["api"]))
+          rt <- loadAIRuntime False (Just path)
+          executionAvailability rt Extraction @?= Right ()
+          LBS.writeFile path (A.encode (config []))
+          refused <- try @IOException (loadAIRuntime False (Just path))
+          case refused of
+            Left _ -> pure ()
+            Right _ -> assertFailure "Responses was authorized without API permission",
       testCase "disabled construction and all features make no calls" $ do
         rt <- expect =<< newAIRuntime noHostCapabilities disabledAIConfig
         mapM_ (\f -> executionAvailability rt f @?= Left (AIDisabled f)) [minBound .. maxBound]

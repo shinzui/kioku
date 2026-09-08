@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Upgrade to `mori://shinzui/baikai/packages/baikai` 0.7.0.0 and
+  `mori://shinzui/shikumi/packages/shikumi` 0.4.0.0 with their compatible
+  provider and tracing packages. API configuration now supports the explicitly
+  selected `openai-responses` transport.
+
 - Require an explicit host-owned `AIRuntime` when constructing `DistillRuntime`; no
   implicit provider, model, or credential activation. Add per-feature configuration and
   validated interactive signature execution. Recall and embedding entry points now honor

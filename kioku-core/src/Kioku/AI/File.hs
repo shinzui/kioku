@@ -12,6 +12,7 @@ import Baikai.Provider.Claude.Interactive qualified as ClaudeInteractive
 import Baikai.Provider.OpenAI.Api qualified as OpenAI
 import Baikai.Provider.OpenAI.Cli qualified as Codex
 import Baikai.Provider.OpenAI.Interactive qualified as CodexInteractive
+import Baikai.Provider.OpenAI.Responses qualified as Responses
 import Baikai.Provider.Registry (newProviderRegistryFrom)
 import Control.Applicative ((<|>))
 import Control.Monad (unless)
@@ -35,7 +36,7 @@ loadAIRuntime foreground explicit = do
     Just path -> do
       bytes <- BS.readFile path
       (cfg, permissions) <- either (const (ioError (userError "kioku: invalid AI configuration; check version, feature names, modes and required settings"))) pure (eitherDecodeStrict bytes >>= parseEither parseAIConfig)
-      api <- if API `elem` permissions then Just <$> newProviderRegistryFrom [Claude.claudeMessagesProvider, OpenAI.openaiChatProvider] else pure Nothing
+      api <- if API `elem` permissions then Just <$> newProviderRegistryFrom [Claude.claudeMessagesProvider, OpenAI.openaiChatProvider, Responses.openaiResponsesProvider] else pure Nothing
       batch <- if Batch `elem` permissions then Just <$> newProviderRegistryFrom [ClaudeCli.claudeCliProvider ClaudeCli.defaultClaudeCliConfig, Codex.codexCliProvider Codex.defaultCodexCliConfig] else pure Nothing
       let launcher feature request = case Map.findWithDefault cfg.distillationDefault feature cfg.featureOverrides of
             InteractiveConfig I.InteractiveClaude _ -> either (const (Left (AIInteractiveFailed feature "Baikai refused interactive safety settings"))) Right <$> ClaudeInteractive.launchClaudeInteractive ClaudeInteractive.defaultClaudeInteractiveConfig request

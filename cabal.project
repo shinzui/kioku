@@ -22,16 +22,8 @@ constraints:
   pgmq-migration ^>=0.5.0.0,
   shibuya-pgmq-adapter ^>=0.14.0.0
 
--- Baikai 0.6 constrains http-client-tls to the 0.3 series, whose latest Cabal
--- revision requires crypton <1.1. http-client-tls 0.4 removes that dependency;
--- its changelog records only the internal digest-hash implementation swap and
--- its public manager API is unchanged. Keep Kioku's crypton 1.1 requirement and
--- admit the replacement in the Baikai packages that name the old series.
--- mori://snoyberg/http-client/packages/http-client-tls
+-- The Claude CLI integration still needs the TLS 0.4 compatibility override.
 allow-newer:
-  baikai:http-client-tls,
-  baikai-claude:http-client-tls,
-  baikai-openai:http-client-tls,
   claude:http-client-tls
 
 package blake3

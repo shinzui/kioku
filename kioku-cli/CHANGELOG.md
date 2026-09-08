@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Upgrade to `mori://shinzui/baikai/packages/baikai` 0.7.0.0 and
+  `mori://shinzui/shikumi/packages/shikumi` 0.4.0.0 with their compatible
+  provider and tracing packages. API configuration now supports the explicitly
+  selected `openai-responses` transport.
+
 - Add explicit AI configuration through `--ai-config FILE` and `KIOKU_AI_CONFIG`.
   Missing configuration disables AI; credentials do not enable it.
 - Add `worker deferred list` and `worker deferred resume TIMER_ID --ai-config FILE`.
