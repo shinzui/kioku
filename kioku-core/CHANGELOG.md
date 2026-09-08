@@ -1,21 +1,65 @@
 # Changelog
 
-## Unreleased
+## 0.6.0.0 — 2026-09-08
 
-- Upgrade to `mori://shinzui/baikai/packages/baikai` 0.7.0.0 and
-  `mori://shinzui/shikumi/packages/shikumi` 0.4.0.0 with their compatible
-  provider and tracing packages. API configuration now supports the explicitly
-  selected `openai-responses` transport.
+### Breaking Changes
 
-- Require an explicit host-owned `AIRuntime` when constructing `DistillRuntime`; no
-  implicit provider, model, or credential activation. Add per-feature configuration and
-  validated interactive signature execution. Recall and embedding entry points now honor
-  the same host policy, with explicitly named adapters for legacy model-based callers.
-- Add `Kioku.Distill.Timer.Deferred` for authorized paginated discovery and foreground
-  resume of the original parked timer. Resume rechecks permissions and execution availability,
-  renews its lease, fences finalization, and re-parks failed work for bounded explicit retry.
-- Require the released 0.16 cohort from `mori://shinzui/keiro/packages/keiro` and
+- `DistillRuntime` no longer exports its constructor or record fields, and `newDistillRuntime` is
+  gone. A runtime is now built from an explicit host-owned `AIRuntime`: there is no implicit
+  provider, model, or credential activation, and the settings a runtime captures cannot be
+  record-updated. Tests construct one through the new `testDistillRuntime`, `withTestRunners`, and
+  `withDistillWorkspace` seam.
+- `Kioku.Recall.recall` takes an `AIRuntime` where it took an `EmbeddingModel`, and resolves the
+  query embedding model through host policy. The previous shape survives unchanged as
+  `recallWithEmbeddingAdapter`, so a caller that already owns a model can move by renaming the
+  call. `RecallError` gains `RecallAIUnavailable`.
+- `Kioku.Distill.L1.recallCandidates` changes the same way; its previous shape is
+  `recallCandidatesWithEmbeddingAdapter`.
+- `resolveEmbeddingConfig` changes from `IO EmbeddingConfig` to
+  `AIRuntime -> AIFeature -> Either AIExecutionError EmbeddingModel`. The `KIOKU_EMBEDDING_BASE_URL`,
+  `KIOKU_EMBEDDING_MODEL`, `KIOKU_EMBEDDING_DIMENSIONS`, `KIOKU_EMBEDDING_API_KEY`, and
+  `OPENAI_API_KEY` environment variables no longer configure embedding; configuration comes from the
+  host's AI configuration file. `EmbeddingConfig`'s derived `Show` is replaced by a redacting
+  instance so credentials cannot reach a log through it.
+- `mkEmbeddingWorkerEnv` takes an `AIRuntime` and returns `Either AIExecutionError
+  EmbeddingWorkerEnv`. `runEmbeddingWorkerHost` takes an `AIRuntime` in place of an
+  `EmbeddingModel` and an explicit dimension count, and `embeddingWorkerProcessor` takes an already
+  prepared `EmbeddingWorkerEnv`.
+- Distillation error constructors are consolidated onto the execution error: `L1ExtractionFailed`
+  and `L1ConsolidationFailed` become `L1ExecutionFailed !AIExecutionError`, and L2 and L3 gain
+  `L2ExecutionFailed` and `L3ExecutionFailed` in place of their stringly-typed generation failures.
+- Requires the released 0.16 cohort from `mori://shinzui/keiro/packages/keiro` and
   `mori://shinzui/keiro/packages/keiro-core`.
+
+### Added
+
+- `Kioku.AI.Config`, `Kioku.AI.File`, `Kioku.AI.Interactive`, and `Kioku.AI.Runtime`: per-feature AI
+  configuration, an explicit versioned file boundary for loading it, and validated interactive
+  signature execution. Every AI-touching entry point now dispatches through one host-owned runtime,
+  and a missing configuration disables AI rather than falling back to ambient credentials.
+- `Kioku.Distill.Timer.Deferred`: authorized paginated discovery and foreground resume of the
+  original parked timer. Resume rechecks permissions and execution availability, renews its lease,
+  fences finalization, and re-parks failed work for bounded explicit retry.
+- `embeddingModelCompatible` and `embeddingModelsCompatible`, which refuse semantic recall,
+  candidate search, and backfill when a memory space's stored embedding model differs from the
+  configured one, instead of comparing vectors from two different models.
+
+### Changed
+
+- Upgraded to `mori://shinzui/baikai/packages/baikai` 0.7.0.0 and
+  `mori://shinzui/shikumi/packages/shikumi` 0.4.0.0 with their compatible provider and tracing
+  packages: `baikai-claude ^>=0.7.0.0`, `baikai-effectful ^>=0.4.0.1`, the newly required
+  `baikai-openai ^>=0.7.0.0`, `shikumi ^>=0.4.0.0`, and `shikumi-trace ^>=0.3.0.0`. API
+  configuration now supports the explicitly selected `openai-responses` transport, replacing the
+  hardcoded transport distillation used before. The `shikumi` bounds no longer need to sit at a
+  patch floor to stay on the cohort, so the pin's explanatory comment is dropped.
+- A hybrid recall whose query embeddings are disabled by AI policy now warns on stderr and falls
+  back to keyword search; an `Embedding` strategy under the same policy fails with
+  `RecallAIUnavailable` rather than silently degrading.
+- An L1 timer whose resolved context belongs to a different memory space than its payload now fails
+  permanently instead of proceeding, and a background worker that cannot execute interactively
+  dead-letters the timer with a `deferred` outcome naming the space, so the work can be resumed in
+  an authorized interactive session rather than being retried forever.
 
 ## 0.5.2.0 — 2026-08-31
 

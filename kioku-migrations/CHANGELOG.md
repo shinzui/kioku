@@ -1,11 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.6.0.0 — 2026-09-08
 
-- Adopt `mori://shinzui/keiro/packages/keiro-migrations` 0.16.0.0, including migration
-  0032 for timer resume claims and leases. The composed plan now contains 56 migrations
-  (Kiroku 11, Keiro 32, Kioku 13). Apply pending migrations before deferred discovery/resume;
-  no existing migration payload or checksum changes.
+### Breaking Changes
+
+- Adopted `mori://shinzui/keiro/packages/keiro-migrations` 0.16.0.0, whose appended migration
+  `keiro/0032` adds timer resume claims and leases. The composed plan now contains **56**
+  migrations: Kiroku 11, Keiro 32, and Kioku 13. A project that asserts on the plan's length or on
+  a trailing migration id must move to the new count. Apply pending migrations before using
+  deferred timer discovery or resume.
+
+### Changed
+
+- No Kioku migration payload or checksum changes in this release, and **no ledger fixup is
+  required**. `kiroku-store-migrations` and `pg-migrate` keep their existing bounds.
 
 ## 0.5.2.0 — 2026-08-31
 

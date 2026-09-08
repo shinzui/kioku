@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0.0 — 2026-09-08
+
+### Changed
+
+- Version bump only, to stay on Kioku's shared version while `kioku-core` moves AI execution behind
+  a host-owned runtime and `kioku-migrations` moves to the Keiro 0.16 cohort. This package's source
+  and API are unchanged.
+
 ## 0.5.2.0 — 2026-08-31
 
 ### Changed

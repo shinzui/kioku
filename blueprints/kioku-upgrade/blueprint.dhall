@@ -43,6 +43,18 @@ in  S.Blueprint::{
             }
           ]
         }
+      , S.BlueprintMigration::{
+        , from = "0.5.2.0"
+        , to = "0.6.0.0"
+        , prompt = ./migrations/0-5-2-0-to-0-6-0-0.md as Text
+        , entails =
+          [ S.EntailedEdge::{
+            , blueprint = "keiro-upgrade"
+            , from = "0.15.0.0"
+            , to = "0.16.0.0"
+            }
+          ]
+        }
       ]
     , tags =
       [ "haskell"

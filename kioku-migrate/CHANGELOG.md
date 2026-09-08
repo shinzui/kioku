@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0.0 — 2026-09-08
+
+### Breaking Changes
+
+- The composed plan grows to 56 migrations. `up`, `status`, and `verify` now report Kiroku 11,
+  Keiro 32, and Kioku 13, because `keiro-migrations` 0.16.0.0 appends `keiro/0032` for timer resume
+  claims and leases. Any deployment check asserting the previous count of 55 must be updated.
+
+### Changed
+
+- No Kioku migration payload changed, so this release needs no ledger fixup and no preflight action
+  beyond applying the one appended upstream migration.
+
 ## 0.5.2.0 — 2026-08-31
 
 ### Changed

@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.6.0.0 — 2026-09-08
+
+### Breaking Changes
+
+- **kioku-core:** AI execution is now host-owned and explicit. `DistillRuntime` hides its
+  constructor and record fields, `newDistillRuntime` is removed, and a runtime is built from an
+  `AIRuntime` the host supplies — no implicit provider, model, or credential activation. `recall`
+  and `Kioku.Distill.L1.recallCandidates` take an `AIRuntime` where they took an `EmbeddingModel`
+  (the previous shapes survive as `recallWithEmbeddingAdapter` and
+  `recallCandidatesWithEmbeddingAdapter`), `resolveEmbeddingConfig` becomes
+  `AIRuntime -> AIFeature -> Either AIExecutionError EmbeddingModel`, and the embedding worker's
+  `mkEmbeddingWorkerEnv`, `runEmbeddingWorkerHost`, and `embeddingWorkerProcessor` change
+  signature. Distillation errors consolidate onto `L1ExecutionFailed`, `L2ExecutionFailed`, and
+  `L3ExecutionFailed`, and `RecallError` gains `RecallAIUnavailable`.
+- **kioku-core, kioku-cli:** the `KIOKU_EMBEDDING_BASE_URL`, `KIOKU_EMBEDDING_MODEL`,
+  `KIOKU_EMBEDDING_DIMENSIONS`, `KIOKU_EMBEDDING_API_KEY`, and `OPENAI_API_KEY` environment
+  variables no longer configure or enable AI. Configuration comes from an explicit file selected by
+  `--ai-config FILE` or `KIOKU_AI_CONFIG`; absent configuration means AI is disabled.
+- **kioku-migrations, kioku-migrate:** `keiro-migrations` moves to `^>=0.16.0.0`, whose appended
+  `keiro/0032` adds timer resume claims and leases. The composed plan grows from 55 to **56**
+  migrations: Kiroku 11, Keiro 32, Kioku 13. Projects asserting on the plan's length must update
+  the count. No Kioku migration payload changed, so **no ledger fixup is required**.
+
+### Added
+
+- **kioku-core:** `Kioku.AI.Config`, `Kioku.AI.File`, `Kioku.AI.Interactive`, and
+  `Kioku.AI.Runtime` — per-feature AI configuration, an explicit versioned file boundary, and
+  validated interactive signature execution, so every AI-touching entry point honors one host
+  execution policy.
+- **kioku-core:** `Kioku.Distill.Timer.Deferred` — authorized paginated discovery and foreground
+  resume of the original parked timer, with lease renewal, fenced finalization, and bounded
+  explicit retry of re-parked work.
+- **kioku-core:** embedding-model compatibility checks that refuse semantic recall, candidate
+  search, and backfill when a memory space's stored model differs from the configured one.
+- **kioku-cli:** `kioku worker deferred list` and
+  `kioku worker deferred resume TIMER_ID --ai-config FILE`, plus the `--ai-config` option and
+  `Kioku.Cli.AIConfig`.
+
+### Changed
+
+- **Baikai and Shikumi cohorts:** `baikai`, `baikai-claude`, and the newly required
+  `baikai-openai` at `^>=0.7.0.0`, `baikai-effectful ^>=0.4.0.1`, `shikumi ^>=0.4.0.0`, and
+  `shikumi-trace ^>=0.3.0.0`. API configuration now supports the explicitly selected
+  `openai-responses` transport.
+- **Keiro cohort:** `keiro`, `keiro-core`, and `keiro-migrations` at `^>=0.16.0.0`.
+- **kioku-api:** version bump only; its source and API are unchanged.
+- Documentation: added the `docs/capabilities` OKF bundle recording 19 capabilities across the
+  released surface, an ADR for host-owned AI execution, and an automation that records a registry
+  release fact from each `kioku` tag.
+
 ## 0.5.2.0 — 2026-08-31
 
 ### Changed

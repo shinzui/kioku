@@ -1,17 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.6.0.0 — 2026-09-08
 
-- Upgrade to `mori://shinzui/baikai/packages/baikai` 0.7.0.0 and
-  `mori://shinzui/shikumi/packages/shikumi` 0.4.0.0 with their compatible
-  provider and tracing packages. API configuration now supports the explicitly
-  selected `openai-responses` transport.
+### Breaking Changes
 
-- Add explicit AI configuration through `--ai-config FILE` and `KIOKU_AI_CONFIG`.
-  Missing configuration disables AI; credentials do not enable it.
-- Add `worker deferred list` and `worker deferred resume TIMER_ID --ai-config FILE`.
-  Foreground resume uses configured execution capabilities and preserves original work;
-  background workers never receive interactive session ownership.
+- AI features are configured only through explicit host configuration. `--ai-config FILE` or
+  `KIOKU_AI_CONFIG` selects it; when neither is present AI is disabled, and credentials in the
+  environment no longer enable it. The `KIOKU_EMBEDDING_*` and `OPENAI_API_KEY` variables that
+  previously configured embedding are not consulted.
+- `kioku-migrate`-composed deployments move to a 56-migration plan; see the `kioku-migrations`
+  changelog. Any script asserting on the previous count needs updating before this release.
+
+### Added
+
+- `Kioku.Cli.AIConfig`, exposing the `--ai-config` option and the same versioned file boundary
+  embedded hosts use.
+- `kioku worker deferred list` and `kioku worker deferred resume TIMER_ID --ai-config FILE`.
+  Foreground resume uses the configured execution capabilities and preserves the original parked
+  work; background workers never receive interactive session ownership.
+
+### Changed
+
+- `recall`, `distill`, and the embedding worker all resolve their models through the configured
+  runtime, so a host that disables a feature disables it uniformly across commands.
 
 ## 0.5.2.0 — 2026-08-31
 

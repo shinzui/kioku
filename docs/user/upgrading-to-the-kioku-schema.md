@@ -125,7 +125,7 @@ hand-write registry SQL.
    DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- status
    ```
 
-   `status` must report all 55 migrations applied (Kiroku 11, Keiro 31, Kioku 13), with nothing
+   `status` must report all 56 migrations applied (Kiroku 11, Keiro 32, Kioku 13), with nothing
    pending or failed.
 5. **Grant schema usage if your runtime role is not the owner.** Table grants moved with the
    tables; usage on a schema that did not exist before is a separate privilege.

@@ -11,6 +11,7 @@ edit. What to edit is in the edge prompt.
 
 | Kioku | `keiro` / `keiro-core` | `kiroku-store` | `keiki` | `shibuya-core` | `shibuya-kiroku-adapter` | `baikai` |
 |---|---|---|---|---|---|---|
+| 0.6.0.0 | `^>=0.16.0.0` | `^>=0.8.0.0` | `^>=0.9.0.0` | `^>=0.9.0.0` | `^>=0.5.1.1` | `^>=0.7.0.0` |
 | 0.5.2.0 | `^>=0.15.0.0` | `^>=0.8.0.0` | `^>=0.9.0.0` | `^>=0.9.0.0` | `^>=0.5.1.1` | `^>=0.6.0.0` |
 | 0.5.1.0 | `^>=0.14.0.0` | `^>=0.8.0.0` | `^>=0.9.0.0` | `^>=0.9.0.0` | `^>=0.5.1.1` | `^>=0.6.0.0` |
 | 0.5.0.0 | `^>=0.14.0.0` | `^>=0.8.0.0` | `^>=0.9.0.0` | `^>=0.9.0.0` | `^>=0.5.1.1` | `^>=0.5.0.0` |
@@ -18,10 +19,23 @@ edit. What to edit is in the edge prompt.
 | 0.4.0.0 | `^>=0.13.0.0` | `^>=0.8.0.0` | `^>=0.9.0.0` | `^>=0.9.0.0` | `^>=0.5.1.1` | `^>=0.4.1.0` |
 | 0.3.0.0 | `^>=0.11.0.0` | `^>=0.3.0.1` | `^>=0.9.0.0` | `>=0.8.0.1 && <0.9` | `^>=0.4.0.0` | `^>=0.4.1.0` |
 
+### AI cohort
+
+`kioku-core` reaches its providers through Baikai and its programs through
+Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
+
+| Kioku | `baikai` / `baikai-claude` | `baikai-openai` | `baikai-effectful` | `shikumi` | `shikumi-trace` |
+|---|---|---|---|---|---|
+| 0.6.0.0 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
+| 0.5.2.0 | `^>=0.6.0.0` | — | `^>=0.4.0.0` | `^>=0.3.0.3` | `^>=0.2.0.3` |
+| 0.5.1.0 | `^>=0.6.0.0` | — | `^>=0.4.0.0` | `^>=0.3.0.3` | `^>=0.2.0.3` |
+| 0.5.0.0 | `^>=0.5.0.0` | — | `^>=0.3.0.0` | `^>=0.3.0.0` | `^>=0.2.0.0` |
+
 ## Migration cohort
 
 | Kioku | `keiro-migrations` | `kiroku-store-migrations` | `pg-migrate` |
 |---|---|---|---|
+| 0.6.0.0 | `^>=0.16.0.0` | `^>=0.4.0.0` | `^>=1.1.0.0` |
 | 0.5.2.0 | `^>=0.15.0.0` | `^>=0.4.0.0` | `^>=1.1.0.0` |
 | 0.5.1.0 | `^>=0.14.0.0` | `^>=0.4.0.0` | `^>=1.1.0.0` |
 | 0.5.0.0 | `^>=0.14.0.0` | `^>=0.4.0.0` | `^>=1.1.0.0` |
@@ -45,6 +59,7 @@ asserts on migration counts or ids needs the right row for its release.
 
 | Kioku | Total | Kiroku | Keiro | Kioku |
 |---|---|---|---|---|
+| 0.6.0.0 | 56 | 11 | 32 | 13 |
 | 0.5.2.0 | 55 | 11 | 31 | 13 |
 | 0.5.1.0 | 55 | 11 | 31 | 13 |
 | 0.5.0.0 | 55 | 11 | 31 | 13 |
@@ -56,6 +71,9 @@ asserts on migration counts or ids needs the right row for its release.
 Most Kioku migrations are additive, and additive migrations need no special
 action. These are the exceptions — releases that changed the payload of an
 **already-released** migration, and therefore its recorded checksum.
+
+0.6.0.0 requires none: it adds no Kioku migration and corrects no released
+payload. Its plan grows only through Keiro's appended `keiro/0032`.
 
 - **0.5.0.0 corrects `0011-kioku-memory-space-partition.sql`.** Its SHA-256
   changes from `eee9cd25…` to `6c83d3f0…`. A database that already applied
