@@ -4,7 +4,10 @@ title: Add indexed session and bounded memory read models
 description: >-
   Provide subject-reference session lookup plus SQL-bounded recall and retention-candidate queries
   so long-lived consumers do not scan unbounded Kioku histories in application memory.
-timestamp: 2026-07-30T14:36:35Z
+timestamp: "2026-07-30T14:36:35Z"
+generated:
+  by: human:nadeem
+  at: "2026-07-30T14:36:35Z"
 requestId: IR-2
 status: proposed
 origin: mori://shinzui/shikigami

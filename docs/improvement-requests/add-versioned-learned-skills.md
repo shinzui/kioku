@@ -4,7 +4,10 @@ title: Add versioned learned skills
 description: >-
   Let Kioku derive, review, version, activate, and retire reusable skills from successful
   sessions without treating executable guidance as an ordinary memory atom.
-timestamp: 2026-08-06T15:00:12Z
+timestamp: "2026-08-06T15:00:12Z"
+generated:
+  by: human:nadeem
+  at: "2026-08-06T15:00:12Z"
 requestId: IR-3
 status: proposed
 origin: mori://shinzui/kioku

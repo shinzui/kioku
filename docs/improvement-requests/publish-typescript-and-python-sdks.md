@@ -4,7 +4,10 @@ title: Publish TypeScript and Python SDKs
 description: >-
   Publish supported TypeScript and Python clients generated from Kioku's versioned OpenAPI
   contract, with ergonomic typed wrappers, safe retry behavior, and conformance tests.
-timestamp: 2026-08-06T15:00:12Z
+timestamp: "2026-08-06T15:00:12Z"
+generated:
+  by: human:nadeem
+  at: "2026-08-06T15:00:12Z"
 requestId: IR-5
 status: proposed
 origin: mori://shinzui/kioku

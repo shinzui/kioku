@@ -4,7 +4,10 @@ title: Add an authenticated HTTP service
 description: >-
   Ship an optional versioned HTTP service over Kioku's library API with Shomei authentication,
   Meibo principal resolution, En object authorization, bounded operations, and OpenAPI.
-timestamp: 2026-08-06T15:00:12Z
+timestamp: "2026-08-06T15:00:12Z"
+generated:
+  by: human:nadeem
+  at: "2026-08-06T15:00:12Z"
 requestId: IR-4
 status: proposed
 origin: mori://shinzui/kioku

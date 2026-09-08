@@ -4,11 +4,21 @@ title: Release Kioku for Keiki 0.4 and Keiro 0.4
 description: >-
   Publish a coherent Kioku release whose bounds, migrations, and runtime APIs support the released
   Keiki 0.4 and Keiro 0.4 families without downstream allow-newer overrides.
-timestamp: 2026-07-30T14:36:35Z
+timestamp: "2026-07-30T14:36:35Z"
+generated:
+  by: human:nadeem
+  at: "2026-07-30T14:36:35Z"
 requestId: IR-1
 status: completed
 origin: mori://shinzui/shikigami
-completedAt: 2026-07-31T03:46:15Z
+completedAt: "2026-07-31T03:46:15Z"
+resolution: >-
+  Completed by Kioku v0.2.0.0, released from commit
+  5765f98add2a87a356c70793a6ba54375ef5feec. All five packages are published on Hackage at
+  0.2.0.0 and admit the cohort without allow-newer: keiki ^>=0.4.0.0, keiro ^>=0.4.0.1,
+  keiro-core ^>=0.4.0.1, and keiro-migrations ^>=0.4.0.1. Kioku.CodecCompatSpec decodes
+  pre-upgrade event payload fixtures under the new cohort, and Shikigami plan 47 no longer
+  has an upstream release gate.
 ---
 
 # Improvement Request: Release Kioku for Keiki 0.4 and Keiro 0.4
