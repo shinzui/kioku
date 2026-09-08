@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-09-08
+* **Addition**: BUG-2 reports that the default distillation runtime hardcodes the Anthropic API in an interactive-only embedding host, causing missing-key failures and repeated retries. Records the operator policy, current documentation discrepancy, and required regression evidence.
+
 ## 2026-08-21
 * **Fix**: BUG-1 is fixed by correcting migration 0011, shipping its exact-checksum ledger re-baseline, and adding a composed-plan regression.
 
