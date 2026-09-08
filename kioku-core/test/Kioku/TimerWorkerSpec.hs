@@ -6,10 +6,17 @@ module Kioku.TimerWorkerSpec
 where
 
 import Baikai.Interactive qualified as Interactive
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (cancel, concurrently, waitCatch, withAsync)
+import Control.Concurrent.MVar
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString.Lazy qualified as LBS
 import Data.Functor.Contravariant ((>$<))
+import Data.IORef
 import Data.Int (Int64)
 import Data.Text qualified as Text
+import Data.Text.Encoding (encodeUtf8)
 import Data.Time (NominalDiffTime, addUTCTime, diffUTCTime)
 import Data.UUID qualified as UUID
 import Data.UUID.V4 qualified as UUIDv4
@@ -20,6 +27,7 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Timer (TimerId (..), TimerRequest (..), scheduleTimerTx)
+import Keiro.Timer qualified as Timer
 import Kioku.AI.Config
 import Kioku.AI.Runtime
 import Kioku.Api.Access
@@ -39,6 +47,8 @@ import Kioku.Distill.L2 (SceneTimerPayload (..), l2SceneProcessManagerName, l2Sc
 import Kioku.Distill.L3 (partitionedCorrelationId)
 import Kioku.Distill.Runtime (DistillRuntime, TestRunners (..), newDistillRuntime, testDistillRuntime, withDistillWorkspace, withTestRunners)
 import Kioku.Distill.Timer (L1TimerPayload (..), l1ExtractProcessManagerName)
+import Kioku.Distill.Timer.Deferred
+import Kioku.Distill.Timer.Outcome (FireOutcome (..), timerMarkerEventId)
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
 import Kioku.Id (SessionId, genSessionId, idText)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
@@ -53,6 +63,7 @@ import Kiroku.Store.Error (StoreError)
 import Kiroku.Store.Transaction (runTransaction)
 import Shibuya.Telemetry.Effect (Tracing)
 import Shikumi.Error (ShikumiError (..))
+import System.Exit (ExitCode (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 
@@ -60,7 +71,13 @@ tests :: TestTree
 tests =
   testGroup
     "Timer worker"
-    [ testCase "interactive unavailability stays parked across repeated worker runs" testInteractiveDeferred,
+    [ testCase "deferred discovery recovers an expired foreground claim" testExpiredResume,
+      testCase "ordinary dead letters and malformed payloads cannot resume" testNonDeferredRefusal,
+      testCase "deferred resume preflights preserve attempts and recheck access" testResumePreflight,
+      testCase "deferred resume has one concurrent winner" testConcurrentResume,
+      testCase "deferred listing follows storage pages across denied entries" testDeferredListing,
+      testCase "cancelled foreground resume re-parks the original timer" testCancelledResume,
+      testCase "interactive unavailability stays parked across repeated worker runs" testInteractiveDeferred,
       testCase "permanent failure dead-letters the timer" testPermanentFailureDeadLetters,
       testCase "transient failure reschedules with backoff" testTransientFailureReschedules,
       testCase "a timer scheduled before memory spaces fires in the legacy space" testPrePartitionPayloadFiresInLegacySpace,
@@ -567,3 +584,180 @@ expectRight :: (Show e) => String -> Either e a -> IO a
 expectRight label = \case
   Left err -> assertFailure (label <> " failed: " <> show err)
   Right value -> pure value
+
+parkFixture :: AppEnv -> IO TimerId
+parkFixture env = do
+  tid <- freshTimerId
+  sid <- genSessionId
+  runOrFail env $ do
+    startFixtureSession sid
+    scheduleTestTimer tid l1ExtractProcessManagerName (idText sid) (l1Payload testSpace) (-1)
+    void (Timer.deadLetterTimer tid "kioku:deferred:interactive-unavailable feature=extraction")
+  pure tid
+
+testResumePreflight :: Assertion
+testResumePreflight = withTimerEnv $ \env rt -> do
+  tid <- parkFixture env
+  before <- runOrFail env (fetchTimer tid)
+  denied <- runOrFail env (resumeDeferredTimer refusingContextProvider rt (scopedScanCandidates 5) tid)
+  denied @?= DeferredAccessDenied (MemoryPermissionDenied testSpace MemoryDistill)
+  wrong <- runOrFail env (resumeDeferredTimer wrongSpaceContextProvider rt (scopedScanCandidates 5) tid)
+  wrong @?= denied
+  disabled <- runOrFail env (resumeDeferredTimer testContextProvider (newDistillRuntime disabledAIRuntime Nothing) (scopedScanCandidates 5) tid)
+  disabled @?= DeferredExecutionUnavailable (AIDisabled Extraction)
+  unavailableAI <-
+    expectRight "unavailable runtime"
+      =<< newAIRuntime
+        noHostCapabilities {allowInteractive = True}
+        disabledAIConfig
+          { distillationDefault =
+              InteractiveConfig
+                Interactive.InteractiveClaude
+                ((Interactive.interactiveLaunchRequest "") {Interactive.modelId = Just "fixture"})
+          }
+  unavailable <- runOrFail env (resumeDeferredTimer testContextProvider (newDistillRuntime unavailableAI Nothing) (scopedScanCandidates 5) tid)
+  unavailable @?= DeferredExecutionUnavailable (InteractiveUnavailable Extraction)
+  after <- runOrFail env (fetchTimer tid)
+  after @?= before
+  runOrFail env (forceAttempts tid 8)
+  capped <- runOrFail env (resumeDeferredTimer testContextProvider rt (scopedScanCandidates 5) tid)
+  capped @?= DeferredClaimRefused
+
+testConcurrentResume :: Assertion
+testConcurrentResume = withTimerEnv $ \env _ -> do
+  tid <- parkFixture env
+  calls <- newIORef (0 :: Int)
+  entered <- newEmptyMVar
+  release <- newEmptyMVar
+  ai <-
+    expectRight "interactive runtime"
+      =<< newAIRuntime
+        noHostCapabilities
+          { allowInteractive = True,
+            launchInteractive =
+              Just
+                ( \_ request -> do
+                    modifyIORef' calls (+ 1)
+                    putMVar entered ()
+                    takeMVar release
+                    manifest <- expectRight "manifest" (Aeson.eitherDecodeStrict (encodeUtf8 (Text.drop 1 (snd (Text.breakOn "\n" request.userPrompt)))))
+                    case manifest of
+                      Aeson.Object object -> do
+                        let get key = fromMaybe (error "missing manifest key") (KM.lookup key object)
+                        output <- case get "outputFile" of
+                          Aeson.String path -> pure (Text.unpack path)
+                          _ -> fail "missing output file"
+                        LBS.writeFile
+                          output
+                          ( Aeson.encode
+                              ( Aeson.object
+                                  [ "requestId" Aeson..= get "requestId",
+                                    "feature" Aeson..= get "feature",
+                                    "result" Aeson..= Aeson.object ["atoms" Aeson..= ([] :: [Aeson.Value])]
+                                  ]
+                              )
+                          )
+                      _ -> fail "invalid manifest"
+                    pure (Right (Interactive.interactiveLaunchResult Interactive.InteractiveClaude ExitSuccess))
+                )
+          }
+        disabledAIConfig
+          { distillationDefault =
+              InteractiveConfig
+                Interactive.InteractiveClaude
+                ((Interactive.interactiveLaunchRequest "") {Interactive.modelId = Just "fixture"})
+          }
+  let resume = runOrFail env (resumeDeferredTimer testContextProvider (newDistillRuntime ai Nothing) (scopedScanCandidates 5) tid)
+  (winner, loser) <- concurrently resume (takeMVar entered >> resume <* putMVar release ())
+  case winner of
+    DeferredFinished (FireCompleted _) -> pure ()
+    other -> assertFailure (show other)
+  loser @?= DeferredNotEligible
+  readIORef calls >>= (@?= 1)
+  row <- runOrFail env (fetchTimer tid)
+  row.status @?= "fired"
+  row.attempts @?= 1
+  again <- resume
+  again @?= DeferredNotEligible
+
+testCancelledResume :: Assertion
+testCancelledResume = withTimerEnv $ \env rt -> do
+  tid <- parkFixture env
+  entered <- newEmptyMVar
+  never <- newEmptyMVar
+  let controlled = withTestRunners rt $ \r -> r {runExtract = \_ -> putMVar entered () >> takeMVar never}
+  withAsync (runOrFail env (resumeDeferredTimer testContextProvider controlled (scopedScanCandidates 5) tid)) $ \running -> do
+    takeMVar entered
+    cancel running
+    void (waitCatch running)
+  row <- runOrFail env (fetchTimer tid)
+  row.status @?= "dead"
+  row.attempts @?= 1
+  assertBool "reason preserved" (maybe False (Text.isPrefixOf "kioku:deferred:") row.lastError)
+
+testDeferredListing :: Assertion
+testDeferredListing = withTimerEnv $ \env _ -> do
+  tid <- parkFixture env
+  denied <- runOrFail env (listDeferredTimers refusingContextProvider (Timer.DeadTimerPageRequest 1 Nothing)) >>= expectRight "list"
+  denied.entries @?= []
+  allowed <- runOrFail env (listDeferredTimers testContextProvider (Timer.DeadTimerPageRequest 1 Nothing)) >>= expectRight "list"
+  map (\entry -> entry.timer.timerId) allowed.entries @?= [tid]
+  -- Include enough denied rows to put an allowed timer beyond an empty page.
+  otherIds <- sequence [freshTimerId, freshTimerId]
+  sid <- genSessionId
+  runOrFail env $ forM_ otherIds $ \other -> do
+    scheduleTestTimer other l1ExtractProcessManagerName (idText sid) (l1Payload otherSpace) (-1)
+    void (Timer.deadLetterTimer other "kioku:deferred:interactive-unavailable feature=extraction")
+  let onlyTest = MemoryContextProvider $ \space ->
+        pure $
+          if space == testSpace then Right testContext else Left (MemoryPermissionDenied space MemoryDistill)
+      collect cursor = do
+        page <- runOrFail env (listDeferredTimers onlyTest (Timer.DeadTimerPageRequest 1 cursor)) >>= expectRight "page"
+        rest <- maybe (pure []) (collect . Just) page.nextAfterTimerId
+        pure (map (\entry -> entry.timer.timerId) page.entries <> rest)
+  collect Nothing >>= (@?= [tid])
+
+testExpiredResume :: Assertion
+testExpiredResume = withTimerEnv $ \env _ -> do
+  tid <- parkFixture env
+  claimed <-
+    runOrFail
+      env
+      ( Timer.claimDeadTimer
+          ( Timer.DeadTimerClaimRequest
+              tid
+              l1ExtractProcessManagerName
+              "kioku:deferred:interactive-unavailable feature=extraction"
+              8
+              1
+          )
+      )
+      >>= expectRight "claim"
+  claim <- maybe (assertFailure "claim refused") pure claimed
+  threadDelay 1200000
+  page <- runOrFail env (listDeferredTimers testContextProvider (Timer.DeadTimerPageRequest 100 Nothing)) >>= expectRight "recover/list"
+  map (\entry -> entry.timer.timerId) page.entries @?= [tid]
+  stale <- runOrFail env (Timer.completeTimerResume claim (timerMarkerEventId tid))
+  stale @?= False
+  row <- runOrFail env (fetchTimer tid)
+  row.status @?= "dead"
+  row.attempts @?= 1
+
+testNonDeferredRefusal :: Assertion
+testNonDeferredRefusal = withTimerEnv $ \env rt -> do
+  sid <- genSessionId
+  forM_
+    [ (l1ExtractProcessManagerName, l1Payload testSpace, "ordinary failure"),
+      (l1ExtractProcessManagerName, Aeson.Null, "kioku:deferred:interactive-unavailable feature=extraction"),
+      ("another-owner", l1Payload testSpace, "kioku:deferred:interactive-unavailable feature=extraction")
+    ]
+    $ \(owner, payload, reason) -> do
+      tid <- freshTimerId
+      runOrFail env $ do
+        scheduleTestTimer tid owner (idText sid) payload (-1)
+        void (Timer.deadLetterTimer tid reason)
+      result <- runOrFail env (resumeDeferredTimer testContextProvider rt (scopedScanCandidates 5) tid)
+      result @?= DeferredNotEligible
+      row <- runOrFail env (fetchTimer tid)
+      row.attempts @?= 0
+      row.status @?= "dead"

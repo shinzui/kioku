@@ -72,18 +72,20 @@ library
   -- mori://MMZK1526/mmzk-typeid/upstream-issues/mmzk-typeid-kindid-ghc-9-12-4-profiling-coercionkind-panic
   ghc-prof-options: -fno-opt-coercion
   build-depends:
-    , async                 >=2.2      && <2.3
+    , async                 >=2.2       && <2.3
     , baikai                ^>=0.6.0.0
-    , base                  >=4.21     && <5
-    , containers            >=0.6      && <0.8
-    , directory             >=1.3      && <1.4
-    , effectful             >=2.5      && <2.7
+    , base                  >=4.21      && <5
+    , containers            >=0.6       && <0.8
+    , directory             >=1.3       && <1.4
+    , effectful             >=2.5       && <2.7
+    , keiro                 ^>=0.16.0.0
     , kioku-api             ^>=0.5.2.0
     , kioku-core            ^>=0.5.2.0
     , kiroku-store          ^>=0.8.0.0
-    , optparse-applicative  >=0.18     && <0.20
-    , text                  >=2.1      && <2.2
-    , time                  >=1.12     && <1.15
+    , optparse-applicative  >=0.18      && <0.20
+    , text                  >=2.1       && <2.2
+    , time                  >=1.12      && <1.15
+    , uuid                  >=1.3       && <1.4
 
 executable kioku
   import:         warnings, shared
@@ -110,18 +112,21 @@ test-suite kioku-cli-test
   -- process would race the rest of the suite.
   build-tool-depends: kioku-cli:kioku
   build-depends:
-    , base                           >=4.21     && <5
-    , effectful                      >=2.5      && <2.7
-    , filepath                       >=1.4      && <1.6
+    , aeson                          >=2.2       && <2.3
+    , base                           >=4.21      && <5
+    , effectful                      >=2.5       && <2.7
+    , filepath                       >=1.4       && <1.6
+    , keiro                          ^>=0.16.0.0
     , kioku-api                      ^>=0.5.2.0
     , kioku-cli                      ^>=0.5.2.0
     , kioku-core                     ^>=0.5.2.0
     , kioku-migrations:test-support  ^>=0.5.2.0
     , kiroku-store                   ^>=0.8.0.0
     , optparse-applicative           >=0.18
-    , process                        >=1.6      && <1.7
+    , process                        >=1.6       && <1.7
     , tasty                          >=1.5
     , tasty-hunit                    >=0.10
     , temporary                      >=1.3
     , text                           >=2.1
-    , time                           >=1.12     && <1.15
+    , time                           >=1.12      && <1.15
+    , uuid                           >=1.3       && <1.4

@@ -328,10 +328,10 @@ testLedgerChecksumRebaseline =
     plan <- either (fail . show) pure kiokuMigrationPlan
     let settings = Settings.connectionString connStr
     initial <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
-    length (appliedNow initial) @?= 55
+    length (appliedNow initial) @?= 56
 
     baselineLedger <- query connStr fullLedgerSnapshot
-    fst baselineLedger @?= 55
+    fst baselineLedger @?= 56
     baselineSchema <- query connStr cohortSchemaSnapshotStatement
     fixup <- Text.IO.readFile ledgerFixupPath
 
@@ -357,7 +357,7 @@ testLedgerChecksumRebaseline =
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 55
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 56
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
     withConnection connStr \conn -> run conn (Session.script fixup)
@@ -828,7 +828,7 @@ testKirokuOnlyAdoption =
     adoption <- runMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let MigrationReport {results = adoptionResults} = adoption
     length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 11
-    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 44
+    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 45
 
     -- Verified and skipped, never re-executed: the stored rows keep their checksums and their
     -- original application timestamps.
@@ -841,7 +841,7 @@ testKirokuOnlyAdoption =
     verification <- verifyMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let VerificationReport {issues = adoptionIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     adoptionIssues @?= []
-    length appliedMigrations @?= 55
+    length appliedMigrations @?= 56
     pendingMigrations @?= []
     unknownMigrations @?= []
 
@@ -1192,13 +1192,13 @@ testCoddCohortImport =
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 55
+    length appliedMigrations @?= 56
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 55
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 56
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 fixtureMigrationNames :: Text -> [FilePath]
@@ -1286,6 +1286,7 @@ expectedForwardMigrationIds =
           migrationId "keiro" "0029",
           migrationId "keiro" "0030",
           migrationId "keiro" "0031",
+          migrationId "keiro" "0032",
           migrationId "kioku" "0011-kioku-memory-space-partition",
           migrationId "kioku" "0012-relocate-projections-to-kioku-schema",
           migrationId "kioku" "0013-partition-aware-fts-index"

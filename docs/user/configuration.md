@@ -71,17 +71,28 @@ an explicit model, working directory, and optional effort. It launches the genui
 session, using a private request manifest and a checked JSON result envelope. A successful
 process exit without a valid matching result is a failed generation.
 
-The CLI grants interactive availability only to foreground `distill session`. Background workers
+The CLI grants interactive availability only to foreground `distill session` and `worker deferred resume`. Background workers
 park interactive work with `kioku:deferred:interactive-unavailable` in the timer's dead-letter
-reason. No HTTP or batch fallback occurs. Authorized atomic resume and deferred listing remain
-blocked on an upstream Keiro API addition; no `worker deferred` command is shipped yet.
+reason. No HTTP or batch fallback occurs. `worker deferred list` shows authorized work, and
+`worker deferred resume TIMER_ID --ai-config FILE` claims the original timer using Keiro 0.16
+after fresh authorization and execution-availability checks. Run `kioku-migrate up` before
+using these commands so Keiro's resume-lease migration is applied.
 Do not replay these rows using generic dead-letter tools or modify timer tables manually.
 
 ```bash
 export KIOKU_AI_CONFIG=/path/to/ai-interactive.json
 kioku distill session SESSION_ID --candidates scan
 kioku worker --timers-once
+kioku worker deferred list
+kioku worker deferred resume TIMER_ID --ai-config /path/to/ai-interactive.json
 ```
+
+A successful resume consumes one of the eight total attempts; refused or unavailable preflights
+consume none. Failed foreground execution re-parks the original work for explicit retry and
+reports the outcome. Leases renew every 30 seconds with a 120-second expiry; cancellation
+re-parks promptly where possible, and subsequent listing/resume or worker polling recovers
+expired claims. A lost lease is never reported as successful completion. The trusted CLI
+worker context covers all database spaces; embedded hosts must supply their own authorization.
 
 ## Embeddings
 

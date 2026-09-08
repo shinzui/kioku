@@ -11,7 +11,9 @@ import Control.Concurrent.Async (race)
 import Control.Exception (SomeException, displayException, try)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
+import Data.UUID qualified as UUID
 import Effectful (Eff, IOE, (:>))
+import Keiro.Timer qualified as Timer
 import Kioku.AI.Config (AIFeature (MemoryEmbedding))
 import Kioku.AI.Runtime (AIRuntime)
 import Kioku.Api.Access (MemorySpaceId, memorySpaceIdText, mkMemorySpaceId)
@@ -20,6 +22,8 @@ import Kioku.Cli.AIConfig (aiConfigOption, loadAIRuntime)
 import Kioku.Cli.Context (cliContextProvider)
 import Kioku.Distill.L1 (FindMergeCandidates, recallCandidates)
 import Kioku.Distill.Runtime (newDistillRuntime)
+import Kioku.Distill.Timer.Deferred
+import Kioku.Distill.Timer.Outcome (FireOutcome (..))
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
 import Kioku.Memory.Embedding (resolveEmbeddingConfig)
 import Kioku.Memory.Embedding.Worker
@@ -51,6 +55,8 @@ data WorkerOptions
   = WorkerConfigured !FilePath !WorkerOptions
   | WorkerContinuous
   | WorkerBackfill !EmbeddingBackfillScope
+  | WorkerDeferredList
+  | WorkerDeferredResume !Timer.TimerId
   | WorkerTimersOnce
   deriving stock (Eq, Show)
 
@@ -59,19 +65,36 @@ workerOptionsParser = (\config mode -> maybe mode (`WorkerConfigured` mode) conf
 
 workerModeParser :: Parser WorkerOptions
 workerModeParser =
-  ( flag'
-      WorkerBackfill
-      ( long "backfill"
-          <> help "Run one embedding backfill pass and exit (conflicts with --timers-once)"
-      )
-      <*> backfillScopeParser
-  )
+  hsubparser
+    (command "deferred" (info deferredParser (progDesc "List or resume authorized deferred timers")))
+    <|> ( flag'
+            WorkerBackfill
+            ( long "backfill"
+                <> help "Run one embedding backfill pass and exit (conflicts with --timers-once)"
+            )
+            <*> backfillScopeParser
+        )
     <|> flag'
       WorkerTimersOnce
       ( long "timers-once"
           <> help "Claim and fire at most one due kioku distillation timer, then exit (conflicts with --backfill)"
       )
     <|> pure WorkerContinuous
+
+deferredParser :: Parser WorkerOptions
+deferredParser =
+  hsubparser
+    ( command "list" (info (pure WorkerDeferredList) (progDesc "List deferred distillation work"))
+        <> command
+          "resume"
+          ( info
+              (WorkerDeferredResume <$> argument timerIdReader (metavar "TIMER_ID"))
+              (progDesc "Resume one deferred timer using foreground AI capabilities")
+          )
+    )
+  where
+    timerIdReader = eitherReader $ \raw ->
+      maybe (Left "TIMER_ID must be a UUID") (Right . Timer.TimerId) (UUID.fromString raw)
 
 backfillScopeParser :: Parser EmbeddingBackfillScope
 backfillScopeParser =
@@ -98,7 +121,7 @@ runWorker opts = case opts of
 
 runConfiguredWorker :: Maybe FilePath -> WorkerOptions -> IO ()
 runConfiguredWorker path opts = do
-  ai <- loadAIRuntime False path
+  ai <- loadAIRuntime (case opts of WorkerDeferredResume _ -> True; _ -> False) path
   case opts of
     WorkerBackfill _ -> either (dieWorker . show) (const (pure ())) (resolveEmbeddingConfig ai MemoryEmbedding)
     _ -> pure ()
@@ -106,6 +129,8 @@ runConfiguredWorker path opts = do
   let settings = defaultConnectionSettings (Text.pack connStr)
   withStore settings $ \st ->
     withNoopAppEnv settings \env -> case opts of
+      WorkerDeferredList -> runDeferredList env
+      WorkerDeferredResume tid -> runDeferredResume ai env tid
       WorkerTimersOnce -> runTimerOnce ai env
       WorkerBackfill scope -> case resolveEmbeddingConfig ai MemoryEmbedding of
         Left err -> dieWorker (show err)
@@ -308,3 +333,41 @@ requireEnv name = do
   case found of
     Just envValue -> pure envValue
     Nothing -> ioError (userError (name <> " is not set"))
+
+runDeferredList :: AppEnv -> IO ()
+runDeferredList env = do
+  contexts <- cliContextProvider @(Eff AppEffects)
+  let go cursor = do
+        result <- runAppIO env (listDeferredTimers contexts (Timer.DeadTimerPageRequest 100 cursor))
+        case result of
+          Left err -> dieWorker (show err)
+          Right (Left err) -> dieWorker (show err)
+          Right (Right page) -> do
+            mapM_ render page.entries
+            maybe (pure ()) (go . Just) page.nextAfterTimerId
+      render entry = do
+        let Timer.TimerId uuid = entry.timer.timerId
+        putStrLn
+          ( UUID.toString uuid
+              <> " space="
+              <> Text.unpack (memorySpaceIdText entry.memorySpace)
+              <> " features="
+              <> show entry.features
+              <> " attempts="
+              <> show entry.timer.attempts
+              <> " reason="
+              <> Text.unpack entry.reason
+          )
+        putStrLn ("  Resume: kioku worker deferred resume " <> UUID.toString uuid <> " --ai-config FILE")
+  go Nothing
+
+runDeferredResume :: AIRuntime -> AppEnv -> Timer.TimerId -> IO ()
+runDeferredResume ai env tid = do
+  contexts <- cliContextProvider @(Eff AppEffects)
+  result <- runAppIO env do
+    capability <- detectVectorCapability 1536
+    resumeDeferredTimer contexts (newDistillRuntime ai Nothing) (mergeCandidateFinder ai capability) tid
+  case result of
+    Right (DeferredFinished (FireCompleted _)) -> putStrLn "Completed the original deferred timer."
+    Right outcome -> dieWorker (show outcome <> "; unfinished work remains parked; inspect configuration, authorization, and attempt ceiling before retrying")
+    Left err -> dieWorker (show err)

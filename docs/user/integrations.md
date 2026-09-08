@@ -247,3 +247,16 @@ Explicitly named embedding adapters are independent host/test capabilities.
 
 Memory access remains a separate authorization decision. Deferred timers retain their original
 space and payload. Do not treat execution permission as permission to read or write memory.
+
+
+### Deferred timer recovery
+
+Hosts use `Kioku.Distill.Timer.Deferred.listDeferredTimers` with their current
+`MemoryContextProvider` and a bounded `Keiro.Timer.DeadTimerPageRequest`. Continue using
+`nextAfterTimerId` even when authorization removes all entries from a page.
+`resumeDeferredTimer` accepts that provider, the foreground `DistillRuntime`, a candidate
+finder, and the original timer ID. It rechecks access before claiming, renews its token-bound
+lease, and uses token-checked completion or parking. Background runtimes carry no session
+launcher. Hosts using only foreground operations should call listing/resume periodically to
+recover expired claims; ordinary Keiro worker passes also recover them. Keiro 0.16 migrations
+must be applied. No application SQL against Keiro's timer table is needed.

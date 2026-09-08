@@ -2,7 +2,7 @@
 type: Architecture Decision Record
 title: Hosts own AI execution capabilities
 description: Kioku requires explicit Baikai execution capabilities for each AI feature and parks unavailable interactive work without provider fallback.
-timestamp: 2026-09-08T01:00:00Z
+timestamp: 2026-09-08T13:59:31Z
 docId: ADR-12
 status: accepted
 date: 2026-09-08
@@ -12,7 +12,7 @@ date: 2026-09-08
 
 ## Status
 
-Accepted, 2026-09-08. Authorized deferred resume requires a forthcoming upstream timer API.
+Accepted, 2026-09-08. Authorized deferred resume uses Keiro 0.16 leased timer claims.
 
 ## Context
 
@@ -40,8 +40,13 @@ Memory authorization precedes execution availability. Unavailable interactive ti
 parked through Keiro's existing dead-letter operation with the stable reason prefix
 `kioku:deferred:interactive-unavailable`. Polling cannot reclaim them. Authorized resume must
 recheck space authorization and session ownership, then atomically claim the original timer by
-its ID and expected deferred reason. Until Keiro exposes that operation and deferred listing,
-Kioku does not offer unsafe generic replay or write to Keiro-owned tables.
+its ID, process-manager owner, and expected deferred reason. Keiro 0.16 owns the opaque claim
+token, renewable lease, finalization fencing, and expired-claim recovery. Kioku renews while
+executing, re-parks unsuccessful foreground outcomes, and preserves the eight-attempt ceiling.
+Fresh refusals consume no claims. Cancellation cleans up where possible; expired claims are
+recovered before discovery/resume and by ordinary workers. External effects still need existing
+idempotent writes; a leased claim does not promise exactly-once model execution across crashes.
+Kioku uses only the public API and never writes Keiro-owned timer SQL.
 
 ## Consequences
 

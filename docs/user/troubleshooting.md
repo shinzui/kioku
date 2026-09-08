@@ -318,6 +318,10 @@ memory is forgotten, the scene/persona row **and** its mirror file are deleted. 
 
 A timer reason beginning `kioku:deferred:interactive-unavailable` means the host supplied no
 interactive session. It is stored as dead so polling and restarts do not consume retries. It is
-not successful distillation, and no API key should be added to bypass the policy. Authorized
-atomic resume/listing is still pending the Keiro prerequisite in plan 41. Keep these rows parked;
-generic dead-letter replay does not establish memory authorization or interactive ownership.
+not successful distillation, and no API key should be added to bypass the policy. Run
+`kioku worker deferred list`, then `kioku worker deferred resume TIMER_ID --ai-config FILE`
+from the authorized foreground host. Apply migrations first. Refused preflights leave attempts
+unchanged; each actual resume claim counts toward the eight-attempt ceiling. A refusal can also
+mean another caller claimed the timer or it reached that ceiling. A failed foreground attempt
+prints its outcome and re-parks the work. Generic dead-letter replay does not establish memory
+authorization or interactive ownership.

@@ -16,12 +16,15 @@
 module Kioku.Cli.RecallEndToEndSpec (tests) where
 
 import Control.Monad.IO.Class (liftIO)
+import Data.Aeson (toJSON)
 import Data.List (isInfixOf)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, getCurrentTime)
+import Data.UUID qualified as UUID
 import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
+import Keiro.Timer qualified as Timer
 import Kioku.Api.Access
   ( MemoryAccessContext,
     MemoryActor (..),
@@ -35,6 +38,7 @@ import Kioku.Api.Access
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (runAppIO, withNoopAppEnv)
+import Kioku.Distill.L2 (SceneTimerPayload (..), l2SceneProcessManagerName)
 import Kioku.Id (genMemoryId)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (RecordMemoryData (..))
@@ -43,6 +47,7 @@ import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
+import Kiroku.Store.Transaction (runTransaction)
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
@@ -55,7 +60,8 @@ tests :: TestTree
 tests =
   testGroup
     "kioku recall end to end"
-    [ testCase "explicit AI file overrides environment and credentials do not enable AI" aiFilePrecedence,
+    [ testCase "deferred commands list, refuse disabled execution, and complete original work" deferredCommands,
+      testCase "explicit AI file overrides environment and credentials do not enable AI" aiFilePrecedence,
       testCase "each flag reaches the database as its own target, inside one space" targetsReachPostgres
     ]
 
@@ -186,17 +192,20 @@ seed space scope content now = do
 -- The connection string and memory space are replaced rather than added, so a developer's
 -- exported @PG_CONNECTION_STRING@ cannot redirect the test at their own database.
 runKioku :: Text -> MemorySpaceId -> [String] -> IO (ExitCode, String, String)
-runKioku connStr space args = do
+runKioku = runKiokuAt Nothing
+
+runKiokuAt :: Maybe FilePath -> Text -> MemorySpaceId -> [String] -> IO (ExitCode, String, String)
+runKiokuAt directory connStr space args = do
   inherited <- getEnvironment
   let overridden =
         [ (name, value)
         | (name, value) <- inherited,
-          name `notElem` ["PG_CONNECTION_STRING", "KIOKU_MEMORY_SPACE"]
+          name `notElem` ["PG_CONNECTION_STRING", "KIOKU_MEMORY_SPACE", "KIOKU_AI_CONFIG", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
         ]
           <> [ ("PG_CONNECTION_STRING", Text.unpack connStr),
                ("KIOKU_MEMORY_SPACE", Text.unpack (memorySpaceIdText space))
              ]
-  readCreateProcessWithExitCode (proc "kioku" args) {env = Just overridden} ""
+  readCreateProcessWithExitCode (proc "kioku" args) {env = Just overridden, cwd = directory} ""
 
 assertContains :: String -> String -> String -> IO ()
 assertContains label needle haystack =
@@ -219,3 +228,45 @@ testActor =
 
 spaceNamed :: Text -> MemorySpaceId
 spaceNamed raw = either (error . Text.unpack) id (mkMemorySpaceId raw)
+
+-- No memories exist in this scope, so valid foreground scene work completes
+-- without invoking a model. The core timer suite separately exercises the real
+-- interactive manifest/result handoff during a contested foreground claim.
+deferredCommands :: IO ()
+deferredCommands = withKiokuMigratedDatabase $ \connStr ->
+  withSystemTempDirectory "kioku-deferred-cli" $ \dir -> do
+    let tid = Timer.TimerId UUID.nil
+        disabled = dir </> "disabled.json"
+        interactive = dir </> "interactive.json"
+    writeFile disabled "{\"version\":1}"
+    writeFile interactive "{\"version\":1,\"permissions\":[\"interactive\"],\"distillation\":{\"mode\":\"interactive\",\"provider\":\"claude\",\"model\":\"fixture\",\"workingDir\":\".\"}}"
+    now <- getCurrentTime
+    withNoopAppEnv (defaultConnectionSettings connStr) $ \app -> do
+      seeded <- runAppIO app $ do
+        runTransaction
+          ( Timer.scheduleTimerTx
+              ( Timer.TimerRequest
+                  tid
+                  l2SceneProcessManagerName
+                  "scene-fixture"
+                  now
+                  (toJSON (SceneTimerPayload alphaSpace globalScope))
+              )
+          )
+        Timer.deadLetterTimer tid "kioku:deferred:interactive-unavailable feature=scene"
+      seeded @?= Right True
+      (listed, output, _) <- runKiokuAt (Just dir) connStr alphaSpace ["worker", "deferred", "list", "--ai-config", disabled]
+      listed @?= ExitSuccess
+      assertContains "list timer" (UUID.toString UUID.nil) output
+      assertContains "list space" (Text.unpack (memorySpaceIdText alphaSpace)) output
+      (refused, _, diagnostic) <- runKiokuAt (Just dir) connStr alphaSpace ["worker", "deferred", "resume", UUID.toString UUID.nil, "--ai-config", disabled]
+      assertBool "disabled resume refuses" (refused /= ExitSuccess)
+      assertContains "disabled reason" "AIDisabled Scene" diagnostic
+      afterRefusal <- runAppIO app (Timer.lookupTimer tid)
+      fmap (fmap (.attempts)) afterRefusal @?= Right (Just 0)
+      (completed, done, err) <- runKiokuAt (Just dir) connStr alphaSpace ["worker", "deferred", "resume", UUID.toString UUID.nil, "--ai-config", interactive]
+      assertBool ("foreground failed: " <> err) (completed == ExitSuccess)
+      assertContains "completion" "Completed the original deferred timer" done
+      final <- runAppIO app (Timer.lookupTimer tid)
+      fmap (fmap (.status)) final @?= Right (Just Timer.Fired)
+      fmap (fmap (.attempts)) final @?= Right (Just 1)

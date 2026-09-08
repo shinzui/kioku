@@ -2,6 +2,8 @@
 
 ## 2026-09-08
 
+- Updated [ADR-12](host-owned-ai-execution.md): Keiro 0.16 owns leased resume fencing and recovery; Kioku rechecks authorization and preserves bounded attempt history.
+
 - Added [ADR-12](host-owned-ai-execution.md): explicit host-owned AI capabilities and durable interactive deferral.
 
 ## 2026-08-22

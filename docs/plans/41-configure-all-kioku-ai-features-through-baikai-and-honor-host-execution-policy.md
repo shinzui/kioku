@@ -16,7 +16,7 @@ This ExecPlan is a living document. Update Progress, Surprises & Discoveries, De
 ## Purpose / Big Picture
 
 
-An embedding application must be able to choose how every Kioku AI feature runs through Baikai, without Kioku registering an unwanted provider, choosing a hidden model, or requiring an unauthorized API credential. This fixes [BUG-2](docs/bug-reports/distillation-hardcodes-anthropic-api-in-interactive-only-hosts.md). An interactive-only host will complete distillation in an authorized interactive session, or retain visibly deferred work until such a session is available. It will never substitute an API or batch subprocess.
+An embedding application must be able to choose how every Kioku AI feature runs through Baikai, without Kioku registering an unwanted provider, choosing a hidden model, or requiring an unauthorized API credential. This fixes [BUG-2](../bug-reports/distillation-hardcodes-anthropic-api-in-interactive-only-hosts.md). An interactive-only host will complete distillation in an authorized interactive session, or retain visibly deferred work until such a session is available. It will never substitute an API or batch subprocess.
 
 The scope includes extraction, consolidation, scene generation, persona generation, memory embeddings, query embeddings, and recall-based merge candidates, including CLI, worker, and embedded use. Storage, authorization, ranking, and scheduling remain Kioku concerns; “configurable through Baikai” means AI execution uses Baikai's model, transport, credential, and interactive configuration vocabulary. Non-AI memory operations remain usable with AI disabled. Future AI features must enter through the same configuration boundary.
 
@@ -30,19 +30,22 @@ The scope includes extraction, consolidation, scene generation, persona generati
 - [x] (2026-09-08) Migrated embeddings, recall/candidate lookup, and all production CLI paths to explicit runtime configuration; added parseable examples and stored-model compatibility checks.
 - [x] (2026-09-08) Added versioned config rejection, explicit-file precedence over environment, credential no-enable/redaction, and model-compatibility refusal tests.
 - [x] (2026-09-08) Added typed deferred/permanent/transient timer outcomes and durable parking regression: repeated worker runs retain dead state, stable reason, and one claim.
-- [ ] Milestone 4 remaining: authorized listing and atomic resume require the Keiro prerequisite; no unsafe replay command was added.
+- [x] (2026-09-08) Milestone 4: implemented authorized deferred listing and renewable, token-checked resume using released Keiro 0.16.0.0; all 20 timer tests pass, including concurrent interactive execution, cancellation, expired-lease recovery, and ordinary-dead-letter refusal.
 - [x] (2026-09-08) Updated the user guides, library constructor reference, and ADR-12 for the new contract.
 - [x] (2026-09-08) Validated and committed the separate reporting-host integration as `b7081e39` in `mori://shinzui/rei`; its 40-test durable timer suite passed, including background interactive deferral.
 - [ ] Final acceptance: implement/test authorized deferred listing and atomic resume after the Keiro release prerequisite, then prove foreground host resume and close BUG-2. No deployment or live timer replay was performed.
+
+- [x] (2026-09-08) Verified Keiro 0.16.0.0 on Hackage and upstream package tags (`2da45585b901271d4ac19af4acf3de790c394540`); IR-35/IR-36 APIs are now released.
+- [ ] (2026-09-08) Adopt released timer inspection and leased resume, finish CLI/host integration, and validate remaining acceptance.
 
 ## Surprises & Discoveries
 
 The first real terminal prototype returned a result file with an invalid envelope. Kioku rejected it with `AIInteractiveFailed Extraction "missing, invalid, or mismatched result envelope"`. The signature's system-level output guide competed with the envelope instructions. Keeping the signature instructions/schema in the manifest and making the system prompt explicitly scope them to `result` resolved this. A second run returned a checked preference atom and exit status zero.
 
 
-Keiro's latest released package, 0.15.0.0, cannot atomically claim a dead timer or list dead timers through its public timer API. `mori://shinzui/keiro/packages/keiro`, project-relative `keiro/src/Keiro/Timer/Schema.hs` (source artifact URI pending), exports `lookupTimer`, `deadLetterTimer`, and recovery operations restricted to firing rows. Its public `TimerRow` also omits `last_error`, so an authorized resume cannot verify the stored deferred reason through that API. Milestone 4 requires an upstream addition exposing filtered dead-timer listing and a compare-and-set claim by timer ID and expected reason, preserving payload/correlation/attempts. Kioku must not work around this by writing Keiro-owned SQL. This prerequisite also blocks final host resume acceptance.
+The initial released baseline, Keiro 0.15.0.0, could not atomically claim a dead timer or list dead timers through its public timer API. `mori://shinzui/keiro/packages/keiro`, project-relative `keiro/src/Keiro/Timer/Schema.hs` (source artifact URI pending), exports `lookupTimer`, `deadLetterTimer`, and recovery operations restricted to firing rows. Its public `TimerRow` also omits `last_error`, so an authorized resume cannot verify the stored deferred reason through that API. That blocked milestone 4 pending an upstream addition exposing filtered dead-timer listing and a compare-and-set claim by timer ID and expected reason, preserving payload/correlation/attempts. Kioku must not work around this by writing Keiro-owned SQL. Keiro 0.16.0.0 subsequently resolved this prerequisite; adoption is now implemented. Model configurability was already complete and never depended on this recovery addition.
 
-Hackage preferred-version metadata checked on 2026-09-08 reports Baikai 0.6.0.1, Shikumi 0.3.0.3, and Keiro 0.15.0.0. Upstream tags resolve respectively to `f71bfd7afa49bb78f77d2eef378792fb9a624ecd`, `205219f75dde9350cad9fd47b97a5e1576674123`, and `de574cdcb0add3fefbb0fdd96d820258d15f8997`. Existing bounds admit these releases; no local source pins are needed.
+The initial Hackage preferred-version check on 2026-09-08 reported Baikai 0.6.0.1, Shikumi 0.3.0.3, and Keiro 0.15.0.0. Upstream tags resolve respectively to `f71bfd7afa49bb78f77d2eef378792fb9a624ecd`, `205219f75dde9350cad9fd47b97a5e1576674123`, and `de574cdcb0add3fefbb0fdd96d820258d15f8997`. Existing bounds admit these releases; no local source pins are needed.
 
 ## Decision Log
 
@@ -63,7 +66,7 @@ Decision (2026-09-08): Include the reporting host integration as the final miles
 
 ## Outcomes & Retrospective
 
-Implementation is in progress. The final full Nix-shell run passed 229 core, 54 CLI, 125 API, and 24 migration tests, with no skipped pgvector cases. Afterward, the added embedding-model refusal regression passed in the 12-test embedding selection; final routing regression evidence is recorded below. `cabal build all` passed. A real Baikai/Claude interactive extraction passed using only synthetic evidence, with no database connection. The bug remains open: safe deferred listing/resume and foreground host resume cannot pass until Keiro exposes the required atomic transition and reason-bearing reads.
+Configuration and execution policy are implemented. Deferred recovery is also implemented against Keiro 0.16; final reporting-host validation is in progress. The earlier full Nix-shell run passed 229 core, 54 CLI, 125 API, and 24 migration tests, with no skipped pgvector cases. Afterward, the added embedding-model refusal regression passed in the 12-test embedding selection; final routing regression evidence is recorded below. `cabal build all` passed. A real Baikai/Claude interactive extraction passed using only synthetic evidence, with no database connection. The release prerequisite is resolved. The updated core passed 235 tests; after final recovery and authorization additions, all 20 timer tests passed. Initial migration failures were expected-count changes from Keiro migration 0032 and are corrected; all 24 migration tests passed on rerun.
 
 The successful interactive smoke command, run from the repository root in a PTY, was:
 
@@ -80,19 +83,31 @@ After the agent wrote its result, `/exit` closed the terminal session normally. 
 
 Kioku is a Haskell memory library with five Cabal packages. `kioku-api` holds memory/session types, `kioku-core` implements storage and derived memories, `kioku-cli` exposes commands, and `kioku-migrations`/`kioku-migrate` manage database layout. L0 is recorded session evidence; L1 is extracted memory atoms; L2 is a scene summarizing a scope; L3 is a persona summary. Consolidation chooses how a new atom relates to existing memory.
 
-`kioku-core/src/Kioku/Distill/Runtime.hs` currently calls `ClaudeApi.register`, uses `globalProviderRegistry`, and fixes the model to `Models.anthropic_claude_haiku_4_5`. Its four function fields capture that configuration at construction. Updating the public `config` or `defaultModel` fields afterward does not update those closures. `runDistillProgram` separately interprets arbitrary Shikumi programs, so it also needs the policy boundary. Shikumi is the typed prompt/program framework layered over Baikai; preserve its schemas and validation in `kioku-core/src/Kioku/Distill/Extract.hs`, `Consolidate.hs`, `Scene.hs`, and `Persona.hs`.
+`kioku-core/src/Kioku/AI/Config.hs`, `Runtime.hs`, and `File.hs` now own explicit feature
+settings, host capabilities, and versioned file assembly. `Kioku.Distill.Runtime` wraps the
+validated AI runtime and optional workspace root; its constructor has no hidden provider or
+model. Shikumi remains the typed prompt/program framework, preserving signature schemas in
+`kioku-core/src/Kioku/Distill/Extract.hs`, `Consolidate.hs`, `Scene.hs`, and `Persona.hs`.
+`Kioku.AI.Interactive` validates the private request/result handoff.
 
-`kioku-core/src/Kioku/Memory/Embedding.hs` reads environment variables, defaults to OpenAI, and converts a Kioku record with a literal key to Baikai's `EmbeddingModel`. That model feeds `kioku-core/src/Kioku/Recall.hs`, `kioku-core/src/Kioku/Memory/Embedding/Worker.hs`, and L1 candidate search in `kioku-core/src/Kioku/Distill/L1.hs`. The shipped vector column has 1536 dimensions. Changing model settings does not migrate or re-embed stored vectors.
+`kioku-core/src/Kioku/Memory/Embedding.hs` resolves explicit feature capabilities and checks
+stored vector model compatibility before semantic execution. The shipped column has 1536
+dimensions. `Kioku.Recall`, `Kioku.Memory.Embedding.Worker`, and L1 candidate search use that
+boundary; changing settings never implicitly migrates or re-embeds vectors. CLI distill,
+recall, and worker commands load the shared versioned AI file; stored scene/persona reads
+remain ordinary database reads.
 
-`kioku-cli/src/Kioku/Cli/Commands/Distill.hs` constructs the runtime directly. `kioku-cli/src/Kioku/Cli/Commands/Worker.hs` does so for timer modes and separately resolves embeddings; `kioku-cli/src/Kioku/Cli/Commands/Recall.hs` also resolves embeddings. These are all production entry points to update.
-
-`kioku-core/src/Kioku/Distill/Timer/Worker.hs` routes timers through L1/L2/L3 and applies `FireOutcome`. `kioku-core/src/Kioku/Distill/Timer/Outcome.hs` currently distinguishes completion, retry, permanent failure, and unknown ownership, but treats regeneration errors as retryable. Attempts have an eight-claim ceiling and backoff capped at 900 seconds. Authorization is checked per memory space before regeneration. Policy refusal and interactive unavailability must become typed outcomes before model calls, rather than matching the text of a provider error.
+`kioku-core/src/Kioku/Distill/Timer/Worker.hs` dispatches L1/L2/L3 and applies the typed
+completion, retry, permanent-failure, deferred, and unknown-owner outcomes. Ordinary transient
+failures keep the eight-claim ceiling and backoff capped at 900 seconds. Interactive
+unavailability parks with a stable reason. `Kioku.Distill.Timer.Deferred` provides authorized
+bounded listing and foreground resume through Keiro 0.16 inspection and leased claims.
 
 Baikai was located through Mori at `mori://shinzui/baikai`. Its guides `mori://shinzui/baikai/docs/models-and-providers` and `mori://shinzui/baikai/docs/interactive-launches` document isolated registries and genuine interactive launches. In that project, source paths `baikai/src/Baikai/Provider/Registry.hs`, `baikai/src/Baikai/Interactive.hs`, and `baikai/src/Baikai/Embedding.hs` are the inspected implementation (artifact-level source URIs pending). `newProviderRegistryFrom` builds a host-local registry; `assertRegistered` validates transport tags. Interactive launchers in its provider packages inherit terminal streams and return an `InteractiveLaunchResult`, not a completion response. Embeddings have their own `EmbeddingModel` and no chat registry tag.
 
 In `mori://shinzui/shikumi`, project-relative `shikumi/src/Shikumi/LLM.hs` exposes `LLMConfig` with registry, retry, budget, and concurrency settings; `defaultLLMConfig` accepts an explicit registry. Project-relative `shikumi/src/Shikumi/Adapter.hs` provides schema-driven rendering and checked decoding. Artifact-level source URIs are pending. The reporting consumer is `mori://shinzui/rei`, project-relative `rei-core/src/Rei/Infrastructure/ReiTimers.hs` (artifact-level source URI pending): its dispatcher constructs `newDistillRuntime` and delegates to `fireKiokuTimer` and `applyFireOutcome` with scan candidates.
 
-Consulted local decisions are [ADR-1](docs/adr/kioku-owns-memory-not-identity.md), which keeps identity and authorization decisions in the host, and [ADR-2](docs/adr/namespace-is-not-a-security-boundary.md), which makes memory spaces the isolation boundary. Preserve both: model execution policy never grants memory access, and deferred work retains its original space. No local ADR currently defines AI provider selection. `mori.dhall` does not declare a profiled ADR bundle; follow the established local ADR format when recording this decision, rather than adopting a profile incidentally.
+Consulted local decisions are [ADR-1](../adr/kioku-owns-memory-not-identity.md), which keeps identity and authorization decisions in the host, and [ADR-2](../adr/namespace-is-not-a-security-boundary.md), which makes memory spaces the isolation boundary. Preserve both: model execution policy never grants memory access, and deferred work retains its original space. [ADR-12](../adr/host-owned-ai-execution.md) now defines host-owned AI selection and leased recovery. `mori.dhall` does not declare a profiled ADR bundle; follow the established local ADR format when recording this decision, rather than adopting a profile incidentally.
 
 ## Plan of Work
 
@@ -153,7 +168,7 @@ mori registry show shinzui/rei --full
 mori path mori://shinzui/baikai/docs/interactive-launches
 ```
 
-Use the returned local project paths for reading source. Never traverse the filesystem root or `/nix/store`. Current Kioku bounds name Baikai 0.6 and Shikumi 0.3.0.3; these are observed repository constraints, not a claim about the latest releases. This plan selects no new version bounds. Before choosing any bound, new package, pin, or compatibility workaround, verify Hackage package metadata and upstream release tags and record the comparison. Preserve the released-package build model in `cabal.project`.
+Use the returned local project paths for reading source. Never traverse the filesystem root or `/nix/store`. Current Kioku bounds name Baikai 0.6, Shikumi 0.3.0.3, and Keiro 0.16.0.0. The Keiro runtime/core/migrations bounds now require the verified released recovery API; the optional PGMQ constraint tracks that cohort. Before choosing any bound, new package, pin, or compatibility workaround, verify Hackage package metadata and upstream release tags and record the comparison. Preserve the released-package build model in `cabal.project`.
 
 Build and test after each relevant milestone, with the development toolchain available:
 
@@ -213,8 +228,38 @@ Host validation (2026-09-08): in `mori://shinzui/rei`, copy its `cabal.project` 
 
 Final routing validation (2026-09-08): `nix develop -c cabal test kioku-core:kioku-test --test-show-details=direct --test-options='-p /AI/'` passed all 10 tests, including the added per-feature batch override with separate registries, selected model/options, all interactive signatures, and adversarial result files. Core now contains 231 tests after these two final regression additions; the full-suite count above is the actual earlier full run, not a claim that all 231 were rerun together.
 
-The remaining implementation is specifically the Keiro prerequisite and its dependent acceptance: expose reason-bearing dead timer reads/listing and an atomic dead-to-firing claim by ID and expected reason; release that interface; then implement `Kioku.Distill.Timer.Deferred`, CLI authorized listing/resume, concurrent-resume and revoked-access tests, and Rei foreground resume. Do not mark this plan or BUG-2 complete until those results exist. All independent configuration, interactive handoff, embedding policy, background parking, host-source integration, and documentation work is included in this implementation. The Rei integration is committed as `b7081e39` in `mori://shinzui/rei`.
+The formerly blocked recovery implementation now uses released Keiro 0.16.0.0. `Kioku.Distill.Timer.Deferred`, CLI listing/resume, authorization/refusal/concurrency/recovery tests, and Rei foreground entry points are implemented. Final reporting-host validation remains before closing the plan and BUG-2. All independent configuration, interactive handoff, embedding policy, background parking, host-source integration, and documentation work is included in this implementation. The Rei integration is committed as `b7081e39` in `mori://shinzui/rei`.
 
 Final embedding validation (2026-09-08): reran the 12 embedding tests successfully after adding a backfill-wide stored-model compatibility preflight, including the case where there are no missing vectors to backfill. This prevents a changed configured model from silently accepting an existing incompatible vector set.
 
 Upstream requests (2026-09-08): filed `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-35` for reason-bearing dead timer reads/listing and `mori://shinzui/keiro/okf/improvement-requests/concepts/IR-36` for atomic guarded resume, attempt accounting, and recovery. Both are proposed and require released public APIs; the dependent milestone remains open. Keiro bundle validation with profile and log enforcement passed for all 36 concepts. Strict validation reports missing recommended reviews for these unreviewed proposals and eight existing requests.
+
+Resumed implementation (2026-09-08): the previously recorded upstream blocker is resolved by Keiro 0.16.0.0. The released API adds bounded UUID-cursor inspection, exact owner/reason claims, token-checked renewable leases, completion/parking, and expired-lease recovery. Kioku will renew during foreground execution, preserve the eight-attempt ceiling, and re-park unsuccessful foreground outcomes for explicit retry rather than send interactive work into the background queue. Earlier blocker statements record the prior baseline, not the current dependency state.
+
+Recovery interfaces (2026-09-08): `listDeferredTimers` takes a current `MemoryContextProvider`
+and a Keiro `DeadTimerPageRequest`, returning either the page error or `DeferredPage` with
+authorized entries and a continuation cursor. Follow the cursor even when a page is empty after
+authorization. `resumeDeferredTimer` takes the provider, `DistillRuntime`, candidate finder,
+and original timer ID; it returns typed eligibility/access/execution/claim/ownership outcomes
+or `DeferredFinished FireOutcome`. L1 preflights distill, record, and forget permissions;
+L2/L3 preflight distill permission. Every claim uses exact owner/reason, an eight-attempt ceiling,
+and a 120-second lease renewed every 30 seconds through finalization. Failure and cancellation
+re-park with the original reason and accumulated attempts. Recovery precedes listing/resume.
+The released migration adds Keiro 0032; the composed plan now has 56 migrations.
+
+Recovery validation (2026-09-08): the initial `nix develop -c cabal test all
+--test-show-details=direct` passed all 235 core and 125 API tests with no vector skips; it
+exposed three old migration expectations (55 total/44 newly adopted, before Keiro 0032).
+After correcting those to 56/45 and including 0032 in the expected forward sequence,
+`nix develop -c cabal test kioku-cli:kioku-cli-test kioku-migrations:kioku-migrations-test
+--test-show-details=direct` passed all 24 migration tests. The CLI fixture initially omitted
+its required `workingDir`; after correction and isolation of its working directory,
+`nix develop -c cabal test kioku-cli:kioku-cli-test --test-show-details=direct` passed all
+58 CLI tests. Its subprocess test lists deferred work, refuses disabled execution without
+consuming attempts, and completes the original empty-scope scene timer once. Core's
+`nix develop -c cabal test kioku-core:kioku-test --test-show-details=direct --test-options='-p /Timer/'`
+passed all 20 tests after the final recovery and preflight changes, including a real runtime
+interactive result-file fixture with competing callers, cancellation cleanup, expired-claim
+recovery, and stale-token completion refusal. Core now has 237 tests; the earlier full run
+covered 235 before the final two recovery additions. These are ephemeral database fixtures,
+not live timers or API calls.

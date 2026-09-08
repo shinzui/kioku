@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Require an explicit host-owned `AIRuntime` when constructing `DistillRuntime`; no
+  implicit provider, model, or credential activation. Add per-feature configuration and
+  validated interactive signature execution. Recall and embedding entry points now honor
+  the same host policy, with explicitly named adapters for legacy model-based callers.
+- Add `Kioku.Distill.Timer.Deferred` for authorized paginated discovery and foreground
+  resume of the original parked timer. Resume rechecks permissions and execution availability,
+  renews its lease, fences finalization, and re-parks failed work for bounded explicit retry.
+- Require the released 0.16 cohort from `mori://shinzui/keiro/packages/keiro` and
+  `mori://shinzui/keiro/packages/keiro-core`.
+
 ## 0.5.2.0 — 2026-08-31
 
 ### Changed

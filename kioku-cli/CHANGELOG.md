@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add explicit AI configuration through `--ai-config FILE` and `KIOKU_AI_CONFIG`.
+  Missing configuration disables AI; credentials do not enable it.
+- Add `worker deferred list` and `worker deferred resume TIMER_ID --ai-config FILE`.
+  Foreground resume uses configured execution capabilities and preserves original work;
+  background workers never receive interactive session ownership.
+
 ## 0.5.2.0 — 2026-08-31
 
 ### Changed

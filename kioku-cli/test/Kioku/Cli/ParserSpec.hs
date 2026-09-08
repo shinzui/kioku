@@ -6,6 +6,8 @@ module Kioku.Cli.ParserSpec (tests) where
 
 import Data.List (isInfixOf)
 import Data.Text qualified as Text
+import Data.UUID qualified as UUID
+import Keiro.Timer (TimerId (..))
 import Kioku.Api.Access (mkMemorySpaceId)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Cli.Commands.Demo (DemoOptions (..), demoOptionsParser, demoScope)
@@ -303,7 +305,16 @@ workerModeTests :: TestTree
 workerModeTests =
   testGroup
     "worker one-shot modes are mutually exclusive"
-    [ testCase "no flags means the continuous worker" do
+    [ testCase "deferred resume accepts a UUID and trailing AI config" do
+        parseWith workerOptionsParser ["deferred", "resume", UUID.toString UUID.nil, "--ai-config", "ai.json"]
+          @?= Right (WorkerConfigured "ai.json" (WorkerDeferredResume (TimerId UUID.nil))),
+      testCase "deferred listing parses" do
+        parseWith workerOptionsParser ["deferred", "list"] @?= Right WorkerDeferredList,
+      testCase "deferred resume rejects malformed timer IDs" do
+        case parseWith workerOptionsParser ["deferred", "resume", "bad"] of
+          Left _ -> pure ()
+          Right _ -> assertBool "invalid UUID accepted" False,
+      testCase "no flags means the continuous worker" do
         parseWith workerOptionsParser [] @?= Right WorkerContinuous,
       testCase "--backfill covers every space unless one is named" do
         parseWith workerOptionsParser ["--backfill"] @?= Right (WorkerBackfill BackfillEverySpace),

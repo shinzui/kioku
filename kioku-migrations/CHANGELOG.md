@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Adopt `mori://shinzui/keiro/packages/keiro-migrations` 0.16.0.0, including migration
+  0032 for timer resume claims and leases. The composed plan now contains 56 migrations
+  (Kiroku 11, Keiro 32, Kioku 13). Apply pending migrations before deferred discovery/resume;
+  no existing migration payload or checksum changes.
+
 ## 0.5.2.0 — 2026-08-31
 
 ### Changed

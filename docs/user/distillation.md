@@ -21,9 +21,11 @@ All four programs use the explicit Baikai configuration described in
 [Configuration](configuration.md). There is no implicit provider or model. API, batch, and
 interactive execution have separate permissions; absent configuration disables generation.
 Interactive output must pass the same Shikumi schema and domain validation as completion output.
-Background interactive work is parked durably with a deferred reason. Atomic authorized resume
-is pending the Keiro prerequisite recorded in plan 41; this is not yet a complete interactive
-worker workflow.
+Background interactive work is parked durably with a deferred reason. Use `kioku worker deferred
+list` and `kioku worker deferred resume TIMER_ID --ai-config FILE` to inspect and resume it.
+Resume preserves the original timer and payload, rechecks memory authorization and configured
+execution capabilities, and excludes competing claims. Unsuccessful foreground work returns to
+the parked state for explicit retry; the eight-attempt ceiling is retained.
 
 ## L0 — the evidence floor
 
