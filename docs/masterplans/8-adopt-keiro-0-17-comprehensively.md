@@ -10,6 +10,12 @@ provenance:
     model: "gpt-5.6-sol"
     harness: "codex-cli"
     at: 2026-09-18T18:42:27Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-18T19:10:40Z
+      mode: "implement"
+      note: "Started EP-1 dependency cohort implementation"
 ---
 
 # Adopt Keiro 0.17 comprehensively
@@ -90,7 +96,7 @@ an OKF bundle.
 
 | # | Title | Path | Hard Deps | Soft Deps | Status |
 |---|-------|------|-----------|-----------|--------|
-| EP-1 | Align Kioku with the released Keiro 0.17 dependency cohort | docs/plans/42-align-kioku-with-the-released-keiro-0-17-dependency-cohort.md | None | None | Not Started |
+| EP-1 | Align Kioku with the released Keiro 0.17 dependency cohort | docs/plans/42-align-kioku-with-the-released-keiro-0-17-dependency-cohort.md | None | None | Complete |
 | EP-2 | Replace deprecated Keiro read-model freshness APIs | docs/plans/43-replace-deprecated-keiro-read-model-freshness-apis.md | EP-1 | None | Not Started |
 | EP-3 | Establish a validated projection catalog and runtime assembly | docs/plans/44-establish-a-validated-projection-catalog-and-runtime-assembly.md | EP-2 | None | Not Started |
 | EP-4 | Harden Kioku migrations to the PostgreSQL patterns | docs/plans/45-harden-kioku-migrations-to-the-postgresql-patterns.md | EP-1 | EP-3 | Not Started |
@@ -143,12 +149,22 @@ upgrade blueprint describes the version that will actually ship.
 Track milestone-level progress across all child plans. Each entry names the child plan
 and the milestone. This section provides an at-a-glance view of the entire initiative.
 
+- [x] EP-1: Align Kioku with the released Keiro 0.17 dependency cohort (complete;
+  direct and optional solves, build, 445 tests, and 56-migration invariant passed).
+
 ## Surprises & Discoveries
 
 Document cross-plan insights, dependency changes, scope adjustments, or unexpected
 interactions between child plans. Provide concise evidence.
 
-(None yet.)
+- EP-1 confirmed the exact modernization inventory that EP-2 must remove: 19 direct
+  legacy `ReadModel` declarations and 21 `runQueryWith` calls, including one test
+  call. A clean Keiro 0.17 build emits the corresponding deprecations but otherwise
+  compiles and passes all suites.
+- Mori correctly locates `mori://shinzui/keiro`, but its observed dependency metadata
+  can lag a released package manifest. EP-1 therefore used Mori for source discovery
+  and verified the selected cohort against both Hackage and the upstream
+  `keiro-*-0.17.0.0` tags, as required by the repository dependency policy.
 
 
 ## Decision Log

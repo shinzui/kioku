@@ -6,8 +6,7 @@ packages:
   kioku-migrate
 
 with-compiler: ghc-9.12.4
-
--- keiki-codec-json IS in the build closure: Keiro 0.14 depends on it directly,
+-- keiki-codec-json IS in the build closure: Keiro 0.17 depends on it directly,
 -- so this constraint must track the cohort or it becomes a hard solver failure.
 -- The PGMQ entries below remain forward-looking pins for optional integrations
 -- Kioku does not build, keeping their released cohort explicit so a consumer
@@ -15,12 +14,12 @@ with-compiler: ghc-9.12.4
 constraints:
   http-client-tls ^>=0.4.0,
   keiki-codec-json ^>=0.9.0.0,
-  keiro-pgmq ^>=0.16.0.0,
-  pgmq-core ^>=0.5.0.0,
-  pgmq-effectful ^>=0.5.0.0,
-  pgmq-hasql ^>=0.5.0.0,
-  pgmq-migration ^>=0.5.0.0,
-  shibuya-pgmq-adapter ^>=0.14.0.0
+  keiro-pgmq ^>=0.17.0.0,
+  pgmq-core ^>=0.6.0.0,
+  pgmq-effectful ^>=0.6.0.0,
+  pgmq-hasql ^>=0.6.0.0,
+  pgmq-migration ^>=0.6.0.0,
+  shibuya-pgmq-adapter ^>=0.16.0.0
 
 -- The Claude CLI integration still needs the TLS 0.4 compatibility override.
 allow-newer:

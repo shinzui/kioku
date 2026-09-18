@@ -11,6 +11,12 @@ provenance:
     model: "gpt-5.6-sol"
     harness: "codex-cli"
     at: 2026-09-18T18:42:34Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-18T19:10:40Z
+      mode: "implement"
+      note: "Verified releases and began Keiro 0.17 dependency alignment"
 ---
 
 # Align Kioku with the released Keiro 0.17 dependency cohort
@@ -41,12 +47,38 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
+- [x] (2026-09-18 19:10Z) Verify the released Keiro 0.17 cohort through Mori,
+  Hackage's package index, and the upstream `keiro-*-0.17.0.0` tags.
+- [x] (2026-09-18 19:12Z) Update direct Keiro dependency bounds in Kioku package
+  files.
+- [x] (2026-09-18 19:12Z) Update the optional PGMQ compatibility cohort in
+  `cabal.project`.
+- [x] (2026-09-18 19:20Z) Prove the install plan, build, tests, migration count,
+  optional PGMQ solve, and stale-bound ratchet.
+
 ## Surprises & Discoveries
 
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- Observation: Mori located the authoritative local Keiro checkout, but its current
+  registry dependency metadata describes the checkout's older manifest rather than the
+  released 0.17 package metadata. The Hackage index and the upstream
+  `keiro-pgmq-0.17.0.0` tag agree that Keiro PGMQ 0.17 requires PGMQ 0.6 and
+  `shibuya-pgmq-adapter ^>=0.16.0.0`.
+  Evidence: `cabal info keiro-pgmq-0.17.0.0` and
+  `git -C /Users/shinzui/Keikaku/bokuno/keiro show
+  keiro-pgmq-0.17.0.0:keiro-pgmq/keiro-pgmq.cabal` report the same bounds.
+- Observation: The released compatibility surface produces the bounded warning set
+  expected by EP-2: 19 direct legacy read-model declarations and 21 `runQueryWith`
+  calls, of which one is in `Kioku.ReadModelReconcileSpec` and 20 are production
+  calls.
+  Evidence: the clean rebuild emitted `-Wdeprecations` for `subscriptionName`,
+  `defaultConsistency`, `Eventual`, `strongScope`, `EntireLog`, and
+  `runQueryWith`; source searches locate 10 declarations in
+  `Kioku.Memory.ReadModel`, nine in `Kioku.Session.ReadModel`, and the 21 query
+  calls in `Kioku.Memory`, `Kioku.Session`, `Kioku.Recall`, and the reconciliation
+  test.
 
 
 ## Decision Log
@@ -64,6 +96,13 @@ Record every decision made while working on the plan.
     `kiroku-store-migrations ^>=0.4.0.0`, `keiki >=0.9 && <0.10`, and
     `shibuya-core ^>=0.9.0.0`; unrelated upgrades would obscure the causal change.
   Date: 2026-09-18
+- Decision: Validate the optional PGMQ cohort with `cabal install --dry-run --lib`
+    targets rather than adding those packages to Kioku's project closure.
+  Rationale: `keiro-pgmq` is intentionally constrained but not a Kioku package or
+    dependency, so `cabal build keiro-pgmq --dry-run` correctly refuses it as an
+    out-of-project target. The install dry run exercises the same released solver
+    without changing Kioku's architecture or installing anything.
+  Date: 2026-09-18
 
 
 ## Outcomes & Retrospective
@@ -73,7 +112,17 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Kioku now resolves its direct Keiro packages at 0.17.0.0 and its optional PGMQ
+compatibility family at `keiro-pgmq-0.17.0.0`, PGMQ 0.6.1.0, and
+`shibuya-pgmq-adapter-0.16.0.0`. `cabal build all --dry-run`, `cabal build all`, and
+`cabal test all` succeeded. The API, CLI, migration, and core suites passed 125, 58,
+24, and 238 tests respectively; the migration suite's 56-entry assertions remained
+unchanged and passed. The stale-bound search and `git diff --check` produced no
+output.
+
+The expected Keiro deprecations remain visible and are now a measured input to EP-2.
+No architecture boundary changed, so the ADR distillation pass found no durable
+decision to add or revise.
 
 
 ## Context and Orientation
