@@ -1,5 +1,11 @@
 # Bundle Update Log
 
+## 2026-09-18
+
+- Added [ADR-13](catalog-application-projections-not-framework-timers.md): Kioku catalogs only
+  its application-owned memories, sessions, and turns projections while framework timer
+  scheduling remains an explicit side effect in the same append transaction.
+
 ## 2026-09-08
 
 - Updated [ADR-12](host-owned-ai-execution.md): Keiro 0.16 owns leased resume fencing and recovery; Kioku rechecks authorization and preserves bounded attempt history.

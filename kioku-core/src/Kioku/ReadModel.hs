@@ -12,9 +12,9 @@
 -- 'Keiro.ReadModel.ReadModelStaleSchema'.
 --
 -- 'reconcileReadModelRegistry' repairs those rows to the identity the compiled
--- code expects, deriving every name, version, and shape hash from
--- 'kiokuReadModelSchemas' — the same 'ReadModel' values the queries use, so the
--- registry can never disagree with the code. The @kioku-migrate@ executable runs
+-- code expects. 'kiokuReadModelSchemas' is derived from the same validated
+-- projection catalog that registers and supplies the queries, so the migration
+-- reconciler cannot drift into a second runtime inventory. The @kioku-migrate@ executable runs
 -- it immediately after applying migrations, which is why a read-model version
 -- bump needs no hand-written registry SQL. A host that applies migrations as a
 -- library (by running @Kioku.Migrations.kiokuMigrationPlan@ through pg-migrate)
@@ -34,32 +34,11 @@ module Kioku.ReadModel
 where
 
 import Effectful (Eff, (:>))
-import Keiro.ReadModel (ReadModel (..))
+import Keiro.Projection.Catalog (CatalogRegistration (..), catalogRegistrations)
+import Keiro.ReadModel.Rebuild (CatalogRegistrationError, GroupRebuildMetadata, registerProjectionCatalog)
 import Keiro.ReadModel.Schema qualified as Schema
-import Kioku.Memory.ReadModel
-  ( memoriesByNamespaceReadModel,
-    memoriesByNamespaceRowsReadModel,
-    memoriesByScopeReadModel,
-    memoriesByScopeRowsReadModel,
-    memoriesBySessionReadModel,
-    memoriesBySessionRowsReadModel,
-    memoriesByTypeReadModel,
-    memoriesByTypeRowsReadModel,
-    memoryByIdReadModel,
-    memorySupersessionChainReadModel,
-  )
 import Kioku.Prelude
-import Kioku.Session.ReadModel
-  ( awaitingSessionsByCorrelationKeyReadModel,
-    sessionByIdReadModel,
-    sessionChainReadModel,
-    sessionDelegationChildrenReadModel,
-    sessionsByFocusReadModel,
-    sessionsByNamespaceReadModel,
-    sessionsByScopeReadModel,
-    sessionsByStartedRangeReadModel,
-    turnsBySessionReadModel,
-  )
+import Kioku.ProjectionCatalog (kiokuProjectionCatalog)
 import Kiroku.Store.Effect (Store)
 
 -- | The registry identity of a read model: its logical name plus the schema
@@ -71,47 +50,22 @@ data ReadModelSchema = ReadModelSchema
   }
   deriving stock (Eq, Show)
 
-schemaOf :: ReadModel q r -> ReadModelSchema
-schemaOf rm = ReadModelSchema rm.name rm.version rm.shapeHash
+schemaOf :: CatalogRegistration -> ReadModelSchema
+schemaOf registration =
+  ReadModelSchema registration.registryName registration.version registration.shapeHash
 
 -- | Every Kioku read model paired with the schema identity the current code
 -- expects. Ordered session models first, then memory models.
 kiokuReadModelSchemas :: [ReadModelSchema]
-kiokuReadModelSchemas =
-  [ schemaOf sessionByIdReadModel,
-    schemaOf sessionsByNamespaceReadModel,
-    schemaOf sessionsByScopeReadModel,
-    schemaOf sessionsByFocusReadModel,
-    schemaOf sessionsByStartedRangeReadModel,
-    schemaOf sessionChainReadModel,
-    schemaOf sessionDelegationChildrenReadModel,
-    schemaOf awaitingSessionsByCorrelationKeyReadModel,
-    schemaOf turnsBySessionReadModel,
-    schemaOf memoryByIdReadModel,
-    schemaOf memoriesByNamespaceReadModel,
-    schemaOf memoriesByNamespaceRowsReadModel,
-    schemaOf memoriesByScopeReadModel,
-    schemaOf memoriesByScopeRowsReadModel,
-    schemaOf memoriesBySessionReadModel,
-    schemaOf memoriesBySessionRowsReadModel,
-    schemaOf memoriesByTypeReadModel,
-    schemaOf memoriesByTypeRowsReadModel,
-    schemaOf memorySupersessionChainReadModel
-  ]
+kiokuReadModelSchemas = schemaOf <$> catalogRegistrations kiokuProjectionCatalog
 
--- | Register every Kioku read model at application startup.
+-- | Register Kioku's validated projection catalog at application startup.
 --
--- Keiro 0.3 deliberately stopped registering models on their first query. This
--- operation is idempotent and leaves an existing row unchanged, allowing Keiro
--- to continue failing closed when its version or shape hash is stale.
-registerKiokuReadModels :: (Store :> es) => Eff es ()
-registerKiokuReadModels =
-  forM_ kiokuReadModelSchemas \schema ->
-    void $
-      Schema.registerReadModel
-        schema.readModelName
-        schema.readModelVersion
-        schema.readModelShapeHash
+-- This registers the query identities, rebuild groups, and persisted catalog
+-- fingerprint in one idempotent handshake. A conflicting fingerprint or stale
+-- query identity is returned as a typed registration error.
+registerKiokuReadModels :: (Store :> es) => Eff es (Either CatalogRegistrationError [GroupRebuildMetadata])
+registerKiokuReadModels = registerProjectionCatalog kiokuProjectionCatalog
 
 -- | What reconciliation did to one read model's registry row.
 data ReconcileOutcome

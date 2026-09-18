@@ -8,6 +8,7 @@ import Kioku.EmbeddingWorkerSpec qualified as EmbeddingWorkerSpec
 import Kioku.IdempotencySpec qualified as IdempotencySpec
 import Kioku.MemorySpaceSpec qualified as MemorySpaceSpec
 import Kioku.PortfolioAccessSpec qualified as PortfolioAccessSpec
+import Kioku.ProjectionCatalogSpec qualified as ProjectionCatalogSpec
 import Kioku.ReadModelReconcileSpec qualified as ReadModelReconcileSpec
 import Kioku.RecallCompatSpec qualified as RecallCompatSpec
 import Kioku.RecallSpec qualified as RecallSpec
@@ -33,6 +34,7 @@ main =
         IdempotencySpec.tests,
         MemorySpaceSpec.tests,
         PortfolioAccessSpec.tests,
+        ProjectionCatalogSpec.tests,
         ReadModelReconcileSpec.tests,
         RecallSpec.tests,
         RecallCompatSpec.tests,

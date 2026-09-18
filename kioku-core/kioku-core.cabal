@@ -77,6 +77,7 @@ library
     Kioku.Memory.EventStream
     Kioku.Memory.ReadModel
     Kioku.Partition
+    Kioku.ProjectionCatalog
     Kioku.ReadModel
     Kioku.Recall
     Kioku.Recall.Capability
@@ -161,6 +162,7 @@ test-suite kioku-test
     Kioku.IdempotencySpec
     Kioku.MemorySpaceSpec
     Kioku.PortfolioAccessSpec
+    Kioku.ProjectionCatalogSpec
     Kioku.ReadModelReconcileSpec
     Kioku.RecallCompatSpec
     Kioku.RecallHarness

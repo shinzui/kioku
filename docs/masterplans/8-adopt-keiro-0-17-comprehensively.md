@@ -21,6 +21,11 @@ provenance:
       at: 2026-09-18T19:31:14Z
       mode: "implement"
       note: "Started EP-2 read-model freshness modernization"
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-18T21:56:42Z
+      mode: "implement"
+      note: "Started EP-3 projection catalog and runtime assembly implementation"
 ---
 
 # Adopt Keiro 0.17 comprehensively
@@ -103,7 +108,7 @@ an OKF bundle.
 |---|-------|------|-----------|-----------|--------|
 | EP-1 | Align Kioku with the released Keiro 0.17 dependency cohort | docs/plans/42-align-kioku-with-the-released-keiro-0-17-dependency-cohort.md | None | None | Complete |
 | EP-2 | Replace deprecated Keiro read-model freshness APIs | docs/plans/43-replace-deprecated-keiro-read-model-freshness-apis.md | EP-1 | None | Complete |
-| EP-3 | Establish a validated projection catalog and runtime assembly | docs/plans/44-establish-a-validated-projection-catalog-and-runtime-assembly.md | EP-2 | None | Not Started |
+| EP-3 | Establish a validated projection catalog and runtime assembly | docs/plans/44-establish-a-validated-projection-catalog-and-runtime-assembly.md | EP-2 | None | Complete |
 | EP-4 | Harden Kioku migrations to the PostgreSQL patterns | docs/plans/45-harden-kioku-migrations-to-the-postgresql-patterns.md | EP-1 | EP-3 | Not Started |
 | EP-5 | Ratchet Haskell and CLI pattern conformance | docs/plans/46-ratchet-haskell-and-cli-pattern-conformance.md | EP-1 | EP-2 | Not Started |
 | EP-6 | Integrate and publish the Keiro 0.17 adoption | docs/plans/47-integrate-and-publish-the-keiro-0-17-adoption.md | EP-1, EP-2, EP-3, EP-4, EP-5 | None | Not Started |
@@ -159,6 +164,9 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-2: Replace deprecated Keiro read-model freshness APIs (complete;
   nineteen blueprints, twenty-one modern query calls, deprecation ratchet, and
   445-test repository suite passed).
+- [x] EP-3: Establish a validated projection catalog and runtime assembly (complete;
+  two sources, three targets, two rebuild groups, nineteen query bindings, ten focused
+  tests, and the 455-test repository suite passed).
 
 ## Surprises & Discoveries
 
@@ -180,6 +188,10 @@ interactions between child plans. Provide concise evidence.
   model values. EP-3 can therefore bind the catalog to the authoritative names,
   tables, versions, hashes, cursor authorities, and SQL without reconstructing a
   parallel inventory.
+- EP-3 confirmed that Keiro's exclusive target-ownership invariant cannot represent
+  the shared framework-owned timer table truthfully. Kioku therefore catalogs only
+  its three application tables and keeps both timer callbacks explicit in the same
+  append transaction; a rollback fixture proves the boundary remains atomic.
 
 
 ## Decision Log
@@ -212,6 +224,13 @@ plan.
     truthful `NoQueryCursor` capabilities; a second catalog-local definition
     would reintroduce the drift this initiative is intended to remove.
   Date: 2026-09-18
+- Decision: Catalog Kioku-owned projections and retain Keiro timer scheduling as an
+    explicit framework callback at each command boundary.
+  Rationale: The released catalog requires one owner per target, while
+    `keiro.keiro_timers` is shared framework state written by both event families.
+    ADR-13 records the boundary and the capability needed before adopting the
+    catalog-fenced command runner.
+  Date: 2026-09-18
 
 
 ## Outcomes & Retrospective
@@ -221,4 +240,9 @@ Compare the result against the original vision. Before marking the MasterPlan co
 distill durable project context from this MasterPlan and its child ExecPlans into
 docs/adr/. Keep task-local execution and coordination details here.
 
-(To be filled during and after implementation.)
+EP-3 established the initiative's runtime source of truth: catalog validation,
+registration, migration reconciliation identities, typed application handlers, rebuild
+metadata, and the persisted fingerprint now derive from one validated declaration. The
+application-owned projections and existing timer schedules remain transactionally atomic,
+and all invalid catalog fixtures fail before traffic. The durable shared-framework boundary
+is recorded in [ADR-13](../adr/catalog-application-projections-not-framework-timers.md).

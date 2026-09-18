@@ -62,6 +62,7 @@ import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
+import Keiro.Projection.Catalog (typedInlineProjections)
 import Keiro.ReadModel (QueryFreshness (Immediate), ReadModelError, runQueryWithFreshness)
 import Kioku.Api.Access
   ( MemoryAccessContext,
@@ -93,10 +94,10 @@ import Kioku.Memory.ReadModel
     memoriesBySessionRowsReadModel,
     memoriesByTypeRowsReadModel,
     memoryByIdReadModel,
-    memoryInlineProjection,
     memorySupersessionChainReadModel,
   )
 import Kioku.Prelude
+import Kioku.ProjectionCatalog (kiokuProjectionCatalog, memoryProjectionSet)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
@@ -608,13 +609,17 @@ runMemoryCommand ::
   MemoryCommand ->
   Eff es (Either MemoryWriteError MemoryId)
 runMemoryCommand mid cmd = do
+  -- Keiro's catalog cannot declare the shared framework-owned timer table as
+  -- a Kioku target. Derive Kioku's handler from the catalog, keep the timer
+  -- callback explicit, and run both in the append transaction; see
+  -- docs/adr/catalog-application-projections-not-framework-timers.md.
   result <-
     runCommandWithProjections
       defaultRunCommandOptions
       memoryEventStream
       (memoryStream mid)
       cmd
-      [memoryInlineProjection, l2SceneTimerScheduleProjection]
+      (typedInlineProjections kiokuProjectionCatalog memoryProjectionSet <> [l2SceneTimerScheduleProjection])
   pure $
     case result of
       Left err -> Left (MemoryCommandRejected err)

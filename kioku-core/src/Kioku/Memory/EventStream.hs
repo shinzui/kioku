@@ -1,6 +1,7 @@
 module Kioku.Memory.EventStream
   ( MemoryEventStream,
     memoryEventStream,
+    validateMemoryEventStream,
     memoryCodec,
     memoryStream,
     parseMemoryEvent,
@@ -15,7 +16,7 @@ import Keiki.Core (HsPred)
 import Keiki.Generics (emptyRegFile)
 import Keiro.Codec (Codec (..), EventType (..))
 import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
-import Keiro.EventStream.Validate (ValidatedEventStream, mkEventStreamOrThrow)
+import Keiro.EventStream.Validate (EventStreamWarning, ValidatedEventStream, mkEventStream)
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
 import Kioku.Id (MemoryId, idText)
@@ -30,7 +31,11 @@ memoryStream mid = Stream.entityStream (Stream.categoryUnsafe "kioku_memory") (i
 
 memoryEventStream :: ValidatedEventStream (HsPred MemoryRegs MemoryCommand) MemoryRegs MemoryVertex MemoryCommand MemoryEvent
 memoryEventStream =
-  mkEventStreamOrThrow "kioku-memory" memoryEventStreamDefinition
+  either (error . ("invalid kioku memory event stream: " <>) . show) id validateMemoryEventStream
+
+-- | The explicit startup proof for the hand-written memory stream.
+validateMemoryEventStream :: Either [EventStreamWarning] (ValidatedEventStream (HsPred MemoryRegs MemoryCommand) MemoryRegs MemoryVertex MemoryCommand MemoryEvent)
+validateMemoryEventStream = mkEventStream "kioku-memory" memoryEventStreamDefinition
 
 memoryEventStreamDefinition :: MemoryEventStream
 memoryEventStreamDefinition =

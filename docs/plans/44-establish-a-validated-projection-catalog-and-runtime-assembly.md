@@ -11,6 +11,12 @@ provenance:
     model: "gpt-5.6-sol"
     harness: "codex-cli"
     at: 2026-09-18T18:42:34Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-18T21:56:42Z
+      mode: "implement"
+      note: "Started EP-3 projection catalog and runtime assembly implementation"
 ---
 
 # Establish a validated projection catalog and runtime assembly
@@ -43,12 +49,31 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
+- [x] (2026-09-18 22:23Z) Milestone 1: defined and validated Kioku's two-source,
+  three-target, two-group, nineteen-query projection catalog from released Keiro 0.17.
+- [x] (2026-09-18 22:23Z) Milestone 2: derived registration, migration reconciliation
+  inventory, and startup validation from the catalog.
+- [x] (2026-09-18 22:23Z) Milestone 3: routed application-owned inline handlers through
+  typed catalog projection sets while preserving framework-owned timer side effects in the
+  same transaction.
+- [x] (2026-09-18 22:23Z) Milestone 4: added ten catalog, startup, transaction, and
+  event-stream validation tests; all 455 repository tests passed.
+
 ## Surprises & Discoveries
 
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- Keiro's released catalog intentionally rejects two owners for one target, so the shared
+  `keiro.keiro_timers` table cannot be represented truthfully by either Kioku event family.
+  Evidence: the duplicate-owner fixture reports `TargetWithMultipleOwners`, while the
+  catalog-derived application handlers and explicit timer handler roll back together.
+- The catalog fingerprint is versioned over the complete declaration and stabilizes at
+  `catalog-v7:54f9ac55d73f40160d87b0ae49c2477a0de860c2e6e1e38df0591a2036d002e4`.
+  Registration of a structurally valid catalog with a changed codec fingerprint is refused.
+- A parallel all-package test run exhausted an ephemeral PostgreSQL startup deadline for an
+  unrelated embedding-worker fixture. The exact fixture passed immediately in isolation,
+  and `cabal test all -j1` subsequently passed all 455 tests.
 
 
 ## Decision Log
@@ -69,8 +94,9 @@ Record every decision made while working on the plan.
 - Decision: Treat top-level `mkEventStreamOrThrow` as temporary and require explicit
     `mkEventStream` proof at startup.
   Rationale: The streams are hand-written, while the runtime pattern reserves the throwing
-    helper for generated definitions or fixtures with colocated proof. Startup should report
-    validation diagnostics rather than crash during module evaluation.
+    helper for generated definitions or fixtures with colocated proof. Startup now demands
+    and reports the explicit validation result before command code can demand the exported
+    validated stream value.
   Date: 2026-09-18
 
 
@@ -81,7 +107,23 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+EP-3 is complete. `Kioku.ProjectionCatalog` is the validated source of truth for two event
+sources, three application targets, two rebuild groups, two replayable typed projection sets,
+and all nineteen query models. Startup validates both hand-written event streams and the
+catalog, persists its fingerprint through `registerProjectionCatalog`, and exposes the
+application environment only after registration succeeds. Migration reconciliation now derives
+its schema identities from the same catalog registrations.
+
+Memory and session commands obtain their application handlers through
+`typedInlineProjections`. Their framework timer handlers remain explicit and atomic at the
+command boundary, as recorded by
+[ADR-13](../adr/catalog-application-projections-not-framework-timers.md). A controlled rollback
+test proves the event append, application row, and timer all remain absent after rollback.
+Invalid duplicate ownership, unknown ownership, missing ownership, incompatible cursor claims,
+and persisted fingerprint drift all fail closed. The focused catalog suite passed 10 tests and
+the serialized repository suite passed 455 tests. No implementation gap remains for this plan;
+the catalog-fenced command runner remains deliberately deferred until Keiro can model shared
+framework-owned callbacks without inventing application ownership.
 
 
 ## Context and Orientation

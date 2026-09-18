@@ -1,6 +1,7 @@
 module Kioku.Session.EventStream
   ( SessionEventStream,
     sessionEventStream,
+    validateSessionEventStream,
     sessionCodec,
     sessionStream,
     parseSessionEvent,
@@ -15,7 +16,7 @@ import Keiki.Core (HsPred)
 import Keiki.Generics (emptyRegFile)
 import Keiro.Codec (Codec (..), EventType (..))
 import Keiro.EventStream (EventStream (..), SnapshotPolicy (..))
-import Keiro.EventStream.Validate (ValidatedEventStream, mkEventStreamOrThrow)
+import Keiro.EventStream.Validate (EventStreamWarning, ValidatedEventStream, mkEventStream)
 import Keiro.Stream (Stream)
 import Keiro.Stream qualified as Stream
 import Kioku.Id (SessionId, idText)
@@ -30,7 +31,11 @@ sessionStream sid = Stream.entityStream (Stream.categoryUnsafe "kioku_session") 
 
 sessionEventStream :: ValidatedEventStream (HsPred SessionRegs SessionCommand) SessionRegs SessionVertex SessionCommand SessionEvent
 sessionEventStream =
-  mkEventStreamOrThrow "kioku-session" sessionEventStreamDefinition
+  either (error . ("invalid kioku session event stream: " <>) . show) id validateSessionEventStream
+
+-- | The explicit startup proof for the hand-written session stream.
+validateSessionEventStream :: Either [EventStreamWarning] (ValidatedEventStream (HsPred SessionRegs SessionCommand) SessionRegs SessionVertex SessionCommand SessionEvent)
+validateSessionEventStream = mkEventStream "kioku-session" sessionEventStreamDefinition
 
 sessionEventStreamDefinition :: SessionEventStream
 sessionEventStreamDefinition =

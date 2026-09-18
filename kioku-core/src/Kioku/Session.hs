@@ -56,6 +56,7 @@ import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
+import Keiro.Projection.Catalog (typedInlineProjections)
 import Keiro.ReadModel (QueryFreshness (Immediate), ReadModelError, runQueryWithFreshness)
 import Kioku.Api.Access
   ( MemoryAccessContext,
@@ -72,6 +73,7 @@ import Kioku.Api.Scope (MemoryScope, Namespace (..), scopeKindText, scopeNamespa
 import Kioku.Distill.Timer (l1TimerScheduleProjection)
 import Kioku.Id (SessionId, idText)
 import Kioku.Prelude
+import Kioku.ProjectionCatalog (kiokuProjectionCatalog, sessionProjectionSet)
 import Kioku.Session.Domain
 import Kioku.Session.EventStream (sessionEventStream, sessionStream)
 import Kioku.Session.ReadModel
@@ -90,7 +92,6 @@ import Kioku.Session.ReadModel
     sessionByIdReadModel,
     sessionChainReadModel,
     sessionDelegationChildrenReadModel,
-    sessionInlineProjection,
     sessionsByFocusReadModel,
     sessionsByNamespaceReadModel,
     sessionsByScopeReadModel,
@@ -805,13 +806,17 @@ runSessionCommand ::
   SessionCommand ->
   Eff es (Either SessionWriteError SessionId)
 runSessionCommand sid cmd = do
+  -- Keiro's catalog cannot declare the shared framework-owned timer table as
+  -- a Kioku target. Derive Kioku's handlers from the catalog, keep the timer
+  -- callback explicit, and run both in the append transaction; see
+  -- docs/adr/catalog-application-projections-not-framework-timers.md.
   result <-
     runCommandWithProjections
       defaultRunCommandOptions
       sessionEventStream
       (sessionStream sid)
       cmd
-      [sessionInlineProjection, l1TimerScheduleProjection]
+      (typedInlineProjections kiokuProjectionCatalog sessionProjectionSet <> [l1TimerScheduleProjection])
   pure $
     case result of
       Left err -> Left (SessionCommandRejected err)

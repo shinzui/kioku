@@ -10,11 +10,19 @@ module Kioku.App
   )
 where
 
+import Data.Text qualified as Text
 import Effectful (Eff, IOE, runEff)
 import Effectful.Error.Static (Error, runErrorNoCallStack)
+import Keiro.Projection.Catalog (Validation (..))
 import Keiro.Telemetry (KeiroMetrics)
+import Kioku.Memory.EventStream (validateMemoryEventStream)
 import Kioku.Prelude
+import Kioku.ProjectionCatalog
+  ( renderKiokuCatalogDiagnostics,
+    validateKiokuProjectionCatalog,
+  )
 import Kioku.ReadModel (registerKiokuReadModels)
+import Kioku.Session.EventStream (validateSessionEventStream)
 import Kiroku.Store.Connection (ConnectionSettings)
 import Kiroku.Store.Effect (Store, runStoreResource)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource, withKirokuStore)
@@ -42,12 +50,26 @@ runAppIO env =
 
 withNoopAppEnv :: ConnectionSettings -> (AppEnv -> IO a) -> IO a
 withNoopAppEnv connectionSettings continue = do
+  validateRuntimeDefinitions
   tracer <- noopTracer
   let env = AppEnv {connectionSettings, tracer, metrics = Nothing}
   registration <- runAppIO env registerKiokuReadModels
   case registration of
     Left err -> fail ("Kioku read-model registration failed: " <> show err)
-    Right () -> continue env
+    Right (Left err) -> fail ("Kioku projection-catalog registration failed: " <> show err)
+    Right (Right _) -> continue env
+
+validateRuntimeDefinitions :: IO ()
+validateRuntimeDefinitions = do
+  case validateMemoryEventStream of
+    Left warnings -> fail ("Kioku memory event-stream validation failed: " <> show warnings)
+    Right _ -> pure ()
+  case validateSessionEventStream of
+    Left warnings -> fail ("Kioku session event-stream validation failed: " <> show warnings)
+    Right _ -> pure ()
+  case validateKiokuProjectionCatalog of
+    Failure diagnostics -> fail ("Kioku projection-catalog validation failed: " <> Text.unpack (renderKiokuCatalogDiagnostics diagnostics))
+    Success _ -> pure ()
 
 noopTracer :: IO Tracer
 noopTracer = do
