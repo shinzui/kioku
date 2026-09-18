@@ -16,3 +16,4 @@ result-*
 
 # Plaintext scene/persona mirrors kioku writes into an agent workspace.
 .kioku/
+.envrc.local
