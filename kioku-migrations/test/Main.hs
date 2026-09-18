@@ -11,6 +11,9 @@
 module Main where
 
 import Control.Exception (bracket)
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as ByteString
+import Data.Char (isHexDigit, isSpace)
 import Data.Foldable (toList)
 import Data.Int (Int64)
 import Data.List (sort)
@@ -38,6 +41,7 @@ import Database.PostgreSQL.Migrate
     defaultImportOptions,
     defaultRunOptions,
     migrationComponentFromEmbeddedSql,
+    migrationFingerprint,
     migrationId,
     migrationPlan,
     runMigrationPlan,
@@ -47,6 +51,7 @@ import Database.PostgreSQL.Migrate
   )
 import Database.PostgreSQL.Migrate.Embed (checkMigrationManifest)
 import Database.PostgreSQL.Migrate.History.Codd (importCoddHistoryWithValidators)
+import Database.PostgreSQL.Migrate.Internal (migrationChecksumBytes)
 import Hasql.Connection qualified as Connection
 import Hasql.Connection.Settings qualified as Settings
 import Hasql.Decoders qualified as D
@@ -61,9 +66,11 @@ import Kioku.Migrations.History.Codd
     cohortCoddSourceConfig,
     cohortCoddStateValidators,
     kiokuCoddHistoryMappings,
+    kiokuLegacyMigrationNames,
   )
 import Kioku.Migrations.TestSupport (withBareDatabase, withKiokuMigratedDatabase)
 import Kiroku.Store.Migrations qualified as KirokuMigrations
+import Numeric (showHex)
 import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 
@@ -89,9 +96,18 @@ tests =
         [ testCase "restores strict verification and is idempotent" testLedgerChecksumRebaseline,
           testCase "rejects a missing default ledger table" testLedgerFixupRequiresDefaultLedger
         ],
-      testCase "the migration manifest is complete and valid" testManifestIntegrity,
+      testGroup
+        "migration source integrity"
+        [ testCase "the migration manifest is complete and valid" testManifestIntegrity,
+          testCase "the Codd lock matches its ten native payloads" testMigrationLockIntegrity,
+          testCase "all thirteen released native payload hashes are frozen" testFrozenNativeHashes,
+          testCase "the frozen history is exempt and every future entry passes policy" testForwardMigrationPolicy,
+          testCase "an unqualified future object reports its filename" testUnqualifiedFutureMigrationRejected,
+          testCase "a future search-path mutation reports its filename" testFutureSearchPathMutationRejected
+        ],
       testCase "the pinned Codd history maps 30 known plan targets" testHistoryMappings,
       testCase "the pre-cutover Codd cohort imports 30 rows and applies only the forward migrations" testCoddCohortImport,
+      testCase "fresh and supported Codd-upgrade databases converge on the frozen Kioku schema" testSchemaConvergence,
       testGroup
         "the partition-aware full-text index"
         [ testCase "a normal database replaces the content-only GIN" testPartitionAwareFtsIndex,
@@ -128,6 +144,213 @@ testManifestIntegrity = do
   case result of
     Left err -> assertFailure ("invalid migration manifest: " <> show err)
     Right _ -> pure ()
+
+testMigrationLockIntegrity :: Assertion
+testMigrationLockIntegrity = do
+  entries <- checkedMigrationEntries
+  lockText <- Text.IO.readFile "migrations.lock"
+  locked <- either assertFailure pure (parseMigrationLock lockText)
+  let expected =
+        zip
+          (toList kiokuLegacyMigrationNames)
+          (checksumHex . snd <$> take 10 (toList entries))
+  locked @?= expected
+
+testFrozenNativeHashes :: Assertion
+testFrozenNativeHashes = do
+  entries <- checkedMigrationEntries
+  let actual = [(filename, checksumHex bytes) | (filename, bytes) <- toList entries]
+  actual @?= frozenNativeMigrationChecksums
+
+testForwardMigrationPolicy :: Assertion
+testForwardMigrationPolicy = do
+  entries <- checkedMigrationEntries
+  futureMigrationPolicyViolations (toList entries) @?= []
+
+testUnqualifiedFutureMigrationRejected :: Assertion
+testUnqualifiedFutureMigrationRejected =
+  futureMigrationPolicyViolations
+    [("0014-unqualified.sql", "CREATE TABLE memories (id bigint);")]
+    @?= ["0014-unqualified.sql: application object is not schema-qualified: create table memories"]
+
+testFutureSearchPathMutationRejected :: Assertion
+testFutureSearchPathMutationRejected =
+  futureMigrationPolicyViolations
+    [("0014-search-path.sql", "SET LOCAL search_path TO kioku, pg_catalog;")]
+    @?= ["0014-search-path.sql: migration mutates search_path"]
+
+checkedMigrationEntries :: IO (NonEmpty (FilePath, ByteString))
+checkedMigrationEntries =
+  checkMigrationManifest "migrations/manifest"
+    >>= either (assertFailure . ("invalid migration manifest: " <>) . show) pure
+
+parseMigrationLock :: Text -> Either String [(FilePath, Text)]
+parseMigrationLock contents = do
+  entries <- traverse parseLine (zip [1 :: Int ..] (Text.lines contents))
+  let filenames = fst <$> entries
+  if length filenames == Set.size (Set.fromList filenames)
+    then Right entries
+    else Left "migrations.lock contains a duplicate filename"
+  where
+    parseLine (lineNumber, line) =
+      case Text.words line of
+        [digest, filename]
+          | Text.length digest == 64 && Text.all isLowerHex digest ->
+              Right (Text.unpack filename, digest)
+        _ -> Left ("invalid migrations.lock entry on line " <> show lineNumber)
+    isLowerHex char = isHexDigit char && not (char >= 'A' && char <= 'F')
+
+checksumHex :: ByteString -> Text
+checksumHex =
+  Text.pack
+    . concatMap (leftPad . (`showHex` ""))
+    . ByteString.unpack
+    . migrationChecksumBytes
+    . migrationFingerprint
+  where
+    leftPad [digit] = ['0', digit]
+    leftPad digits = digits
+
+frozenNativeMigrationChecksums :: [(FilePath, Text)]
+frozenNativeMigrationChecksums =
+  [ ("0001-kioku-base.sql", "bfc4fc77978588405f0f697a4831ca12a4972ab8f0e5fe320561a7e34122fb94"),
+    ("0002-kioku-memory-embeddings.sql", "11b42d976d146b61023e102b8633fce0df445ebe2ef4f2b9fedd51e8ad93e349"),
+    ("0003-kioku-distillation.sql", "a4dcaf496976a1d206c8c5c903f3e18a768eca62bc32c09a01822e32d5aeebae"),
+    ("0004-kioku-session-delegation-lineage.sql", "70ca30dc4737ef5048a9b241ad87ed0d71f0f0c32527f442e9a0ffbf2047f7ba"),
+    ("0005-kioku-awaiting-session-state.sql", "d849d7d8a2581ce25475542828462534d56454ab620522251adec5bc95ab1792"),
+    ("0006-kioku-session-readmodel-registry-bump.sql", "76c3e43144ee7d158a73088fe38edee771994a38d796cc7dadf6ebd83b122542"),
+    ("0007-kioku-l1-watermarks.sql", "2f5bce34b92de0e306dbba7dc978ebb531e5f7f09edb18a0fcc758daa2319a45"),
+    ("0008-kioku-schema-hardening.sql", "c6b734e2ba1aacf4736a6714ef218ed26c89cbfb7ce02552af46d220a0be42ae"),
+    ("0009-kioku-embedding-schema-heal.sql", "26b42f4fc265fb214ff3ab6b312be893eb447223322ac4bdb09d4ee1a649ece8"),
+    ("0010-kioku-scope-identity-recompute.sql", "c88ad236c4d6ad54e8ad6c4b51821f72772d58ff2d028d60d9e4d32a5c3cb125"),
+    ("0011-kioku-memory-space-partition.sql", "6c83d3f01f784d0d9395953d5bb1763b8eea6cd9439073df42f79775a85197a9"),
+    ("0012-relocate-projections-to-kioku-schema.sql", "5ad602b1379694d30241e09ad77d78858cbf8f8094d2e7bdb0fe7ba12dda88e6"),
+    ("0013-partition-aware-fts-index.sql", "b73a9fef16c523ef50d4c9cb0cb550abe276c974b2937b798e8d2ea7497ffd4a")
+  ]
+
+futureMigrationPolicyViolations :: [(FilePath, ByteString)] -> [Text]
+futureMigrationPolicyViolations entries =
+  concatMap
+    inspect
+    [ (filename, Text.Encoding.decodeUtf8 bytes)
+    | (filename, bytes) <- entries,
+      filename `Set.notMember` frozenMigrationNames
+    ]
+  where
+    inspect (filename, sql) =
+      (prefix filename <$> searchPathViolations sql)
+        <> (prefix filename <$> qualificationViolations sql)
+    prefix filename rule = Text.pack filename <> ": " <> rule
+
+frozenMigrationNames :: Set.Set FilePath
+frozenMigrationNames = Set.fromList (fst <$> frozenNativeMigrationChecksums)
+
+searchPathViolations :: Text -> [Text]
+searchPathViolations sql =
+  [ "migration mutates search_path"
+  | any (`Text.isInfixOf` normalized) ["set search_path", "set local search_path", "set session search_path"]
+      || "set schema" `Text.isInfixOf` normalized
+      || "set_config('search_path'" `Text.isInfixOf` compact
+  ]
+  where
+    normalized = normalizeSql sql
+    compact = Text.filter (not . isSpace) normalized
+
+qualificationViolations :: Text -> [Text]
+qualificationViolations sql =
+  publicViolation <> concatMap inspectStatement statements
+  where
+    normalized = normalizeSql sql
+    statements = filter (not . Text.null) (Text.strip <$> Text.splitOn ";" normalized)
+    publicViolation = ["application object uses the public schema" | "public." `Text.isInfixOf` normalized]
+
+inspectStatement :: Text -> [Text]
+inspectStatement statement =
+  mapMaybe (unqualifiedObject statement) objectPrefixes
+    <> maybeToList (unqualifiedIndexTarget statement)
+    <> unqualifiedReferences statement
+  where
+    objectPrefixes =
+      [ "create table ",
+        "alter table ",
+        "drop table ",
+        "truncate table ",
+        "create type ",
+        "alter type ",
+        "drop type ",
+        "create function ",
+        "create or replace function ",
+        "alter function ",
+        "drop function ",
+        "create view ",
+        "create materialized view ",
+        "create sequence ",
+        "alter sequence ",
+        "drop sequence "
+      ]
+
+unqualifiedObject :: Text -> Text -> Maybe Text
+unqualifiedObject statement prefix = do
+  remainder <- Text.stripPrefix prefix statement
+  let objectName = firstObjectName remainder
+  if isQualifiedObject objectName
+    then Nothing
+    else Just ("application object is not schema-qualified: " <> Text.stripEnd prefix <> " " <> objectName)
+
+unqualifiedIndexTarget :: Text -> Maybe Text
+unqualifiedIndexTarget statement
+  | "create index " `Text.isPrefixOf` statement || "create unique index " `Text.isPrefixOf` statement =
+      case Text.breakOn " on " statement of
+        (_, remainder)
+          | Text.null remainder -> Just "CREATE INDEX has no ON target"
+          | otherwise ->
+              let target = firstObjectName (Text.drop 4 remainder)
+               in if isQualifiedObject target
+                    then Nothing
+                    else Just ("index target is not schema-qualified: " <> target)
+  | otherwise = Nothing
+
+unqualifiedReferences :: Text -> [Text]
+unqualifiedReferences statement = go (Text.words statement)
+  where
+    go ("references" : target : remaining) =
+      ["foreign-key target is not schema-qualified: " <> cleanObjectName target | not (isQualifiedObject target)]
+        <> go remaining
+    go (_ : remaining) = go remaining
+    go [] = []
+
+firstObjectName :: Text -> Text
+firstObjectName =
+  cleanObjectName
+    . headOrEmpty
+    . dropWhile (`elem` ["if", "not", "exists", "only"])
+    . Text.words
+
+headOrEmpty :: [Text] -> Text
+headOrEmpty (value : _) = value
+headOrEmpty [] = ""
+
+cleanObjectName :: Text -> Text
+cleanObjectName = Text.takeWhile (\char -> char /= '(' && char /= ',')
+
+isQualifiedObject :: Text -> Bool
+isQualifiedObject objectName =
+  not (Text.null objectName)
+    && "." `Text.isInfixOf` objectName
+    && not ("public." `Text.isPrefixOf` objectName)
+
+normalizeSql :: Text -> Text
+normalizeSql =
+  Text.unwords
+    . Text.words
+    . Text.toLower
+    . Text.unlines
+    . fmap (fst . Text.breakOn "--")
+    . Text.lines
+
+maybeToList :: Maybe value -> [value]
+maybeToList (Just value) = [value]
+maybeToList Nothing = []
 
 testHistoryMappings :: Assertion
 testHistoryMappings = do
@@ -231,6 +454,20 @@ testFreshDatabase =
     withConnection connStr \conn -> do
       found <- run conn (Session.statement () registryTableExists)
       found @?= True
+      plan <- either (fail . show) pure kiokuMigrationPlan
+      repeated <-
+        runMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan
+          >>= either (assertFailure . show) pure
+      let MigrationReport {results = repeatedResults} = repeated
+      length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 56
+      length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
+      verification <-
+        verifyMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan
+          >>= either (assertFailure . show) pure
+      let VerificationReport {issues = freshIssues, pendingMigrations = freshPending, unknownMigrations = freshUnknown} = verification
+      freshIssues @?= []
+      freshPending @?= []
+      freshUnknown @?= []
 
 registryTableExists :: Statement () Bool
 registryTableExists =
@@ -263,6 +500,12 @@ testHostSearchPathRestored =
         finalOutcome @?= AppliedNow
       [] -> assertFailure "the composed migration plan returned no results"
     query connStr hostMigratedColumnExists >>= (@?= True)
+    query connStr currentSearchPath >>= (@?= "host_app, pg_catalog")
+    verification <- verifyMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan >>= either (assertFailure . show) pure
+    let VerificationReport {issues = hostIssues, pendingMigrations = hostPending, unknownMigrations = hostUnknown} = verification
+    hostIssues @?= []
+    hostPending @?= []
+    hostUnknown @?= []
 
 hostComposedPlan :: IO MigrationPlan
 hostComposedPlan = do
@@ -313,6 +556,13 @@ hostMigratedColumnExists =
     """
     E.noParams
     (D.singleRow (D.column (D.nonNullable D.bool)))
+
+currentSearchPath :: Statement () Text
+currentSearchPath =
+  preparable
+    "SELECT current_setting('search_path')"
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
 
 -- * Released checksum re-baseline
 
@@ -1200,6 +1450,100 @@ testCoddCohortImport =
     let MigrationReport {results = repeatedResults} = repeated
     length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 56
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
+
+testSchemaConvergence :: Assertion
+testSchemaConvergence = do
+  fresh <- withKiokuMigratedDatabase (\connStr -> query connStr kiokuSchemaSnapshotStatement)
+  upgraded <- withSupportedCoddUpgrade (\connStr -> query connStr kiokuSchemaSnapshotStatement)
+  upgraded @?= fresh
+  checksumHex (Text.Encoding.encodeUtf8 fresh) @?= expectedKiokuSchemaChecksum
+
+withSupportedCoddUpgrade :: (Text -> IO a) -> IO a
+withSupportedCoddUpgrade use =
+  withBareDatabase \connStr -> do
+    plan <- either (fail . show) pure kiokuMigrationPlan
+    fixture <- Text.IO.readFile "test/fixtures/pre-cutover-schema.sql"
+    let legacyNames = fixtureMigrationNames fixture
+        settings = Settings.connectionString connStr
+        provider = connectionProviderFromSettings settings
+    kirokuFixup <- Text.IO.readFile "codd-upgrade/realign-kiroku-migration-timestamps.sql"
+    keiroFixup <- Text.IO.readFile "codd-upgrade/realign-keiro-migration-timestamps.sql"
+    relocation <- Text.IO.readFile "codd-upgrade/relocate-keiro-tables-to-keiro-schema.sql"
+    withConnection connStr \conn -> do
+      run conn (Session.script fixture)
+      run conn (Session.script (coddV5Ledger legacyNames))
+      run conn (Session.script kirokuFixup)
+      run conn (Session.script keiroFixup)
+      run conn (Session.script relocation)
+      run conn (Session.script seedSessionRegistry)
+    sourceConfig <-
+      either
+        (assertFailure . show)
+        pure
+        (cohortCoddSourceConfig provider False "schema convergence rehearsal" Confirmed)
+    _ <-
+      importCoddHistoryWithValidators
+        (withEquivalentHistory AllowEquivalentHistory defaultImportOptions)
+        cohortCoddStateValidators
+        sourceConfig
+        provider
+        plan
+        cohortCoddHistoryMappings
+        >>= either (assertFailure . show) pure
+    _ <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
+    use connStr
+
+expectedKiokuSchemaChecksum :: Text
+expectedKiokuSchemaChecksum = "be5f9e8c2d1b483675e9f93d5b98af53f599c2e43b393b2c7441958a82e0059d"
+
+kiokuSchemaSnapshotStatement :: Statement () Text
+kiokuSchemaSnapshotStatement =
+  preparable
+    """
+    WITH facts AS (
+      SELECT 'relation|' || c.relname::text || '|' || c.relkind::text AS fact
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'kioku' AND c.relkind IN ('r', 'p')
+
+      UNION ALL
+
+      SELECT 'column|' || c.relname::text || '|' || a.attnum::text || '|'
+             || a.attname::text || '|' || pg_catalog.format_type(a.atttypid, a.atttypmod)
+             || '|' || a.attnotnull::text || '|'
+             || coalesce(pg_catalog.pg_get_expr(d.adbin, d.adrelid, true), '')
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+      LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+      WHERE n.nspname = 'kioku' AND c.relkind IN ('r', 'p')
+        AND a.attnum > 0 AND NOT a.attisdropped
+
+      UNION ALL
+
+      SELECT 'constraint|' || c.relname::text || '|' || con.conname::text || '|'
+             || con.contype::text || '|'
+             || pg_catalog.regexp_replace(pg_catalog.pg_get_constraintdef(con.oid, true), '\\s+', ' ', 'g')
+      FROM pg_catalog.pg_constraint con
+      JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'kioku'
+
+      UNION ALL
+
+      SELECT 'index|' || table_class.relname::text || '|' || index_class.relname::text || '|'
+             || pg_catalog.regexp_replace(pg_catalog.pg_get_indexdef(index_class.oid), '\\s+', ' ', 'g')
+      FROM pg_catalog.pg_index i
+      JOIN pg_catalog.pg_class index_class ON index_class.oid = i.indexrelid
+      JOIN pg_catalog.pg_class table_class ON table_class.oid = i.indrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = table_class.relnamespace
+      WHERE n.nspname = 'kioku'
+    )
+    SELECT coalesce(string_agg(fact, E'\n' ORDER BY fact COLLATE "C"), '')
+    FROM facts
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
 
 fixtureMigrationNames :: Text -> [FilePath]
 fixtureMigrationNames =

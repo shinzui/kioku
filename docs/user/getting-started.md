@@ -51,6 +51,13 @@ The migration ledger records the stable `component/name` identity and SHA-256 ch
 56 migrations (Kiroku 11, Keiro 32, Kioku 13). `verify` is read-only and fails if applied SQL no
 longer matches the bytes compiled into the executable.
 
+When authoring a Kioku migration, start with `just new-migration <slug>`, qualify every persistent
+object with its owning schema, and never change the connection `search_path`. The command creates
+the SQL file and updates the ordered native manifest atomically. Run
+`cabal test kioku-migrations:kioku-migrations-test` before committing, and add a new forward file
+instead of editing any released payload. The separate `kioku-migrations/migrations.lock` belongs
+to the historical Codd import bridge and stays unchanged for new pg-migrate entries.
+
 If a long-lived database already applied Kioku migration `0011` under version 0.4.0.0 or 0.4.1.0,
 the corrected payload intentionally changes that checksum. Follow the exact re-baseline preflight
 in [Upgrading to the kioku schema](upgrading-to-the-kioku-schema.md#preflight-an-applied-04x-0011)

@@ -11,6 +11,12 @@ provenance:
     model: "gpt-5.6-sol"
     harness: "codex-cli"
     at: 2026-09-18T18:42:34Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-18T22:34:31Z
+      mode: "implement"
+      note: "Started EP-4 migration hardening implementation"
 ---
 
 # Harden Kioku migrations to the PostgreSQL patterns
@@ -38,12 +44,33 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
+- [x] (2026-09-18 22:46Z) Milestone 1: verify the native manifest, the ten-entry
+  historical Codd lock, and all thirteen frozen native payload hashes together.
+- [x] (2026-09-18 22:46Z) Milestone 2: enforce schema qualification and search-path
+  policy for migrations added after the frozen 0013 baseline, with failing fixtures.
+- [x] (2026-09-18 22:46Z) Milestone 3: adopt Keiro 0.17's shared migrated-suite fixture
+  without changing the public Kioku fixture callback.
+- [x] (2026-09-18 22:46Z) Milestone 4: prove fresh/upgrade schema convergence,
+  hostile-session isolation, and rerun idempotence.
+- [x] (2026-09-18 22:46Z) Milestone 5: document the ratcheted migration authoring
+  workflow and the historical lockfile boundary.
+- [x] (2026-09-18 22:46Z) Ran the focused migration suite (30 tests), schema
+  subset (9 tests), CLI suite (58 tests), and `cabal test all` (461 tests total);
+  confirmed migrations 0001 through 0013 have an empty diff.
+
 ## Surprises & Discoveries
 
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- `migrations.lock` is not the native thirteen-entry manifest lock implied by the
+  initial milestone wording. It is the ten-entry Codd source-evidence file whose
+  timestamped names map to native migrations 0001 through 0010. The implementation
+  validates that exact mapping and freezes all thirteen native hashes separately.
+- Hackage's released `keiro-test-support-0.17.0.0` depends on
+  `ephemeral-pg >=0.2 && <0.3`, while the newer Mori-located Keiro checkout has moved
+  to `ephemeral-pg >=0.3.1 && <0.4`. Kioku retains `ephemeral-pg ^>=0.2.2.0` so the
+  released cohort solves; the released tarball confirms the fixture APIs are present.
 
 
 ## Decision Log
@@ -59,6 +86,17 @@ Record every decision made while working on the plan.
   Rationale: Schema and session leakage occurs at component boundaries. The supported plan
     is Kiroku, then Keiro, then Kioku, and only that sequence proves ownership isolation.
   Date: 2026-09-18
+- Decision: Keep `migrations.lock` as immutable Codd import evidence rather than
+  extending it for native migrations 0011 and later.
+  Rationale: `Kioku.Migrations.History.Codd` parses the lock against the ten historical
+    timestamped source filenames. Native ordering is already owned by
+    `migrations/manifest`; conflating the two would falsify the history-import contract.
+  Date: 2026-09-18
+- Decision: Freeze the normalized Kioku catalog as a SHA-256 checksum in the migration
+  suite and compare both fresh and supported Codd-upgrade databases against it.
+  Rationale: The normalized source includes relations, columns, constraints, and indexes
+    while excluding owners, OIDs, and timestamps, so it is deterministic and compact.
+  Date: 2026-09-18
 
 
 ## Outcomes & Retrospective
@@ -68,7 +106,20 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Kioku now has executable migration-integrity gates without changing any released SQL.
+The suite binds the ten Codd source checksums to native payloads 0001 through 0010,
+freezes all thirteen native hashes, and rejects future unqualified objects or
+`search_path` mutations with filename-specific diagnostics. The public database fixture
+keeps its callback type while delegating Kiroku+Keiro template construction to released
+`keiro-test-support-0.17.0.0` and appending Kioku as the extra component.
+
+Fresh and supported Codd-upgrade databases produce the same normalized relation, column,
+constraint, and index catalog and the frozen checksum
+`be5f9e8c2d1b483675e9f93d5b98af53f599c2e43b393b2c7441958a82e0059d`.
+Hostile `search_path` composition, plan reruns, and strict verification pass. The full
+repository reports 461 passing tests. The durable distinction between the native manifest
+and Codd evidence, plus the forward qualification ratchet, is recorded in
+[ADR-10](../adr/projections-live-in-the-kioku-schema.md).
 
 
 ## Context and Orientation

@@ -5,7 +5,7 @@ description: >-
   Kioku keeps appending to the host's Kiroku event store while every relation Kioku owns moves
   into a dedicated `kioku` PostgreSQL schema, named explicitly in SQL rather than resolved
   through the connection's search path.
-timestamp: 2026-08-19T22:50:57Z
+timestamp: 2026-09-18T22:46:49Z
 docId: ADR-10
 status: accepted
 date: 2026-08-07
@@ -108,6 +108,15 @@ payload need only re-baseline that exact checksum because the leaked session cea
 the old runner connection closed; no durable schema or data needs convergence. This is not a
 general checksum-bypass mechanism, and a checksum that does not match the named withdrawn digest
 still fails closed.
+
+**Native migration identity and Codd import evidence remain separate checksum contracts.**
+`kioku-migrations/migrations/manifest` is the authoritative ordered native component and currently
+names migrations 0001 through 0013. `kioku-migrations/migrations.lock` instead preserves the ten
+timestamped Codd source filenames and checksums that map to native migrations 0001 through 0010;
+it is not extended when a new native migration is authored. The migration suite verifies that
+mapping, freezes the exact hashes of all released native payloads separately, and applies the
+schema-qualification and no-`search_path` policy only after the frozen 0013 baseline. This keeps
+old bytes immutable while making the stronger ownership rule mandatory for every future file.
 
 **The pgvector extension does not move.** Extensions are database-wide and may be shared with the
 host, so `ALTER EXTENSION` is out of scope even as a recovery shortcut. The memory table keeps its

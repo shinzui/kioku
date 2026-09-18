@@ -2,6 +2,9 @@
 
 ## 2026-09-18
 
+- Updated [ADR-10](projections-live-in-the-kioku-schema.md): native manifest checksums and
+  ten-entry Codd source evidence are separate immutable contracts, while migrations after 0013
+  must pass schema-qualification and no-`search_path` gates.
 - Added [ADR-13](catalog-application-projections-not-framework-timers.md): Kioku catalogs only
   its application-owned memories, sessions, and turns projections while framework timer
   scheduling remains an explicit side effect in the same append transaction.

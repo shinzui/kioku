@@ -26,6 +26,11 @@ provenance:
       at: 2026-09-18T21:56:42Z
       mode: "implement"
       note: "Started EP-3 projection catalog and runtime assembly implementation"
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-18T22:34:31Z
+      mode: "implement"
+      note: "Started EP-4 migration hardening implementation"
 ---
 
 # Adopt Keiro 0.17 comprehensively
@@ -109,7 +114,7 @@ an OKF bundle.
 | EP-1 | Align Kioku with the released Keiro 0.17 dependency cohort | docs/plans/42-align-kioku-with-the-released-keiro-0-17-dependency-cohort.md | None | None | Complete |
 | EP-2 | Replace deprecated Keiro read-model freshness APIs | docs/plans/43-replace-deprecated-keiro-read-model-freshness-apis.md | EP-1 | None | Complete |
 | EP-3 | Establish a validated projection catalog and runtime assembly | docs/plans/44-establish-a-validated-projection-catalog-and-runtime-assembly.md | EP-2 | None | Complete |
-| EP-4 | Harden Kioku migrations to the PostgreSQL patterns | docs/plans/45-harden-kioku-migrations-to-the-postgresql-patterns.md | EP-1 | EP-3 | Not Started |
+| EP-4 | Harden Kioku migrations to the PostgreSQL patterns | docs/plans/45-harden-kioku-migrations-to-the-postgresql-patterns.md | EP-1 | EP-3 | Complete |
 | EP-5 | Ratchet Haskell and CLI pattern conformance | docs/plans/46-ratchet-haskell-and-cli-pattern-conformance.md | EP-1 | EP-2 | Not Started |
 | EP-6 | Integrate and publish the Keiro 0.17 adoption | docs/plans/47-integrate-and-publish-the-keiro-0-17-adoption.md | EP-1, EP-2, EP-3, EP-4, EP-5 | None | Not Started |
 
@@ -167,6 +172,9 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-3: Establish a validated projection catalog and runtime assembly (complete;
   two sources, three targets, two rebuild groups, nineteen query bindings, ten focused
   tests, and the 455-test repository suite passed).
+- [x] EP-4: Harden Kioku migrations to the PostgreSQL patterns (complete; ten-entry
+  Codd evidence and thirteen native hashes are frozen, future SQL is ratcheted,
+  fresh/upgrade schemas converge, and all 461 repository tests pass).
 
 ## Surprises & Discoveries
 
@@ -192,6 +200,12 @@ interactions between child plans. Provide concise evidence.
   the shared framework-owned timer table truthfully. Kioku therefore catalogs only
   its three application tables and keeps both timer callbacks explicit in the same
   append transaction; a rollback fixture proves the boundary remains atomic.
+- EP-4 found that `kioku-migrations/migrations.lock` is the ten-entry Codd source
+  evidence file, not a second native manifest. The integrity gate now validates that
+  historical mapping and independently freezes all thirteen native payload hashes.
+- EP-4 verified that the released `keiro-test-support-0.17.0.0` fixture API still uses
+  the `ephemeral-pg` 0.2 cohort even though Keiro's newer local source has advanced to
+  0.3. Kioku therefore keeps the released-compatible 0.2.2 bound.
 
 
 ## Decision Log
@@ -246,3 +260,9 @@ metadata, and the persisted fingerprint now derive from one validated declaratio
 application-owned projections and existing timer schedules remain transactionally atomic,
 and all invalid catalog fixtures fail before traffic. The durable shared-framework boundary
 is recorded in [ADR-13](../adr/catalog-application-projections-not-framework-timers.md).
+
+EP-4 converted the migration contract into executable evidence without changing any
+released payload. Manifest membership, historical Codd evidence, native checksums,
+future schema qualification, hostile composition, normalized schema convergence, and
+rerun idempotence now fail in the migration suite. [ADR-10](../adr/projections-live-in-the-kioku-schema.md)
+now records why the native manifest and Codd lock remain separate contracts.

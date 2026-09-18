@@ -778,3 +778,17 @@ Use `just new-migration <slug>`. It delegates to pg-migrate-cli, creates the nex
 atomically. The manifest and every listed SQL file are compilation dependencies. A stray `.sql`
 file or missing manifest entry makes the build fail with `UnlistedSqlFiles` instead of silently
 shipping an incomplete component.
+
+Every object Kioku owns or references in a new migration must be schema-qualified. Name Kioku
+relations as `kioku.<object>` and name cross-component relations with their owning schema. Do not
+issue `SET search_path`, `SET LOCAL search_path`, `SET SCHEMA`, or
+`set_config('search_path', ...)`: pg-migrate composes every component on one connection, so
+session state can redirect or poison a later host migration. `CREATE INDEX` is PostgreSQL's syntax
+exception—the new index name is unqualified, but its `ON kioku.<table>` target is not.
+
+Never edit an SQL file that has shipped. Add a forward migration, then run
+`cabal test kioku-migrations:kioku-migrations-test`; the suite checks the manifest, the frozen
+hashes of migrations 0001 through 0013, the forward-only schema policy, hostile host composition,
+schema convergence, and rerun idempotence. `kioku-migrations/migrations.lock` is the immutable
+ten-entry Codd-import evidence file, not the native pg-migrate manifest; new native migrations do
+not append to it.
