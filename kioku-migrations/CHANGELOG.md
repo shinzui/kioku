@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0.0 — 2026-09-18
+
+### Changed
+
+- Requires `keiro-migrations ^>=0.17.0.0` and uses
+  `keiro-test-support ^>=0.17.0.0` for the shared Kiroku+Keiro migrated fixture.
+- Migration integrity now validates the native manifest, freezes all thirteen native payload
+  hashes separately from the ten-entry Codd source evidence, rejects ownership/search-path drift
+  in future migrations, and proves fresh/Codd-upgrade schema convergence.
+- The composed plan remains **56** migrations: Kiroku 11, Keiro 32, Kioku 13. No SQL payload or
+  checksum changes, and no ledger fixup is required.
+
 ## 0.6.0.0 — 2026-09-08
 
 ### Breaking Changes

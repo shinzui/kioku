@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0.0 — 2026-09-18
+
+### Changed
+
+- Requires the Kioku 0.7 cohort and optparse-applicative `>=0.19 && <0.20`, and adopts the shared
+  GHC 9.12/GHC 2024 warning baseline.
+- The migration and reconciliation behavior is unchanged: the plan remains 56 entries, successful
+  `up` reconciles the catalog-derived read-model identities, and the guarded Codd import remains
+  available for pre-cutover databases. No ledger fixup is required.
+
 ## 0.6.0.0 — 2026-09-08
 
 ### Breaking Changes

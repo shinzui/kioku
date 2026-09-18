@@ -37,8 +37,8 @@ missing distinction.
 | [Read-model registry reconciliation](read-model-registry-reconciliation.md) | CAP-14 | 0.1.0.0 | The repair that keeps a version bump from taking every query down |
 | [Operational CLI for recall, distillation, and workers](operational-cli.md) | CAP-15 | 0.1.0.0 | `kioku` and `kioku-migrate`, with permanent writes opted into |
 | [Ephemeral-Postgres test support for the migrated schema](migration-test-support.md) | CAP-16 | 0.1.0.0 | A published sublibrary giving tests the real schema, or none of it |
-| [Host-owned AI execution with an explicit, versioned capability grant](host-owned-ai-execution.md) | CAP-17 | unreleased | Disabled by default; API, batch, interactive, and embedding granted separately |
-| [Deferred interactive work: parking and leased foreground resume](deferred-interactive-recovery.md) | CAP-18 | unreleased | Park rather than fall back, then resume under a Keiro 0.16 lease |
+| [Host-owned AI execution with an explicit, versioned capability grant](host-owned-ai-execution.md) | CAP-17 | 0.6.0.0 | Disabled by default; API, batch, interactive, and embedding granted separately |
+| [Deferred interactive work: parking and leased foreground resume](deferred-interactive-recovery.md) | CAP-18 | 0.6.0.0 | Park rather than fall back, then resume under a Keiro 0.16 lease |
 | [One-time Codd migration-history import](codd-history-import.md) | CAP-19 | 0.1.0.0 | **Deprecated.** The zero-replay cutover onto CAP-13 |
 
 ## What is not here

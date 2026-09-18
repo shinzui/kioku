@@ -75,9 +75,10 @@ process exit without a valid matching result is a failed generation.
 The CLI grants interactive availability only to foreground `distill session` and `worker deferred resume`. Background workers
 park interactive work with `kioku:deferred:interactive-unavailable` in the timer's dead-letter
 reason. No HTTP or batch fallback occurs. `worker deferred list` shows authorized work, and
-`worker deferred resume TIMER_ID --ai-config FILE` claims the original timer using Keiro 0.16
-after fresh authorization and execution-availability checks. Run `kioku-migrate up` before
-using these commands so Keiro's resume-lease migration is applied.
+`worker deferred resume TIMER_ID --ai-config FILE` claims the original timer using the current
+Keiro 0.17 runtime after fresh authorization and execution-availability checks. Run
+`kioku-migrate up` before using these commands so the resume-lease migration introduced in Keiro
+0.16 is applied.
 Do not replay these rows using generic dead-letter tools or modify timer tables manually.
 
 ```bash

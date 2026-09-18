@@ -9,7 +9,7 @@ capabilityId: CAP-18
 provider: mori://shinzui/kioku
 status: shipped
 stability: experimental
-since: unreleased
+since: "0.6.0.0"
 packages:
   - kioku-core
   - kioku-cli
@@ -66,8 +66,8 @@ kioku worker deferred resume TIMER_ID --ai-config /path/to/ai-interactive.json
 
 ## Limits
 
-- **Unreleased**: default branch only, and it requires Keiro 0.16's resume-lease migration.
-  Run `kioku-migrate up` before using these commands.
+- Available since Kioku 0.6.0.0. It requires Keiro 0.16's resume-lease migration; run
+  `kioku-migrate up` before using these commands.
 - A leased claim does not promise exactly-once model execution across crashes. External
   effects still depend on Kioku's existing idempotent writes, per
   [L1's audited consolidation (CAP-8)](l1-atom-distillation.md).

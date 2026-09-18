@@ -2,6 +2,9 @@
 
 This guide takes you from an empty checkout to writing and recalling your first memory.
 
+The current 0.7 release cohort uses Keiro 0.17. Upgrading from Kioku 0.6 changes runtime APIs and
+catalog registration but appends no migration: the plan below remains 56 entries.
+
 ## Prerequisites
 
 - **PostgreSQL** reachable from your machine. kioku's own tables live in the `kioku` schema; it

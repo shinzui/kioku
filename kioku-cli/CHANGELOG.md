@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0.0 — 2026-09-18
+
+### Changed
+
+- Requires the Kioku 0.7 cohort and optparse-applicative `>=0.19 && <0.20`.
+- Help renders at a stable 100-column width and groups recall targets, query/output controls, AI
+  configuration, and worker execution modes under semantic headings. Command names, option
+  spellings, defaults, and errors are unchanged.
+- Bash, zsh, and fish completion-script requests are covered as public parser behavior.
+
 ## 0.6.0.0 — 2026-09-08
 
 ### Breaking Changes

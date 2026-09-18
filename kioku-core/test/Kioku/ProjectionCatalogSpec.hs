@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -Wno-deprecations #-}
-
 module Kioku.ProjectionCatalogSpec (tests) where
 
 import Data.Foldable (for_)
@@ -26,9 +24,7 @@ import Keiro.Projection.Catalog
     ProjectionCatalog (..),
     ProjectionDefinition (..),
     ProjectionSet (..),
-    QueryModelBinding (..),
     SomeProjectionSet (..),
-    SomeQueryModelBinding (..),
     SourceDeclaration (..),
     Validation (..),
     catalogFingerprintText,
@@ -38,7 +34,12 @@ import Keiro.Projection.Catalog
     mkTargetId,
     typedInlineProjections,
   )
-import Keiro.ReadModel (ConsistencyMode (Strong), ReadModel (..), StrongScope (EntireLog))
+import Keiro.ReadModel
+  ( HeadScope (EntireVisibleLog),
+    QueryFreshness (WaitForHead),
+    ReadModelDefinitionError (ReadModelDefinitionMissingCursor),
+    headWaitingReadModel,
+  )
 import Keiro.ReadModel.Rebuild (registerProjectionCatalog)
 import Keiro.Stream qualified as Stream
 import Keiro.Timer (lookupTimer)
@@ -50,6 +51,7 @@ import Kioku.Id (genMemoryId, genSessionId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (MemoryCommand (..), RecordMemoryData (..))
 import Kioku.Memory.EventStream (memoryEventStream, memoryStream, validateMemoryEventStream)
+import Kioku.Memory.ReadModel (memoryByIdReadModelBlueprint)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.ProjectionCatalog
   ( kiokuCatalogFingerprint,
@@ -80,7 +82,7 @@ tests =
       testCase "duplicate target ownership is rejected with a stable diagnostic" testDuplicateOwnership,
       testCase "an unknown owned target is rejected with a stable diagnostic" testUnknownOwnership,
       testCase "a target without its supplier is rejected at validation" testMissingSupplier,
-      testCase "a waiting query without a cursor is rejected at validation" testWaitingWithoutCursor,
+      testCase "a cursorless query model cannot be made waiting" testWaitingWithoutCursor,
       testCase "registered catalog serves immediate memory and session queries" testImmediateQueries,
       testCase "a late projection failure rolls back events, rows, and timers" testProjectionRollback,
       testCase "persisted catalog fingerprint drift refuses registration" testFingerprintDrift
@@ -178,19 +180,13 @@ testUnknownOwnership =
 
 testWaitingWithoutCursor :: Assertion
 testWaitingWithoutCursor =
-  diagnosticsFor makeQueriesWait
-    `shouldContainCode` QueryWaitWithoutCompatibleCursor
-  where
-    makeQueriesWait catalog = catalog {queryModels = makeWaiting <$> catalog.queryModels}
-    makeWaiting (SomeQueryModelBinding binding) =
-      SomeQueryModelBinding
-        binding
-          { readModel =
-              binding.readModel
-                { defaultConsistency = Strong,
-                  strongScope = EntireLog
-                }
-          }
+  case headWaitingReadModel EntireVisibleLog memoryByIdReadModelBlueprint of
+    Left err ->
+      assertEqual
+        "truthful construction refuses waiting without a cursor"
+        (ReadModelDefinitionMissingCursor "kioku-memory-by-id" (WaitForHead EntireVisibleLog))
+        err
+    Right _ -> assertFailure "a cursorless Kioku read model became head-waiting"
 
 testImmediateQueries :: Assertion
 testImmediateQueries =

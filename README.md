@@ -30,6 +30,7 @@ remember what agents learn, where that knowledge applies, and which session prod
 - `kioku-core/`: memory, session, recall, and distillation runtime library.
 - `kioku-cli/`: command-line interface for demos, recall, distillation, scenes, and workers.
 - `kioku-migrations/`: manifest-ordered, checksummed pg-migrate component and test support.
+- `kioku-migrate/`: standalone migration and read-model reconciliation executable.
 - `docs/user/`: user and integration documentation.
 - `docs/plans/`: ExecPlans for larger implementation work.
 
@@ -51,8 +52,9 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 Project dependencies resolve from Hackage; `cabal.project` does not replace released packages with
-Git checkouts. The current framework baseline is Keiki 0.9, Keiro 0.14, Kiroku Store 0.8,
-pg-migrate 1.1, and PGMQ 0.5 for Keiro's optional PGMQ integration.
+Git checkouts. Kioku 0.7's framework baseline is Keiki 0.9, Keiro 0.17, Kiroku Store 0.8,
+pg-migrate 1.1, and PGMQ 0.6 for Keiro's optional PGMQ integration. The composed migration plan
+remains 56 entries (Kiroku 11, Keiro 32, Kioku 13).
 
 The development shell is provided by Nix:
 

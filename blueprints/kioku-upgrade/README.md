@@ -5,7 +5,7 @@
 > edge is **entailed**, so a project that depends only on Kioku — and has never
 > named Keiro — still crosses Keiro's edge, exactly once, in the right order.
 
-**Version:** `0.1.0`
+**Version:** `0.2.0`
 
 **Kind:** Blueprint migration (run with `seihou agent migrate`, not
 `seihou agent run` — this blueprint declares no baseline and applies no modules)
@@ -51,6 +51,8 @@ touched.
 |---|---|---|
 | `0.4.1.0` | `0.5.0.0` | `keiro-upgrade` `0.13.0.0 -> 0.14.0.0` |
 | `0.5.1.0` | `0.5.2.0` | `keiro-upgrade` `0.14.0.0 -> 0.15.0.0` |
+| `0.5.2.0` | `0.6.0.0` | `keiro-upgrade` `0.15.0.0 -> 0.16.0.0` |
+| `0.6.0.0` | `0.7.0.0` | `keiro-upgrade` `0.16.0.0 -> 0.17.0.0` |
 
 Gaps between edges are deliberate and legal: they mean no agent intervention was
 needed in that interval. `0.4.0.0 -> 0.4.1.0` is exactly such a gap — that

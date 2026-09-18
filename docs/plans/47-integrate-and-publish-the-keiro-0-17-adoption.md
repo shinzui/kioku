@@ -11,6 +11,12 @@ provenance:
     model: "gpt-5.6-sol"
     harness: "codex-cli"
     at: 2026-09-18T18:42:34Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-18T23:02:30Z
+      mode: "implement"
+      note: "Started EP-6 integration and release-preparation implementation"
 ---
 
 # Integrate and publish the Keiro 0.17 adoption
@@ -39,12 +45,36 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
+- [x] (2026-09-18 23:20Z) Milestone 1: reconciled the five implementation streams,
+  removed the last test-only legacy freshness API use, and passed focused core, CLI,
+  and migration integration tests.
+- [x] (2026-09-18 23:20Z) Milestone 2: published the evidence-backed Keiro 0.17
+  pattern conformance matrix.
+- [x] (2026-09-18 23:20Z) Milestone 3: bumped the five-package cohort to 0.7.0.0 and
+  updated release-facing changelogs, capability records, README, and user documentation.
+- [x] (2026-09-18 23:20Z) Milestone 4: added and validated the 0.6.0.0-to-0.7.0.0
+  Seihou upgrade edge with the exact Keiro 0.16.0.0-to-0.17.0.0 entailment.
+- [x] (2026-09-18 23:20Z) Milestone 5: passed the complete release-readiness matrix
+  and finalized this plan and the MasterPlan living sections.
+
 ## Surprises & Discoveries
 
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- The fan-in scan found one remaining use of Keiro's deprecated freshness vocabulary in
+  `Kioku.ProjectionCatalogSpec`, hidden behind `-Wno-deprecations`. Replacing the synthetic
+  invalid legacy record with `headWaitingReadModel` now proves that Keiro 0.17 refuses a
+  cursorless waiting model at construction time, and the suppression is gone.
+- The first explicit test solve found two internal `kioku-migrations:test-support` bounds still
+  at `^>=0.6.0.0`. The original version audit matched ordinary package dependencies but missed
+  the qualified sublibrary spelling; both bounds now require `^>=0.7.0.0`, and a second scan
+  covers that spelling.
+- Running the three database-heavy suites concurrently caused one ephemeral-Postgres connection
+  timeout. The exact failed Codd-import case passed alone in 1.07 seconds, and the subsequent full
+  repository run passed all 467 tests, so no timeout or implementation change was warranted.
+- The planned `nix fmt -- --check` spelling is not the treefmt CI interface in this repository;
+  `nix fmt -- --ci` is the supported no-change gate and processed all 106 formatted files.
 
 
 ## Decision Log
@@ -61,6 +91,16 @@ Record every decision made while working on the plan.
   Rationale: Kioku exposes Keiro `ReadModel` values and excludes Keiro 0.16 after this work;
     a zero-major upstream move should be signaled conservatively.
   Date: 2026-09-18
+- Decision: Confirm the 0.7.0.0 package cohort.
+  Rationale: The final API comparison adds public `ReadModelBlueprint` values and
+    `Kioku.ProjectionCatalog`, exposes Keiro 0.17 types, and excludes the 0.16 dependency line.
+    A conservative pre-1.0 major-component bump is the accurate compatibility signal.
+  Date: 2026-09-18
+- Decision: Test the impossible cursorless-waiting state through Keiro's public smart constructor.
+  Rationale: Constructing a deprecated compatibility record solely to test later catalog
+    validation kept the removed API alive. Keiro 0.17 makes the invalid state unrepresentable
+    earlier, and that refusal is the stronger invariant.
+  Date: 2026-09-18
 
 
 ## Outcomes & Retrospective
@@ -70,7 +110,22 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+Kioku is release-ready at 0.7.0.0 without publishing it. The final Cabal plan resolves all five
+Kioku packages at 0.7.0.0 and `keiro`, `keiro-core`, and `keiro-migrations` at 0.17.0.0. The
+source-and-test legacy freshness scan is empty, and every migration payload remains byte-identical
+to v0.6.0.0. The new conformance matrix classifies every selected runtime, Haskell/CLI, and
+PostgreSQL pattern with implementation evidence and bounds every deliberately unused Keiro surface.
+
+The downstream blueprint is version 0.2.0 and declares the exact Kioku 0.6.0.0-to-0.7.0.0 edge,
+entailed after Keiro's exact 0.16.0.0-to-0.17.0.0 work. It preserves the 56-migration expectation,
+requires no ledger repair, and gives direct Keiro consumers a deprecation-as-error validation path.
+
+Release readiness passed: dry-run solve, warnings-as-errors build, all five `cabal check` runs,
+all 467 tests (125 API, 248 core, 64 CLI, 30 migrations), Haskell convention ratchet, Seihou
+blueprint validation, treefmt CI, `nix flake check`, and `git diff --check`. No package was uploaded,
+no tag or push was created, and no production database was touched. No new ADR was needed at fan-in:
+the durable catalog/timer, migration-history, and convention boundaries are already recorded in
+ADRs 13, 10, and 14 respectively.
 
 
 ## Context and Orientation
@@ -152,10 +207,10 @@ Run from the repository root:
 ```sh
 cabal build all --dry-run
 cabal build all --ghc-options=-Werror
-cabal test all
+cabal test all --enable-tests
 for package_dir in kioku-api kioku-core kioku-cli kioku-migrations kioku-migrate; do (cd "$package_dir" && cabal check) || exit; done
 seihou validate-blueprint blueprints/kioku-upgrade
-nix fmt -- --check
+nix fmt -- --ci
 nix flake check
 git diff --check
 ```

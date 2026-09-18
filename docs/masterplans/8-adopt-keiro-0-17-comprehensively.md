@@ -116,7 +116,7 @@ an OKF bundle.
 | EP-3 | Establish a validated projection catalog and runtime assembly | docs/plans/44-establish-a-validated-projection-catalog-and-runtime-assembly.md | EP-2 | None | Complete |
 | EP-4 | Harden Kioku migrations to the PostgreSQL patterns | docs/plans/45-harden-kioku-migrations-to-the-postgresql-patterns.md | EP-1 | EP-3 | Complete |
 | EP-5 | Ratchet Haskell and CLI pattern conformance | docs/plans/46-ratchet-haskell-and-cli-pattern-conformance.md | EP-1 | EP-2 | Complete |
-| EP-6 | Integrate and publish the Keiro 0.17 adoption | docs/plans/47-integrate-and-publish-the-keiro-0-17-adoption.md | EP-1, EP-2, EP-3, EP-4, EP-5 | None | Not Started |
+| EP-6 | Integrate and publish the Keiro 0.17 adoption | docs/plans/47-integrate-and-publish-the-keiro-0-17-adoption.md | EP-1, EP-2, EP-3, EP-4, EP-5 | None | Complete |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
 Hard Deps and Soft Deps reference other rows by their # prefix (e.g., EP-1, EP-3).
@@ -178,6 +178,9 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-5: Ratchet Haskell and CLI pattern conformance (complete; five package
   baselines aligned, durable records strict, help/completion contractual, convention
   ratchet wired into pre-commit/flake checks, and all 467 tests pass).
+- [x] EP-6: Integrate and publish the Keiro 0.17 adoption (complete; conformance
+  matrix, 0.7.0.0 metadata, exact entailed upgrade edge, and all release-readiness
+  gates passed without publishing).
 
 ## Surprises & Discoveries
 
@@ -215,6 +218,14 @@ interactions between child plans. Provide concise evidence.
 - EP-5 found no prepositive qualified imports, package imports outside
   `Kioku.Prelude`, or ambiguous deriving clauses. The concrete source drift was lazy
   fields in AI/distillation product records; newtype fields cannot legally carry bangs.
+- EP-6's fan-in found one final deprecated Keiro construction in a test-only invalid-catalog
+  fixture, hidden by a local warning suppression. Keiro 0.17's smart constructor now refuses
+  that impossible cursorless-waiting state before catalog validation, which is both a cleaner
+  test and a stronger runtime guarantee.
+- EP-6's explicit test solve found that qualified internal sublibrary bounds need their own
+  release audit: two `kioku-migrations:test-support` constraints still named 0.6 after the
+  ordinary cross-package constraints moved. Both now require 0.7, and the final plan resolves
+  the complete Kioku and Keiro cohorts consistently.
 
 
 ## Decision Log
@@ -254,6 +265,12 @@ plan.
     ADR-13 records the boundary and the capability needed before adopting the
     catalog-fenced command runner.
   Date: 2026-09-18
+- Decision: Confirm Kioku 0.7.0.0 as the release cohort after the final API audit.
+  Rationale: The public catalog and blueprint additions, exposed Keiro 0.17 types, and
+    exclusion of Keiro 0.16 justify the conservative pre-1.0 major-component bump. The
+    command surface and migration identities remain stable, which is stated explicitly
+    in the changelogs and upgrade edge.
+  Date: 2026-09-18
 
 
 ## Outcomes & Retrospective
@@ -282,3 +299,16 @@ CLI help is fixed at 100 columns with semantic option groups, all three shell co
 scripts are tested, and a narrow convention script participates in both pre-commit and
 flake checks. [ADR-14](../adr/haskell-and-cli-conventions-are-executable-contracts.md)
 records the durable package and CLI contract.
+
+EP-6 completed the fan-in and release preparation. All five Kioku packages now report
+0.7.0.0 and the final solver plan resolves the Keiro 0.17 lockstep family. The conformance
+matrix records the exact canonical pattern authorities, implementation evidence, documented
+boundaries, and unused surfaces. The validated `kioku-upgrade` 0.2.0 blueprint adds the exact
+0.6.0.0-to-0.7.0.0 edge and entails Keiro's exact 0.16.0.0-to-0.17.0.0 edge while preserving
+the 56-migration/no-ledger-fixup contract.
+
+The final repository evidence is green: warnings-as-errors build, all five package checks,
+all 467 tests, convention checks, blueprint validation, formatting CI, flake checks, legacy
+freshness-symbol scan, released-SQL diff, and whitespace validation. The initiative met its
+vision without adopting unused Keiro surfaces or changing any released SQL payload. Publication,
+tagging, pushing, and database operations remain deliberately outside this completed MasterPlan.

@@ -30,10 +30,13 @@ record ::
 
 The CLI sets this up via `Kioku.App`: `AppEnv` holds Kiroku `ConnectionSettings`, and `runAppIO`
 acquires `KirokuStoreResource` and interprets `Store` with `runStoreResource`. `withNoopAppEnv`
-constructs the common no-telemetry environment and registers all Kioku read models once before
-serving queries, as required by Keiro. Hosts with their own effect stack should install the
-resource with `withKirokuStore`, interpret `Store` with `runStoreResource`, and run
+constructs the common no-telemetry environment, validates both event streams and the projection
+catalog, and registers the catalog once before serving queries, as required by Keiro 0.17. Hosts
+with their own effect stack should install the resource with `withKirokuStore`, interpret `Store`
+with `runStoreResource`, validate the definitions, and run
 `Kioku.ReadModel.registerKiokuReadModels` once at application startup before calling Kioku APIs.
+Despite the compatibility name, that function calls Keiro's `registerProjectionCatalog` and
+persists the catalog fingerprint, query identities, and rebuild-group metadata together.
 
 ## Shared types (`kioku-api`)
 
@@ -707,7 +710,8 @@ operator or host input; **`parseIdLenient`** exists for legacy streams only and 
 
 ## Migrations (`kioku-migrations`)
 
-The supported dependency baseline is Keiki 0.9, Keiro 0.14, Kiroku Store 0.8, and pg-migrate 1.1.
+The supported 0.7 dependency baseline is Keiki 0.9, Keiro 0.17, Kiroku Store 0.8, and
+pg-migrate 1.1.
 These are ordinary Hackage dependencies; downstream projects do not need Git
 `source-repository-package` stanzas for the framework or migration packages.
 
@@ -762,9 +766,9 @@ withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
 ```
 
 It is idempotent — a second run writes nothing — and it derives every name, version, and
-shape hash from the same `ReadModel` values the queries use, so it cannot drift from the
-code. Run it at migration time, not at app startup: every host process would otherwise race
-to write the registry on boot.
+shape hash from the same validated `ProjectionCatalog` that registration and queries use, so it
+cannot drift into a second inventory. Run it at migration time, not at app startup: every host
+process would otherwise race to write the registry on boot.
 
 This is not a hypothetical for the current release. `0012-relocate-projections-to-kioku-schema`
 advances memory to v3, session to v5, and turn to v3 precisely so that a binary on the wrong side

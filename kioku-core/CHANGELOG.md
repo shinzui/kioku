@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.7.0.0 — 2026-09-18
+
+### Breaking Changes
+
+- Requires `keiro ^>=0.17.0.0` and `keiro-core ^>=0.17.0.0`, excluding the 0.16 compatibility
+  line. The exported read-model values now derive from truthful `ReadModelBlueprint` definitions;
+  their names, schemas, versions, shape hashes, SQL, and immediate behavior are unchanged.
+
+### Added
+
+- `Kioku.ProjectionCatalog`, which validates and binds two sources, three application projection
+  targets, two rebuild groups, two projection owners, and all nineteen query models. Catalog
+  registration and migration-time identity reconciliation derive from the same inventory.
+- A public `ReadModelBlueprint` value beside every existing memory and session read model.
+
+### Changed
+
+- Queries use `runQueryWithFreshness Immediate` and no longer depend on Keiro's deprecated
+  consistency fields or `runQueryWith` compatibility layer.
+- `withNoopAppEnv` validates both event streams and the projection catalog, then registers the
+  catalog before running user effects. Framework-owned timer writes remain explicit and atomic
+  with application projections because Keiro's exclusive target ownership cannot represent a
+  shared timer table.
+- AI and distillation product records use strict fields, and the package participates in the
+  repository Haskell convention ratchet.
+
 ## 0.6.0.0 — 2026-09-08
 
 ### Breaking Changes

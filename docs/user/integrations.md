@@ -258,5 +258,6 @@ Hosts use `Kioku.Distill.Timer.Deferred.listDeferredTimers` with their current
 finder, and the original timer ID. It rechecks access before claiming, renews its token-bound
 lease, and uses token-checked completion or parking. Background runtimes carry no session
 launcher. Hosts using only foreground operations should call listing/resume periodically to
-recover expired claims; ordinary Keiro worker passes also recover them. Keiro 0.16 migrations
-must be applied. No application SQL against Keiro's timer table is needed.
+recover expired claims; ordinary Keiro worker passes also recover them. Apply the current Keiro
+0.17 migration component, which retains the resume-lease migration introduced in 0.16. No
+application SQL against Keiro's timer table is needed.

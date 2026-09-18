@@ -9,7 +9,7 @@ capabilityId: CAP-17
 provider: mori://shinzui/kioku
 status: shipped
 stability: experimental
-since: unreleased
+since: "0.6.0.0"
 packages:
   - kioku-core
 interface:

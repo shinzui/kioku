@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0.0 — 2026-09-18
+
+### Changed
+
+- Version bump only, preserving the shared Kioku release cohort while the runtime moves to Keiro
+  0.17 and publishes its projection catalog. This package's source and API are unchanged.
+
 ## 0.6.0.0 — 2026-09-08
 
 ### Changed

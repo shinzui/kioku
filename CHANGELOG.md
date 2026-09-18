@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.7.0.0 — 2026-09-18
+
+### Breaking Changes
+
+- **Keiro cohort:** all direct Keiro packages now require `^>=0.17.0.0`. This excludes the 0.16
+  cohort and adopts Keiro's truthful read-model freshness and typed projection-catalog APIs. A
+  downstream package that also names Keiro must move its complete Keiro cohort in lockstep; the
+  optional PGMQ solve moves to Keiro PGMQ 0.17, PGMQ 0.6, and
+  `shibuya-pgmq-adapter ^>=0.16.0.0`.
+- **Package cohort:** all five Kioku packages move together to 0.7.0.0 and require one another at
+  `^>=0.7.0.0`. The conservative PVP bump reflects the exposed Keiro types and the new catalog
+  contract even though existing command names and Kioku migration identities are unchanged.
+
+### Added
+
+- **kioku-core:** `Kioku.ProjectionCatalog`, one validated declaration of two event sources,
+  three application-owned projection targets, two rebuild groups, two projection owners, and
+  nineteen query-model bindings. Startup validates and registers it before user effects run.
+- **kioku-core:** public `ReadModelBlueprint` values beside all nineteen existing read-model
+  values, so registration, querying, catalog inventory, and migration reconciliation share one
+  identity source.
+- **kioku-cli:** tested 100-column help, semantic option groups, and built-in bash, zsh, and fish
+  completion generation.
+- An evidence-backed [Keiro 0.17 conformance matrix](docs/architecture/keiro-017-pattern-conformance.md)
+  and the `0.6.0.0 -> 0.7.0.0` `kioku-upgrade` blueprint edge.
+
+### Changed
+
+- Every read-model query now uses `runQueryWithFreshness Immediate`; no Kioku source or test uses
+  Keiro's deprecated `ConsistencyMode`, `StrongScope`, direct `ReadModel` fields, or
+  `runQueryWith` compatibility API.
+- The migration suite now freezes all thirteen native SQL payloads separately from the ten-entry
+  Codd source evidence, lints future migration ownership, delegates framework setup to
+  `keiro-test-support`, and proves fresh/Codd-upgrade schema convergence.
+- All five packages declare the GHC 9.12/GHC 2024 and shared warning baselines, with repository
+  convention checks wired into pre-commit and Nix.
+- The composed migration plan remains **56** entries: Kiroku 11, Keiro 32, Kioku 13. Keiro 0.17
+  and Kioku 0.7 append no migration, alter no released payload, and require **no ledger fixup**.
+
 ## 0.6.0.0 — 2026-09-08
 
 ### Breaking Changes

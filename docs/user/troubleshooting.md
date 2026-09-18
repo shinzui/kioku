@@ -70,6 +70,19 @@ Two variants of this are worth telling apart, because only one of them is fixed 
   SQL names relations that no longer exist. Deploy the matching binary. Migrating again will not
   help, and neither will editing the registry.
 
+### Projection-catalog startup failure
+
+Kioku 0.7 validates both event streams and one Keiro 0.17 projection catalog before user effects
+run. A message naming catalog diagnostics, a fingerprint conflict, or a stale query identity is a
+startup refusal, not a warning to bypass. Run the matching migrations first. If the database was
+migrated through a host-owned composed plan, call
+`Kioku.ReadModel.reconcileReadModelRegistry` after it succeeds. Do not delete registry or catalog
+rows: the persisted fingerprint is what prevents a target or owner from disappearing silently.
+
+The catalog owns Kioku's application projections only. `keiro.keiro_timers` is shared framework
+state and intentionally remains an explicit same-transaction handler; its absence from the Kioku
+catalog is not an incomplete registration.
+
 ### `recall` returns `(no matches)`
 
 - **The target is wrong.** `--scope rei:intention:abc` matches exactly and does not match
