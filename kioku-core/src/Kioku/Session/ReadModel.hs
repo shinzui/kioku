@@ -16,14 +16,23 @@ module Kioku.Session.ReadModel
     SessionDelegationChildrenQuery (..),
     AwaitingSessionsByCorrelationKeyQuery (..),
     TurnsBySessionQuery (..),
+    sessionByIdReadModelBlueprint,
     sessionByIdReadModel,
+    sessionsByNamespaceReadModelBlueprint,
     sessionsByNamespaceReadModel,
+    sessionsByScopeReadModelBlueprint,
     sessionsByScopeReadModel,
+    sessionsByFocusReadModelBlueprint,
     sessionsByFocusReadModel,
+    sessionsByStartedRangeReadModelBlueprint,
     sessionsByStartedRangeReadModel,
+    sessionChainReadModelBlueprint,
     sessionChainReadModel,
+    sessionDelegationChildrenReadModelBlueprint,
     sessionDelegationChildrenReadModel,
+    awaitingSessionsByCorrelationKeyReadModelBlueprint,
     awaitingSessionsByCorrelationKeyReadModel,
+    turnsBySessionReadModelBlueprint,
     turnsBySessionReadModel,
   )
 where
@@ -36,7 +45,12 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Projection (InlineProjection (..))
-import Keiro.ReadModel (ConsistencyMode (..), ReadModel (..), StrongScope (..))
+import Keiro.ReadModel
+  ( QueryCursorAuthority (NoQueryCursor),
+    ReadModel,
+    ReadModelBlueprint (..),
+    immediateReadModel,
+  )
 import Kioku.Api.Access (MemorySpaceId)
 import Kioku.Api.Scope (scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Database.Schema
@@ -294,128 +308,137 @@ turnRow d =
     }
 
 sessionByIdReadModel :: ReadModel SessionByIdQuery (Maybe SessionRow)
-sessionByIdReadModel =
-  ReadModel
+sessionByIdReadModel = immediateReadModel sessionByIdReadModelBlueprint
+
+sessionByIdReadModelBlueprint :: ReadModelBlueprint SessionByIdQuery (Maybe SessionRow)
+sessionByIdReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-session-by-id",
       schema = kiokuSchema,
       tableName = sessionsRelation,
-      subscriptionName = "kioku-session-inline",
       version = sessionReadModelVersion,
       shapeHash = sessionReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectSessionByIdStmt
     }
 
 sessionsByNamespaceReadModel :: ReadModel SessionsByNamespaceQuery [SessionRow]
-sessionsByNamespaceReadModel =
-  ReadModel
+sessionsByNamespaceReadModel = immediateReadModel sessionsByNamespaceReadModelBlueprint
+
+sessionsByNamespaceReadModelBlueprint :: ReadModelBlueprint SessionsByNamespaceQuery [SessionRow]
+sessionsByNamespaceReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-sessions-by-namespace",
       schema = kiokuSchema,
       tableName = sessionsRelation,
-      subscriptionName = "kioku-session-inline",
       version = sessionReadModelVersion,
       shapeHash = sessionReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectSessionsByNamespaceStmt
     }
 
 sessionsByScopeReadModel :: ReadModel SessionsByScopeQuery [SessionRow]
-sessionsByScopeReadModel =
-  ReadModel
+sessionsByScopeReadModel = immediateReadModel sessionsByScopeReadModelBlueprint
+
+sessionsByScopeReadModelBlueprint :: ReadModelBlueprint SessionsByScopeQuery [SessionRow]
+sessionsByScopeReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-sessions-by-scope",
       schema = kiokuSchema,
       tableName = sessionsRelation,
-      subscriptionName = "kioku-session-inline",
       version = sessionReadModelVersion,
       shapeHash = sessionReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectSessionsByScopeStmt
     }
 
 sessionsByFocusReadModel :: ReadModel SessionsByFocusQuery [SessionRow]
-sessionsByFocusReadModel =
-  ReadModel
+sessionsByFocusReadModel = immediateReadModel sessionsByFocusReadModelBlueprint
+
+sessionsByFocusReadModelBlueprint :: ReadModelBlueprint SessionsByFocusQuery [SessionRow]
+sessionsByFocusReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-sessions-by-focus",
       schema = kiokuSchema,
       tableName = sessionsRelation,
-      subscriptionName = "kioku-session-inline",
       version = sessionReadModelVersion,
       shapeHash = sessionReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectSessionsByFocusStmt
     }
 
 sessionsByStartedRangeReadModel :: ReadModel SessionsByStartedRangeQuery [SessionRow]
-sessionsByStartedRangeReadModel =
-  ReadModel
+sessionsByStartedRangeReadModel = immediateReadModel sessionsByStartedRangeReadModelBlueprint
+
+sessionsByStartedRangeReadModelBlueprint :: ReadModelBlueprint SessionsByStartedRangeQuery [SessionRow]
+sessionsByStartedRangeReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-sessions-by-started-range",
       schema = kiokuSchema,
       tableName = sessionsRelation,
-      subscriptionName = "kioku-session-inline",
       version = sessionReadModelVersion,
       shapeHash = sessionReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectSessionsByStartedRangeStmt
     }
 
 sessionChainReadModel :: ReadModel SessionChainQuery [SessionRow]
-sessionChainReadModel =
-  ReadModel
+sessionChainReadModel = immediateReadModel sessionChainReadModelBlueprint
+
+sessionChainReadModelBlueprint :: ReadModelBlueprint SessionChainQuery [SessionRow]
+sessionChainReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-session-chain",
       schema = kiokuSchema,
       tableName = sessionsRelation,
-      subscriptionName = "kioku-session-inline",
       version = sessionReadModelVersion,
       shapeHash = sessionReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectSessionChainStmt
     }
 
 sessionDelegationChildrenReadModel :: ReadModel SessionDelegationChildrenQuery [SessionRow]
-sessionDelegationChildrenReadModel =
-  ReadModel
+sessionDelegationChildrenReadModel = immediateReadModel sessionDelegationChildrenReadModelBlueprint
+
+sessionDelegationChildrenReadModelBlueprint :: ReadModelBlueprint SessionDelegationChildrenQuery [SessionRow]
+sessionDelegationChildrenReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-session-delegation-children",
       schema = kiokuSchema,
       tableName = sessionsRelation,
-      subscriptionName = "kioku-session-inline",
       version = sessionReadModelVersion,
       shapeHash = sessionReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectDelegationChildrenStmt
     }
 
 awaitingSessionsByCorrelationKeyReadModel :: ReadModel AwaitingSessionsByCorrelationKeyQuery [SessionRow]
-awaitingSessionsByCorrelationKeyReadModel =
-  ReadModel
+awaitingSessionsByCorrelationKeyReadModel = immediateReadModel awaitingSessionsByCorrelationKeyReadModelBlueprint
+
+awaitingSessionsByCorrelationKeyReadModelBlueprint :: ReadModelBlueprint AwaitingSessionsByCorrelationKeyQuery [SessionRow]
+awaitingSessionsByCorrelationKeyReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-sessions-awaiting-by-correlation-key",
       schema = kiokuSchema,
       tableName = sessionsRelation,
-      subscriptionName = "kioku-session-inline",
       version = sessionReadModelVersion,
       shapeHash = sessionReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectAwaitingByCorrelationKeyStmt
     }
 
 turnsBySessionReadModel :: ReadModel TurnsBySessionQuery [TurnRow]
-turnsBySessionReadModel =
-  ReadModel
+turnsBySessionReadModel = immediateReadModel turnsBySessionReadModelBlueprint
+
+turnsBySessionReadModelBlueprint :: ReadModelBlueprint TurnsBySessionQuery [TurnRow]
+turnsBySessionReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-turns-by-session",
       schema = kiokuSchema,
       tableName = turnsRelation,
-      subscriptionName = "kioku-session-inline",
       version = turnReadModelVersion,
       shapeHash = turnReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectTurnsBySessionStmt
     }
 

@@ -14,15 +14,25 @@ module Kioku.Memory.ReadModel
     MemoriesBySessionQuery (..),
     MemoriesByTypeQuery (..),
     MemorySupersessionChainQuery (..),
+    memoryByIdReadModelBlueprint,
     memoryByIdReadModel,
+    memoriesByNamespaceReadModelBlueprint,
     memoriesByNamespaceReadModel,
+    memoriesByNamespaceRowsReadModelBlueprint,
     memoriesByNamespaceRowsReadModel,
+    memoriesByScopeReadModelBlueprint,
     memoriesByScopeReadModel,
+    memoriesByScopeRowsReadModelBlueprint,
     memoriesByScopeRowsReadModel,
+    memoriesBySessionReadModelBlueprint,
     memoriesBySessionReadModel,
+    memoriesBySessionRowsReadModelBlueprint,
     memoriesBySessionRowsReadModel,
+    memoriesByTypeReadModelBlueprint,
     memoriesByTypeReadModel,
+    memoriesByTypeRowsReadModelBlueprint,
     memoriesByTypeRowsReadModel,
+    memorySupersessionChainReadModelBlueprint,
     memorySupersessionChainReadModel,
   )
 where
@@ -40,7 +50,12 @@ import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
 import Keiro.Projection (InlineProjection (..))
-import Keiro.ReadModel (ConsistencyMode (..), ReadModel (..), StrongScope (..))
+import Keiro.ReadModel
+  ( QueryCursorAuthority (NoQueryCursor),
+    ReadModel,
+    ReadModelBlueprint (..),
+    immediateReadModel,
+  )
 import Kioku.Api.Access (MemorySpaceId)
 import Kioku.Api.Scope (scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), confidenceToText, memoryTypeToText)
@@ -189,142 +204,152 @@ recordedRow d =
     }
 
 memoryByIdReadModel :: ReadModel MemoryByIdQuery (Maybe MemoryRow)
-memoryByIdReadModel =
-  ReadModel
+memoryByIdReadModel = immediateReadModel memoryByIdReadModelBlueprint
+
+memoryByIdReadModelBlueprint :: ReadModelBlueprint MemoryByIdQuery (Maybe MemoryRow)
+memoryByIdReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memory-by-id",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectMemoryByIdStmt
     }
 
 memoriesByNamespaceReadModel :: ReadModel MemoriesByNamespaceQuery [MemoryRecord]
-memoriesByNamespaceReadModel =
-  ReadModel
+memoriesByNamespaceReadModel = immediateReadModel memoriesByNamespaceReadModelBlueprint
+
+memoriesByNamespaceReadModelBlueprint :: ReadModelBlueprint MemoriesByNamespaceQuery [MemoryRecord]
+memoriesByNamespaceReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memories-by-namespace",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectActiveByNamespaceStmt
     }
 
 memoriesByNamespaceRowsReadModel :: ReadModel MemoriesByNamespaceQuery [MemoryRow]
-memoriesByNamespaceRowsReadModel =
-  ReadModel
+memoriesByNamespaceRowsReadModel = immediateReadModel memoriesByNamespaceRowsReadModelBlueprint
+
+memoriesByNamespaceRowsReadModelBlueprint :: ReadModelBlueprint MemoriesByNamespaceQuery [MemoryRow]
+memoriesByNamespaceRowsReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memory-rows-by-namespace",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectActiveByNamespaceRowsStmt
     }
 
 memoriesByScopeReadModel :: ReadModel MemoriesByScopeQuery [MemoryRecord]
-memoriesByScopeReadModel =
-  ReadModel
+memoriesByScopeReadModel = immediateReadModel memoriesByScopeReadModelBlueprint
+
+memoriesByScopeReadModelBlueprint :: ReadModelBlueprint MemoriesByScopeQuery [MemoryRecord]
+memoriesByScopeReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memories-by-scope",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectActiveByScopeStmt
     }
 
 memoriesByScopeRowsReadModel :: ReadModel MemoriesByScopeQuery [MemoryRow]
-memoriesByScopeRowsReadModel =
-  ReadModel
+memoriesByScopeRowsReadModel = immediateReadModel memoriesByScopeRowsReadModelBlueprint
+
+memoriesByScopeRowsReadModelBlueprint :: ReadModelBlueprint MemoriesByScopeQuery [MemoryRow]
+memoriesByScopeRowsReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memory-rows-by-scope",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectActiveByScopeRowsStmt
     }
 
 memoriesBySessionReadModel :: ReadModel MemoriesBySessionQuery [MemoryRecord]
-memoriesBySessionReadModel =
-  ReadModel
+memoriesBySessionReadModel = immediateReadModel memoriesBySessionReadModelBlueprint
+
+memoriesBySessionReadModelBlueprint :: ReadModelBlueprint MemoriesBySessionQuery [MemoryRecord]
+memoriesBySessionReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memories-by-session",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectBySessionStmt
     }
 
 memoriesBySessionRowsReadModel :: ReadModel MemoriesBySessionQuery [MemoryRow]
-memoriesBySessionRowsReadModel =
-  ReadModel
+memoriesBySessionRowsReadModel = immediateReadModel memoriesBySessionRowsReadModelBlueprint
+
+memoriesBySessionRowsReadModelBlueprint :: ReadModelBlueprint MemoriesBySessionQuery [MemoryRow]
+memoriesBySessionRowsReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memory-rows-by-session",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectBySessionRowsStmt
     }
 
 memoriesByTypeReadModel :: ReadModel MemoriesByTypeQuery [MemoryRecord]
-memoriesByTypeReadModel =
-  ReadModel
+memoriesByTypeReadModel = immediateReadModel memoriesByTypeReadModelBlueprint
+
+memoriesByTypeReadModelBlueprint :: ReadModelBlueprint MemoriesByTypeQuery [MemoryRecord]
+memoriesByTypeReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memories-by-type",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectByTypeStmt
     }
 
 memoriesByTypeRowsReadModel :: ReadModel MemoriesByTypeQuery [MemoryRow]
-memoriesByTypeRowsReadModel =
-  ReadModel
+memoriesByTypeRowsReadModel = immediateReadModel memoriesByTypeRowsReadModelBlueprint
+
+memoriesByTypeRowsReadModelBlueprint :: ReadModelBlueprint MemoriesByTypeQuery [MemoryRow]
+memoriesByTypeRowsReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memory-rows-by-type",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectByTypeRowsStmt
     }
 
 memorySupersessionChainReadModel :: ReadModel MemorySupersessionChainQuery [MemoryRow]
-memorySupersessionChainReadModel =
-  ReadModel
+memorySupersessionChainReadModel = immediateReadModel memorySupersessionChainReadModelBlueprint
+
+memorySupersessionChainReadModelBlueprint :: ReadModelBlueprint MemorySupersessionChainQuery [MemoryRow]
+memorySupersessionChainReadModelBlueprint =
+  ReadModelBlueprint
     { name = "kioku-memory-supersession-chain",
       schema = kiokuSchema,
       tableName = memoriesRelation,
-      subscriptionName = "kioku-memory-inline",
       version = memoryReadModelVersion,
       shapeHash = memoryReadModelShapeHash,
-      defaultConsistency = Eventual,
-      strongScope = EntireLog,
+      cursorAuthority = NoQueryCursor,
       query = \q -> Tx.statement q selectSupersessionChainStmt
     }
 

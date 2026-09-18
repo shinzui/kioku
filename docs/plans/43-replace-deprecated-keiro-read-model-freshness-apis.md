@@ -11,6 +11,12 @@ provenance:
     model: "gpt-5.6-sol"
     harness: "codex-cli"
     at: 2026-09-18T18:42:34Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-18T19:34:49Z
+      mode: "implement"
+      note: "Implemented read-model blueprints and immediate freshness calls"
 ---
 
 # Replace deprecated Keiro read-model freshness APIs
@@ -37,12 +43,30 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
+- [x] (2026-09-18 19:34Z) Converted all nineteen memory and session read-model
+  declarations to exported `ReadModelBlueprint` values with `NoQueryCursor` and
+  `immediateReadModel`.
+- [x] (2026-09-18 19:34Z) Replaced all twenty-one Kioku query calls with
+  `runQueryWithFreshness Nothing Immediate`.
+- [x] (2026-09-18 19:34Z) Modernized the stale-schema fixture to derive its old
+  identity from the session blueprint and enabled `-Werror=deprecations` for
+  `kioku-core` library and test builds.
+- [x] (2026-09-18 19:38Z) Formatted the repository, proved the legacy-symbol
+  search empty, compiled `lib:kioku-core` with deprecations as errors, and passed
+  all 238 `kioku-core` tests.
+- [x] (2026-09-18 19:43Z) Passed the complete 445-test multi-package suite,
+  reviewed the final diff, and completed ADR distillation; no durable
+  architecture decision changed.
+
 ## Surprises & Discoveries
 
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+- The planned Cabal library target `kioku-core:lib` is not accepted by the
+  installed Cabal version (`Cabal-7131`, no component named `lib`). The canonical
+  target `lib:kioku-core` builds the intended public library and passed with
+  `-Werror=deprecations`.
 
 
 ## Decision Log
@@ -61,6 +85,11 @@ Record every decision made while working on the plan.
   Rationale: This is an API representation migration, not a projection rebuild or schema
     change. Stable identities avoid false stale-schema failures and registry churn.
   Date: 2026-09-18
+- Decision: Export each new blueprint alongside its existing read-model value.
+  Rationale: The next child plan must bind the same declarations into Keiro's
+    projection catalog. Exporting the authoritative blueprints prevents that plan
+    from reconstructing nineteen parallel identities and queries.
+  Date: 2026-09-18
 
 
 ## Outcomes & Retrospective
@@ -70,7 +99,22 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+All nineteen read-model declarations now originate from explicit, exported
+`ReadModelBlueprint` values with `NoQueryCursor`, and all twenty-one production
+and test queries use `runQueryWithFreshness Nothing Immediate`. Model names,
+qualified tables, versions, hashes, SQL statements, inputs, and results remain
+unchanged. The old synthetic inline subscription names and every Keiro 0.17
+deprecated freshness symbol are absent from core source and tests.
+
+The permanent Cabal ratchet makes deprecation warnings errors for both the
+`kioku-core` library and its test suite. `lib:kioku-core` compiled under that
+ratchet, all 238 core tests passed, and `cabal test all` passed 445 tests across
+the repository. Existing reconciliation evidence still proves stale identities
+fail closed in both directions and recover correctly. ADR distillation found no
+new architectural boundary: this plan implemented the immediate-read semantics
+already established by the projection and partition ADRs. The exported
+blueprints are the authoritative input for the catalog work in the next child
+plan.
 
 
 ## Context and Orientation
@@ -139,7 +183,7 @@ Run from the repository root:
 
 ```sh
 rg -n 'ConsistencyMode|StrongScope|\bEventual\b|\bEntireLog\b|runQueryWith\b|defaultConsistency|strongScope|subscriptionName' kioku-core/src kioku-core/test
-cabal build kioku-core:lib --ghc-options=-Werror=deprecations
+cabal build lib:kioku-core --ghc-options=-Werror=deprecations
 cabal test kioku-core:kioku-test
 ```
 

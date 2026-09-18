@@ -62,7 +62,7 @@ import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
-import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
+import Keiro.ReadModel (QueryFreshness (Immediate), ReadModelError, runQueryWithFreshness)
 import Kioku.Api.Access
   ( MemoryAccessContext,
     MemoryPermission (..),
@@ -518,9 +518,9 @@ lookupMemory ::
   MemoryId ->
   Eff es (Either ReadModelError (Maybe MemoryRow))
 lookupMemory space mid =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memoryByIdReadModel
     MemoryByIdQuery {memorySpaceId = space, memoryId = idText mid}
 
@@ -538,9 +538,9 @@ getActiveRowsInNamespace ::
   Namespace ->
   Eff es (Either ReadModelError [MemoryRow])
 getActiveRowsInNamespace space (Namespace ns) =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memoriesByNamespaceRowsReadModel
     MemoriesByNamespaceQuery {memorySpaceId = space, namespace = ns}
 
@@ -550,9 +550,9 @@ getActiveRowsByScope ::
   MemoryScope ->
   Eff es (Either ReadModelError [MemoryRow])
 getActiveRowsByScope space scope =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memoriesByScopeRowsReadModel
     MemoriesByScopeQuery
       { memorySpaceId = space,
@@ -567,9 +567,9 @@ getRowsBySession ::
   SessionId ->
   Eff es (Either ReadModelError [MemoryRow])
 getRowsBySession space sid =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memoriesBySessionRowsReadModel
     MemoriesBySessionQuery {memorySpaceId = space, sessionId = idText sid}
 
@@ -580,9 +580,9 @@ getActiveRowsByType ::
   MemoryType ->
   Eff es (Either ReadModelError [MemoryRow])
 getActiveRowsByType space (Namespace ns) memoryType =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memoriesByTypeRowsReadModel
     MemoriesByTypeQuery
       { memorySpaceId = space,
@@ -596,9 +596,9 @@ getSupersessionChain ::
   MemoryId ->
   Eff es (Either ReadModelError [MemoryRow])
 getSupersessionChain space mid =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memorySupersessionChainReadModel
     MemorySupersessionChainQuery {memorySpaceId = space, memoryId = idText mid}
 

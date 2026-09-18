@@ -97,7 +97,7 @@ import Hasql.Decoders qualified as D
 import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
-import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
+import Keiro.ReadModel (QueryFreshness (Immediate), ReadModelError, runQueryWithFreshness)
 import Kioku.AI.Config
 import Kioku.AI.Runtime (AIRuntime, runtimeEmbeddingModel)
 import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId, memoryContextSpace)
@@ -1152,9 +1152,9 @@ getActiveByScope ::
   MemoryScope ->
   Eff es (Either ReadModelError [MemoryRecord])
 getActiveByScope space scope =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memoriesByScopeReadModel
     MemoriesByScopeQuery
       { memorySpaceId = space,
@@ -1171,9 +1171,9 @@ getActiveInNamespace ::
   Namespace ->
   Eff es (Either ReadModelError [MemoryRecord])
 getActiveInNamespace space (Namespace ns) =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memoriesByNamespaceReadModel
     MemoriesByNamespaceQuery {memorySpaceId = space, namespace = ns}
 
@@ -1194,9 +1194,9 @@ getById ::
   Eff es (Either ReadModelError (Maybe MemoryRecord))
 getById space mid =
   fmap (fmap (fmap memoryRowToRecord)) $
-    runQueryWith
+    runQueryWithFreshness
       Nothing
-      Eventual
+      Immediate
       memoryByIdReadModel
       MemoryByIdQuery {memorySpaceId = space, memoryId = idText mid}
 
@@ -1206,9 +1206,9 @@ getBySession ::
   SessionId ->
   Eff es (Either ReadModelError [MemoryRecord])
 getBySession space sid =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memoriesBySessionReadModel
     MemoriesBySessionQuery {memorySpaceId = space, sessionId = idText sid}
 
@@ -1219,9 +1219,9 @@ getByType ::
   MemoryType ->
   Eff es (Either ReadModelError [MemoryRecord])
 getByType space (Namespace ns) mt =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     memoriesByTypeReadModel
     MemoriesByTypeQuery {memorySpaceId = space, namespace = ns, memoryType = memoryTypeToText mt}
 

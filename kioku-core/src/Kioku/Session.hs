@@ -56,7 +56,7 @@ import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
 import Keiro.Command (CommandError (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
-import Keiro.ReadModel (ConsistencyMode (..), ReadModelError, runQueryWith)
+import Keiro.ReadModel (QueryFreshness (Immediate), ReadModelError, runQueryWithFreshness)
 import Kioku.Api.Access
   ( MemoryAccessContext,
     MemoryPermission (..),
@@ -675,9 +675,9 @@ getById ::
   SessionId ->
   Eff es (Either ReadModelError (Maybe SessionRow))
 getById space sid =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     sessionByIdReadModel
     SessionByIdQuery {memorySpaceId = space, sessionId = idText sid}
 
@@ -688,9 +688,9 @@ getRecentInNamespace ::
   Int ->
   Eff es (Either ReadModelError [SessionRow])
 getRecentInNamespace space ns limit =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     sessionsByNamespaceReadModel
     SessionsByNamespaceQuery {memorySpaceId = space, namespace = namespaceText ns, limit}
 
@@ -700,9 +700,9 @@ getByScope ::
   MemoryScope ->
   Eff es (Either ReadModelError [SessionRow])
 getByScope space scope =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     sessionsByScopeReadModel
     SessionsByScopeQuery
       { memorySpaceId = space,
@@ -718,9 +718,9 @@ getByFocus ::
   Text ->
   Eff es (Either ReadModelError [SessionRow])
 getByFocus space ns focus =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     sessionsByFocusReadModel
     SessionsByFocusQuery {memorySpaceId = space, namespace = namespaceText ns, focus}
 
@@ -732,9 +732,9 @@ getByStartedRange ::
   UTCTime ->
   Eff es (Either ReadModelError [SessionRow])
 getByStartedRange space ns startedAfter startedBefore =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     sessionsByStartedRangeReadModel
     SessionsByStartedRangeQuery
       { memorySpaceId = space,
@@ -749,9 +749,9 @@ getChain ::
   SessionId ->
   Eff es (Either ReadModelError [SessionRow])
 getChain space sid =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     sessionChainReadModel
     SessionChainQuery {memorySpaceId = space, sessionId = idText sid}
 
@@ -761,9 +761,9 @@ getDelegationChildren ::
   SessionId ->
   Eff es (Either ReadModelError [SessionRow])
 getDelegationChildren space sid =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     sessionDelegationChildrenReadModel
     SessionDelegationChildrenQuery {memorySpaceId = space, parentSessionId = idText sid}
 
@@ -774,9 +774,9 @@ getAwaitingByCorrelationKey ::
   Text ->
   Eff es (Either ReadModelError [SessionRow])
 getAwaitingByCorrelationKey space ns correlationKey =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     awaitingSessionsByCorrelationKeyReadModel
     AwaitingSessionsByCorrelationKeyQuery
       { memorySpaceId = space,
@@ -793,9 +793,9 @@ getTurns ::
   SessionId ->
   Eff es (Either ReadModelError [TurnRow])
 getTurns space sid =
-  runQueryWith
+  runQueryWithFreshness
     Nothing
-    Eventual
+    Immediate
     turnsBySessionReadModel
     TurnsBySessionQuery {memorySpaceId = space, sessionId = idText sid}
 

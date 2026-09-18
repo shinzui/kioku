@@ -26,10 +26,12 @@ import Effectful (Eff, IOE, liftIO, (:>))
 import Effectful.Error.Static (Error)
 import Hasql.Transaction qualified as Tx
 import Keiro.ReadModel
-  ( ConsistencyMode (Eventual),
-    ReadModel (..),
+  ( QueryFreshness (Immediate),
+    ReadModel,
+    ReadModelBlueprint (..),
     ReadModelError (..),
-    runQueryWith,
+    immediateReadModel,
+    runQueryWithFreshness,
   )
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
 import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
@@ -138,9 +140,9 @@ testOldBinaryFailsClosed =
   withApp \sid -> do
     _ <- reconcileReadModelRegistry
     result <-
-      runQueryWith
+      runQueryWithFreshness
         Nothing
-        Eventual
+        Immediate
         preRelocationSessionByIdReadModel
         Session.SessionByIdQuery {memorySpaceId = testSpace, sessionId = idText sid}
     liftIO case result of
@@ -156,7 +158,12 @@ testOldBinaryFailsClosed =
 -- the identity it carried before the projections moved.
 preRelocationSessionByIdReadModel :: ReadModel Session.SessionByIdQuery (Maybe Session.SessionRow)
 preRelocationSessionByIdReadModel =
-  Session.sessionByIdReadModel {version = 4, shapeHash = "kioku-session-v4"}
+  immediateReadModel
+    ( Session.sessionByIdReadModelBlueprint
+        { version = 4,
+          shapeHash = "kioku-session-v4"
+        }
+    )
 
 -- | A second pass must write nothing. If it reported 'Reconciled' again, the reconciler
 -- would be rewriting @last_built_at@ on every @just migrate@ — and, worse, would be lying
