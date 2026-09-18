@@ -20,18 +20,18 @@ import Shikumi.Schema.Types (Field, field, unField)
 import Shikumi.Signature (Signature, mkSignature)
 
 data ExtractInput = ExtractInput
-  { focus :: Field "the session focus, task, or topic" Text,
-    scopeLabel :: Field "human-readable memory scope label" Text,
-    conversation :: Field "recent turns, notes, or recorded memory evidence" Text
+  { focus :: !(Field "the session focus, task, or topic" Text),
+    scopeLabel :: !(Field "human-readable memory scope label" Text),
+    conversation :: !(Field "recent turns, notes, or recorded memory evidence" Text)
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (ToSchema, FromModel, ToPrompt)
 
 data ExtractedAtom = ExtractedAtom
-  { atomType :: Field "one of: fact | pattern | preference | constraint | instruction" Text,
-    content :: Field "one concise durable memory sentence" Text,
-    priority :: Field "0=always inject; 100=default; larger=lower priority" Int,
-    confidence :: Field "one of: high | medium | low" Text
+  { atomType :: !(Field "one of: fact | pattern | preference | constraint | instruction" Text),
+    content :: !(Field "one concise durable memory sentence" Text),
+    priority :: !(Field "0=always inject; 100=default; larger=lower priority" Int),
+    confidence :: !(Field "one of: high | medium | low" Text)
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (ToSchema, FromModel, ToPrompt)

@@ -1,5 +1,7 @@
 module Kioku.Cli
-  ( main,
+  ( cliParserInfo,
+    cliParserPrefs,
+    main,
   )
 where
 
@@ -16,15 +18,21 @@ import Options.Applicative
 data Command = Artifacts ArtifactsOptions | Demo DemoOptions | DemoSession DemoSessionOptions | Distill DistillOptions | Persona PersonaOptions | Recall RecallOptions | Scenes ScenesOptions | Worker WorkerOptions
 
 main :: IO ()
-main = run =<< execParser opts
-  where
-    opts =
-      info
-        (commandParser <**> helper)
-        ( fullDesc
-            <> progDesc "kioku reusable agent memory tools"
-            <> header "kioku"
-        )
+main = run =<< customExecParser cliParserPrefs cliParserInfo
+
+-- | A fixed width makes help output stable in terminals, tests, and generated
+-- documentation instead of inheriting the invoking process's console width.
+cliParserPrefs :: ParserPrefs
+cliParserPrefs = prefs (columns 100)
+
+cliParserInfo :: ParserInfo Command
+cliParserInfo =
+  info
+    (commandParser <**> helper)
+    ( fullDesc
+        <> progDesc "kioku reusable agent memory tools"
+        <> header "kioku"
+    )
 
 commandParser :: Parser Command
 commandParser =

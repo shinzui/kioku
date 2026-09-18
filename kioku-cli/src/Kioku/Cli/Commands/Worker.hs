@@ -61,7 +61,10 @@ data WorkerOptions
   deriving stock (Eq, Show)
 
 workerOptionsParser :: Parser WorkerOptions
-workerOptionsParser = (\config mode -> maybe mode (`WorkerConfigured` mode) config) <$> aiConfigOption <*> workerModeParser
+workerOptionsParser =
+  (\config mode -> maybe mode (`WorkerConfigured` mode) config)
+    <$> parserOptionGroup "AI options" aiConfigOption
+    <*> parserOptionGroup "Execution mode" workerModeParser
 
 workerModeParser :: Parser WorkerOptions
 workerModeParser =

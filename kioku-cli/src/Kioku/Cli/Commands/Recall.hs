@@ -72,26 +72,33 @@ recallOptionsParser :: Parser RecallOptions
 recallOptionsParser =
   RecallOptions
     <$> (Text.pack <$> argument str (metavar "QUERY"))
-    <*> recallTargetParser
-    <*> option
-      (eitherReader (first Text.unpack . parseRecallStrategy . Text.pack))
-      ( long "strategy"
-          <> metavar strategyMetavar
-          <> value Hybrid
-          <> help "Recall strategy"
-      )
-    <*> option
-      (boundedIntReader "LIMIT" 1 100)
-      ( long "limit"
-          <> metavar "N"
-          <> value 8
-          <> help "Maximum hits to return (1-100)"
-      )
-    <*> switch
-      ( long "show-scores"
-          <> help "Print fused scores and component ranks"
-      )
-    <*> aiConfigOption
+    <*> parserOptionGroup "Recall target" recallTargetParser
+    <*> parserOptionGroup "Query options" strategyParser
+    <*> parserOptionGroup "Query options" limitParser
+    <*> parserOptionGroup "Output options" showScoresParser
+    <*> parserOptionGroup "AI options" aiConfigOption
+  where
+    strategyParser =
+      option
+        (eitherReader (first Text.unpack . parseRecallStrategy . Text.pack))
+        ( long "strategy"
+            <> metavar strategyMetavar
+            <> value Hybrid
+            <> help "Recall strategy"
+        )
+    limitParser =
+      option
+        (boundedIntReader "LIMIT" 1 100)
+        ( long "limit"
+            <> metavar "N"
+            <> value 8
+            <> help "Maximum hits to return (1-100)"
+        )
+    showScoresParser =
+      switch
+        ( long "show-scores"
+            <> help "Print fused scores and component ranks"
+        )
 
 -- | Exactly one of the three target flags, and never two.
 --

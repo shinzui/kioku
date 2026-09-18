@@ -30,28 +30,28 @@ data ConsolidationAction
   deriving anyclass (ToSchema, FromModel)
 
 data ExistingMemory = ExistingMemory
-  { memoryId :: Field "existing memory identifier" Text,
-    memoryType :: Field "existing memory type or category" Text,
-    content :: Field "existing memory content" Text,
-    priority :: Field "existing memory priority where lower is more important" Int,
-    confidence :: Field "existing confidence label" Text
+  { memoryId :: !(Field "existing memory identifier" Text),
+    memoryType :: !(Field "existing memory type or category" Text),
+    content :: !(Field "existing memory content" Text),
+    priority :: !(Field "existing memory priority where lower is more important" Int),
+    confidence :: !(Field "existing confidence label" Text)
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (ToSchema, FromModel, ToPrompt)
 
 data ConsolidateInput = ConsolidateInput
-  { scopeLabel :: Field "human-readable memory scope label" Text,
-    candidate :: ExtractedAtom,
-    existing :: [ExistingMemory]
+  { scopeLabel :: !(Field "human-readable memory scope label" Text),
+    candidate :: !ExtractedAtom,
+    existing :: ![ExistingMemory]
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (ToSchema, FromModel, ToPrompt)
 
 data ConsolidationDecision = ConsolidationDecision
-  { action :: ConsolidationAction,
-    targetMemoryIds :: [Text],
-    resultContent :: Maybe Text,
-    rationale :: Field "one concise reason for the decision" Text
+  { action :: !ConsolidationAction,
+    targetMemoryIds :: ![Text],
+    resultContent :: !(Maybe Text),
+    rationale :: !(Field "one concise reason for the decision" Text)
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (ToSchema, FromModel, ToPrompt)

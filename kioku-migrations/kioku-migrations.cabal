@@ -13,6 +13,7 @@ maintainer: nadeem@gmail.com
 copyright: 2026 Nadeem Bitar
 category: Database
 build-type: Simple
+tested-with: ghc >=9.12 && <9.13
 homepage: https://github.com/shinzui/kioku
 bug-reports: https://github.com/shinzui/kioku/issues
 extra-doc-files:
@@ -32,6 +33,17 @@ source-repository head
   location: https://github.com/shinzui/kioku.git
   subdir: kioku-migrations
 
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wpartial-fields
+    -Wredundant-constraints
+    -Werror=incomplete-patterns
+
 common shared
   default-language: GHC2024
   default-extensions:
@@ -42,7 +54,7 @@ common shared
     OverloadedStrings
 
 library
-  import: shared
+  import: warnings, shared
   hs-source-dirs: src
   exposed-modules:
     Kioku.Migrations
@@ -68,7 +80,7 @@ library
     text >=2.0 && <2.2,
 
 library test-support
-  import: shared
+  import: warnings, shared
   visibility: public
   hs-source-dirs: test-support
   exposed-modules: Kioku.Migrations.TestSupport
@@ -80,7 +92,7 @@ library test-support
     text >=2.0 && <2.2,
 
 test-suite kioku-migrations-test
-  import: shared
+  import: warnings, shared
   type: exitcode-stdio-1.0
   main-is: Main.hs
   hs-source-dirs: test

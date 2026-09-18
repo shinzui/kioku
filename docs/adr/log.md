@@ -2,6 +2,9 @@
 
 ## 2026-09-18
 
+- Added [ADR-14](haskell-and-cli-conventions-are-executable-contracts.md): all five packages
+  share the GHC baseline, narrow source conventions run in pre-commit and Nix, and fixed-width
+  grouped help plus bash/zsh/fish completion are tested CLI contracts.
 - Updated [ADR-10](projections-live-in-the-kioku-schema.md): native manifest checksums and
   ten-entry Codd source evidence are separate immutable contracts, while migrations after 0013
   must pass schema-qualification and no-`search_path` gates.

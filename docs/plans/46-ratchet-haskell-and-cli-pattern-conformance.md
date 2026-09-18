@@ -11,6 +11,12 @@ provenance:
     model: "gpt-5.6-sol"
     harness: "codex-cli"
     at: 2026-09-18T18:42:34Z
+  revisions:
+    - model: "gpt-5.6-sol"
+      harness: "codex-cli"
+      at: 2026-09-18T22:48:26Z
+      mode: "implement"
+      note: "Started EP-5 Haskell and CLI conformance implementation"
 ---
 
 # Ratchet Haskell and CLI pattern conformance
@@ -37,12 +43,45 @@ Use a checklist to summarize granular steps. Every stopping point must be docume
 even if it requires splitting a partially completed task into two ("done" vs. "remaining").
 This section must always reflect the actual current state of the work.
 
+- [x] (2026-09-18 22:59Z) Milestone 1: audited and aligned all five Cabal package
+  language, warning, extension, and compiler baselines.
+- [x] (2026-09-18 22:59Z) Milestone 2: audited source imports, prelude use,
+  deriving strategies, and durable record fields; corrected only the confirmed
+  strictness violations.
+- [x] (2026-09-18 22:59Z) Milestone 3: stabilized CLI help structure at 100
+  columns, tightened optparse-applicative to 0.19, and proved bash/zsh/fish
+  completion generation.
+- [x] (2026-09-18 22:59Z) Milestone 4: integrated repeatable source and package
+  ratchets with the existing pre-commit and flake-check entry points.
+- [x] (2026-09-18 22:59Z) Warning-as-error build, 467 repository tests,
+  formatter CI check, convention check, and user-visible help/completion probes
+  pass. After staging the new convention script, all four flake outputs and all
+  three applicable checks pass.
+
 ## Surprises & Discoveries
 
 Document unexpected behaviors, bugs, optimizations, or insights discovered during
 implementation. Provide concise evidence.
 
-(None yet.)
+| Package | Baseline and source audit | Result |
+|---|---|---|
+| `kioku-api` | GHC 2024, GHC 9.12, shared warnings, prelude boundary | Already conforming; cabal-gild normalized layout only. |
+| `kioku-core` | Same package baseline; imports, deriving, durable records | Imports and deriving already conformed; AI and distillation product records now use strict fields. Newtype fields remain necessarily unannotated. |
+| `kioku-cli` | Same package baseline; optparse 0.19; help and completion | Bound tightened; public parser preferences fix help at 100 columns; semantic groups and all three completion scripts are tested. |
+| `kioku-migrations` | GHC 9.12 declaration and shared warnings | Missing baselines added to all components; the Codd deprecation suppression remains only on its deliberate bridge test. |
+| `kioku-migrate` | GHC 2024 shared stanza, GHC 9.12, warnings, optparse 0.19 | Missing baselines added; the bridge executable alone retains `-Wno-deprecations`; shadowed bindings found by `-Werror` were renamed. |
+
+- Hackage publishes optparse-applicative 0.19.0.0 and its released source exposes
+  `parserOptionGroup`, fixed-column parser preferences, and built-in bash/zsh/fish
+  completion requests. The upstream repository does not publish a matching 0.19
+  Git tag, so Hackage is the authoritative release artifact for this bound.
+- GHC rejects strictness annotations on newtype fields. The record audit therefore
+  applies bangs to product records and preserves newtype representation semantics.
+- The installed treefmt uses `--ci` for fail-on-change validation; the planned
+  `nix fmt -- --check` spelling is not supported by this version.
+- A flake evaluated from a dirty Git worktree omits an untracked script from its
+  source snapshot. The convention derivation is valid once the script is staged;
+  this is a validation-order constraint, not a check implementation failure.
 
 
 ## Decision Log
@@ -59,6 +98,17 @@ Record every decision made while working on the plan.
   Rationale: Nested worker and migration commands benefit from option groups, stable help,
     and completions; configuration wizards or daemon conventions do not exist here.
   Date: 2026-09-18
+- Decision: Expose the top-level parser description and fixed parser preferences
+  as opaque test seams while keeping command constructors private.
+  Rationale: Parser tests can exercise exactly the public help and completion path
+    without exporting the internal command algebra or spawning a subprocess.
+  Date: 2026-09-18
+- Decision: Add one narrow repository convention script and wire it into the
+  existing pre-commit and flake-check systems.
+  Rationale: Fourmolu and GHC cover formatting and compilation but do not reject
+    package imports outside the prelude or detect Cabal baseline drift. A single
+    script supplies only those missing assertions and is not a parallel check stack.
+  Date: 2026-09-18
 
 
 ## Outcomes & Retrospective
@@ -68,7 +118,23 @@ Compare the result against the original purpose. Before marking the plan complet
 distill durable project context from the Decision Log, Surprises & Discoveries, and
 this section into docs/adr/. Keep task-local execution details here.
 
-(To be filled during and after implementation.)
+All five packages now declare a consistent GHC 9.12/GHC 2024 baseline and share
+the warning policy, with the one intentional deprecation suppression confined to
+the Codd bridge. Source inspection found the import and deriving conventions already
+healthy; the durable AI and distillation records were the concrete strictness gap.
+
+The CLI now treats help and completion as a tested public interaction. It renders at
+100 columns, labels target/query/output/AI/execution groups without changing an option
+or default, and generates non-empty bash, zsh, and fish scripts through the released
+optparse-applicative 0.19 API. The parser suite grew from 58 to 64 tests.
+
+The convention ratchet is available directly, in pre-commit, and as a flake check.
+`cabal build all --ghc-options=-Werror`, all 467 repository tests, `nix fmt -- --ci`,
+`nix flake check`, and direct CLI probes passed. The flake rerun was intentionally
+performed after staging because Nix excludes untracked files from a dirty flake source snapshot.
+The deployed-service-only package topology remains inapplicable: Kioku still consists
+of reusable libraries plus local CLI/migration executables and gained no artificial
+server, worker service, or client package.
 
 
 ## Context and Orientation

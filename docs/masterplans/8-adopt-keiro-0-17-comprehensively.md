@@ -115,7 +115,7 @@ an OKF bundle.
 | EP-2 | Replace deprecated Keiro read-model freshness APIs | docs/plans/43-replace-deprecated-keiro-read-model-freshness-apis.md | EP-1 | None | Complete |
 | EP-3 | Establish a validated projection catalog and runtime assembly | docs/plans/44-establish-a-validated-projection-catalog-and-runtime-assembly.md | EP-2 | None | Complete |
 | EP-4 | Harden Kioku migrations to the PostgreSQL patterns | docs/plans/45-harden-kioku-migrations-to-the-postgresql-patterns.md | EP-1 | EP-3 | Complete |
-| EP-5 | Ratchet Haskell and CLI pattern conformance | docs/plans/46-ratchet-haskell-and-cli-pattern-conformance.md | EP-1 | EP-2 | Not Started |
+| EP-5 | Ratchet Haskell and CLI pattern conformance | docs/plans/46-ratchet-haskell-and-cli-pattern-conformance.md | EP-1 | EP-2 | Complete |
 | EP-6 | Integrate and publish the Keiro 0.17 adoption | docs/plans/47-integrate-and-publish-the-keiro-0-17-adoption.md | EP-1, EP-2, EP-3, EP-4, EP-5 | None | Not Started |
 
 Status values: Not Started, In Progress, Complete, Cancelled.
@@ -175,6 +175,9 @@ and the milestone. This section provides an at-a-glance view of the entire initi
 - [x] EP-4: Harden Kioku migrations to the PostgreSQL patterns (complete; ten-entry
   Codd evidence and thirteen native hashes are frozen, future SQL is ratcheted,
   fresh/upgrade schemas converge, and all 461 repository tests pass).
+- [x] EP-5: Ratchet Haskell and CLI pattern conformance (complete; five package
+  baselines aligned, durable records strict, help/completion contractual, convention
+  ratchet wired into pre-commit/flake checks, and all 467 tests pass).
 
 ## Surprises & Discoveries
 
@@ -206,6 +209,12 @@ interactions between child plans. Provide concise evidence.
 - EP-4 verified that the released `keiro-test-support-0.17.0.0` fixture API still uses
   the `ephemeral-pg` 0.2 cohort even though Keiro's newer local source has advanced to
   0.3. Kioku therefore keeps the released-compatible 0.2.2 bound.
+- EP-5 verified optparse-applicative 0.19.0.0 from Hackage because upstream has no
+  corresponding Git tag. The released API supplies option groups, fixed help width,
+  and built-in bash/zsh/fish completion generation exactly as the CLI pattern requires.
+- EP-5 found no prepositive qualified imports, package imports outside
+  `Kioku.Prelude`, or ambiguous deriving clauses. The concrete source drift was lazy
+  fields in AI/distillation product records; newtype fields cannot legally carry bangs.
 
 
 ## Decision Log
@@ -266,3 +275,10 @@ released payload. Manifest membership, historical Codd evidence, native checksum
 future schema qualification, hostile composition, normalized schema convergence, and
 rerun idempotence now fail in the migration suite. [ADR-10](../adr/projections-live-in-the-kioku-schema.md)
 now records why the native manifest and Codd lock remain separate contracts.
+
+EP-5 made the language and CLI conventions executable without changing command
+semantics. Every package now declares the GHC 9.12/GHC 2024 and warning baselines,
+CLI help is fixed at 100 columns with semantic option groups, all three shell completion
+scripts are tested, and a narrow convention script participates in both pre-commit and
+flake checks. [ADR-14](../adr/haskell-and-cli-conventions-are-executable-contracts.md)
+records the durable package and CLI contract.

@@ -18,15 +18,15 @@ import Shikumi.Schema.Types (Field)
 import Shikumi.Signature (Signature, mkSignature)
 
 data SceneInput = SceneInput
-  { scopeLabel :: Field "human label of the scope" Text,
-    atoms :: Field "the active memory atoms in this scope, newline-joined" Text
+  { scopeLabel :: !(Field "human label of the scope" Text),
+    atoms :: !(Field "the active memory atoms in this scope, newline-joined" Text)
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (ToSchema, FromModel, ToPrompt)
 
 data SceneOutput = SceneOutput
-  { title :: Field "a short scene title, e.g. 'Testing & CI practices'" Text,
-    bodyMd :: Field "a markdown scene block summarizing the atoms as a narrative" Text
+  { title :: !(Field "a short scene title, e.g. 'Testing & CI practices'" Text),
+    bodyMd :: !(Field "a markdown scene block summarizing the atoms as a narrative" Text)
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (ToSchema, FromModel, ToPrompt, Validatable)

@@ -16,5 +16,21 @@
     # git call in scripts/upgrade-baikai.sh fails and the branch it reads comes
     # back empty. See docs/user/automated-baikai-upgrades.md.
     haskellProject.extraDevPackages = [ pkgs.git ];
+
+    checks.haskell-conventions = pkgs.runCommand "kioku-haskell-conventions"
+      {
+        nativeBuildInputs = [ pkgs.bash pkgs.gnugrep pkgs.ripgrep ];
+      } ''
+      cd ${./.}
+      bash scripts/check-haskell-conventions.sh
+      touch $out
+    '';
+
+    pre-commit.settings.hooks.haskell-conventions = {
+      enable = true;
+      name = "Haskell conventions";
+      entry = "${pkgs.bash}/bin/bash scripts/check-haskell-conventions.sh";
+      pass_filenames = false;
+    };
   };
 }

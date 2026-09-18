@@ -35,7 +35,7 @@ import Kioku.Migrations.History.Codd
   )
 import Kioku.ReadModel (ReadModelSchema (..), ReconcileOutcome (..), reconcileReadModelRegistry)
 import Kiroku.Store.Connection (defaultConnectionSettings)
-import Options.Applicative
+import Options.Applicative hiding (command)
 import Options.Applicative qualified as Opt
 import System.Environment (lookupEnv)
 import System.Exit qualified as Exit
@@ -157,10 +157,10 @@ runImportCommand plan defaultDatabaseUrl options = do
       targetProvider
       plan
       cohortCoddHistoryMappings
-  report <- either (Exit.die . ("Codd history import failed: " <>) . show) pure imported
+  importReport <- either (Exit.die . ("Codd history import failed: " <>) . show) pure imported
   case options.outputFormat of
-    JsonOutput -> LazyByteString.putStrLn (Aeson.encode (renderHistoryImportJson "codd" report))
-    TextOutput -> renderImportReport report
+    JsonOutput -> LazyByteString.putStrLn (Aeson.encode (renderHistoryImportJson "codd" importReport))
+    TextOutput -> renderImportReport importReport
 
 renderImportReport :: HistoryImportReport -> IO ()
 renderImportReport HistoryImportReport {importResults, cleanupIssues} = do

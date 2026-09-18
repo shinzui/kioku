@@ -42,10 +42,10 @@ data DistillRuntime = DistillRuntime AIRuntime (Maybe FilePath) (Maybe TestRunne
 -- | Explicit controlled-runner seam for tests. Production construction accepts
 -- only a validated AIRuntime; its captured settings cannot be record-updated.
 data TestRunners = TestRunners
-  { runExtract :: ExtractInput -> IO (Either ShikumiError ExtractOutput),
-    runConsolidate :: ConsolidateInput -> IO (Either ShikumiError ConsolidationDecision),
-    runScene :: SceneInput -> IO (Either ShikumiError SceneOutput),
-    runPersona :: PersonaInput -> IO (Either ShikumiError PersonaOutput)
+  { runExtract :: !(ExtractInput -> IO (Either ShikumiError ExtractOutput)),
+    runConsolidate :: !(ConsolidateInput -> IO (Either ShikumiError ConsolidationDecision)),
+    runScene :: !(SceneInput -> IO (Either ShikumiError SceneOutput)),
+    runPersona :: !(PersonaInput -> IO (Either ShikumiError PersonaOutput))
   }
 
 testDistillRuntime :: IO DistillRuntime

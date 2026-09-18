@@ -49,25 +49,32 @@ sessionOptionsParser =
     <$> argument
       (eitherReader parseSessionId)
       (metavar "SESSION_ID")
-    <*> option
-      (eitherReader parseCandidateSource)
-      ( long "candidates"
-          <> metavar "scan|recall"
-          <> value CandidateScan
-          <> help "Candidate lookup source"
-      )
-    <*> option
-      (boundedIntReader "LIMIT" 1 50)
-      ( long "limit"
-          <> metavar "N"
-          <> value 5
-          <> help "Maximum merge candidates per extracted atom (1-50)"
-      )
-    <*> switch
-      ( long "force"
-          <> help "Re-run even when the session has no turns newer than the last successful pass"
-      )
-    <*> aiConfigOption
+    <*> parserOptionGroup "Candidate options" candidateSourceParser
+    <*> parserOptionGroup "Candidate options" candidateLimitParser
+    <*> parserOptionGroup "Execution options" forceParser
+    <*> parserOptionGroup "AI options" aiConfigOption
+  where
+    candidateSourceParser =
+      option
+        (eitherReader parseCandidateSource)
+        ( long "candidates"
+            <> metavar "scan|recall"
+            <> value CandidateScan
+            <> help "Candidate lookup source"
+        )
+    candidateLimitParser =
+      option
+        (boundedIntReader "LIMIT" 1 50)
+        ( long "limit"
+            <> metavar "N"
+            <> value 5
+            <> help "Maximum merge candidates per extracted atom (1-50)"
+        )
+    forceParser =
+      switch
+        ( long "force"
+            <> help "Re-run even when the session has no turns newer than the last successful pass"
+        )
 
 runDistill :: DistillOptions -> IO ()
 runDistill opts = do

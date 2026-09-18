@@ -18,8 +18,8 @@ import Shikumi.Schema.Types (Field)
 import Shikumi.Signature (Signature, mkSignature)
 
 data PersonaInput = PersonaInput
-  { scopeLabel :: Field "human label of the scope" Text,
-    scenes :: Field "the scene blocks for this scope, newline-joined" Text
+  { scopeLabel :: !(Field "human label of the scope" Text),
+    scenes :: !(Field "the scene blocks for this scope, newline-joined" Text)
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (ToSchema, FromModel, ToPrompt)

@@ -42,9 +42,9 @@ data DistillationConfig
   | InteractiveConfig InteractiveProvider InteractiveLaunchRequest
 
 data AIConfig = AIConfig
-  { distillationDefault :: DistillationConfig,
-    featureOverrides :: Map AIFeature DistillationConfig,
-    embeddingSettings :: Map AIFeature EmbeddingModel
+  { distillationDefault :: !DistillationConfig,
+    featureOverrides :: !(Map AIFeature DistillationConfig),
+    embeddingSettings :: !(Map AIFeature EmbeddingModel)
   }
 
 disabledAIConfig :: AIConfig

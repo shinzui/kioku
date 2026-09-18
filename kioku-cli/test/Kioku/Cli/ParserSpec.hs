@@ -10,6 +10,7 @@ import Data.UUID qualified as UUID
 import Keiro.Timer (TimerId (..))
 import Kioku.Api.Access (mkMemorySpaceId)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
+import Kioku.Cli (cliParserInfo, cliParserPrefs)
 import Kioku.Cli.Commands.Demo (DemoOptions (..), demoOptionsParser, demoScope)
 import Kioku.Cli.Commands.DemoSession (DemoSessionOptions (..), demoSessionOptionsParser)
 import Kioku.Cli.Commands.Distill (DistillOptions (..), distillOptionsParser)
@@ -27,6 +28,7 @@ import Kioku.Recall
     recallStrategyText,
   )
 import Options.Applicative
+import System.Exit (ExitCode (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, testCase, (@?=))
 
@@ -41,7 +43,8 @@ tests =
       limitTests,
       demoGuardTests,
       redactionTests,
-      workerModeTests
+      workerModeTests,
+      cliContractTests
     ]
 
 -- | Run a parser against an argument list, rendering a failure the way the real CLI would.
@@ -157,7 +160,7 @@ recallTargetTests =
           Left err -> do
             assertBool ("failure should say what is missing: " <> err) ("Missing:" `isInfixOf` err)
             mapM_
-              (\flag -> assertBool ("failure should list " <> flag <> ": " <> err) (flag `isInfixOf` err))
+              (\flagName -> assertBool ("failure should list " <> flagName <> ": " <> err) (flagName `isInfixOf` err))
               ["--scope", "--global-bucket", "--namespace-wide"],
       testCase "two targets is a parse error naming the second" do
         assertConflict "--namespace-wide" (target ["--scope", "a:b:c", "--namespace-wide", "mori"]),
@@ -347,3 +350,68 @@ workerModeTests =
 
     spaceNamed raw =
       either (error . Text.unpack) id (mkMemorySpaceId (Text.pack raw))
+
+-- | Help and completion are public CLI output even though the parser values are
+-- pure. Keep their structure stable without pinning incidental whitespace.
+cliContractTests :: TestTree
+cliContractTests =
+  testGroup
+    "top-level help and completion contract"
+    [ testCase "top-level help lists every command at the stable width" do
+        rendered <- renderHelp ["--help"]
+        mapM_
+          (\commandName -> assertBool ("help should list " <> commandName) (commandName `isInfixOf` rendered))
+          [ "demo",
+            "demo-session",
+            "distill",
+            "migrate-artifacts",
+            "persona",
+            "recall",
+            "scenes",
+            "worker"
+          ]
+        assertStableWidth rendered,
+      testCase "worker help exposes semantic option groups" do
+        rendered <- renderHelp ["worker", "--help"]
+        assertBool ("worker help should show the AI group:\n" <> rendered) ("AI options" `isInfixOf` rendered)
+        assertBool ("worker help should show the execution group:\n" <> rendered) ("Execution mode" `isInfixOf` rendered)
+        assertStableWidth rendered,
+      testCase "recall help exposes target, query, and output groups" do
+        rendered <- renderHelp ["recall", "--help"]
+        mapM_
+          (\heading -> assertBool ("recall help should show " <> heading <> ":\n" <> rendered) (heading `isInfixOf` rendered))
+          ["Recall target", "Query options", "Output options", "AI options"]
+        assertStableWidth rendered,
+      testCase "bash completion script is generated" do
+        script <- renderCompletion "--bash-completion-script"
+        assertBool "bash completion script should name kioku" (not (null script) && "kioku" `isInfixOf` script),
+      testCase "zsh completion script is generated" do
+        script <- renderCompletion "--zsh-completion-script"
+        assertBool "zsh completion script should name kioku" (not (null script) && "kioku" `isInfixOf` script),
+      testCase "fish completion script is generated" do
+        script <- renderCompletion "--fish-completion-script"
+        assertBool "fish completion script should name kioku" (not (null script) && "kioku" `isInfixOf` script)
+    ]
+  where
+    renderHelp args =
+      case execParserPure cliParserPrefs cliParserInfo args of
+        Failure failure -> do
+          let (rendered, exitCode) = renderFailure failure "kioku"
+          exitCode @?= ExitSuccess
+          pure rendered
+        Success _ -> assertBool "--help unexpectedly parsed as a command" False >> pure ""
+        CompletionInvoked _ -> assertBool "--help unexpectedly invoked completion" False >> pure ""
+
+    renderCompletion flagName =
+      case execParserPure cliParserPrefs cliParserInfo [flagName, "kioku"] of
+        CompletionInvoked completion -> execCompletion completion "kioku"
+        Failure failure -> do
+          let (rendered, _) = renderFailure failure "kioku"
+          assertBool (flagName <> " failed:\n" <> rendered) False
+          pure ""
+        Success _ -> assertBool (flagName <> " unexpectedly parsed as a command") False >> pure ""
+
+    assertStableWidth rendered =
+      mapM_
+        (\line -> assertBool ("help line exceeds 100 columns: " <> show line) (length line <= 100))
+        (lines rendered)

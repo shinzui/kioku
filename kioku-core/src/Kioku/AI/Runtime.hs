@@ -39,11 +39,11 @@ import Shikumi.Routing (routeLLM, runRouting)
 -- | Registries grant separate API and batch capabilities. The callback grants a
 -- fresh interactive session; presence of a terminal or executable grants none.
 data HostCapabilities = HostCapabilities
-  { apiRegistry :: Maybe Registry.ProviderRegistry,
-    batchRegistry :: Maybe Registry.ProviderRegistry,
-    allowInteractive :: Bool,
-    launchInteractive :: Maybe (AIFeature -> InteractiveLaunchRequest -> IO (Either AIExecutionError InteractiveLaunchResult)),
-    allowEmbeddingAPI :: Bool
+  { apiRegistry :: !(Maybe Registry.ProviderRegistry),
+    batchRegistry :: !(Maybe Registry.ProviderRegistry),
+    allowInteractive :: !Bool,
+    launchInteractive :: !(Maybe (AIFeature -> InteractiveLaunchRequest -> IO (Either AIExecutionError InteractiveLaunchResult))),
+    allowEmbeddingAPI :: !Bool
   }
 
 noHostCapabilities :: HostCapabilities
