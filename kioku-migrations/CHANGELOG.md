@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0.0 — 2026-09-26
+
+### Breaking Changes
+
+- Requires `keiro-migrations ^>=0.19.0.0`, `kiroku-store-migrations ^>=0.6.0.0`, and the
+  `pg-migrate` 1.2 family. The composed plan grows from 56 to **57** migrations (Kiroku 12,
+  Keiro 32, Kioku 13) through Kiroku's `0012`, which adds the `$all`-row `category` column, its
+  check constraint `ck_stream_events_all_category`, and a category index, and advances the Kiroku
+  schema comment to "through 0012". Apply it to a database holding data only with every Kiroku 0.8
+  writer stopped.
+- `test-support` requires `keiro-test-support ^>=0.19.0.0` and `ephemeral-pg ^>=0.3.1.0`.
+
+### Changed
+
+- Kioku's own thirteen migrations and their checksums are unchanged; no ledger fixup is required.
+
 ## 0.7.0.0 — 2026-09-18
 
 ### Changed

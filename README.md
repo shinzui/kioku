@@ -52,9 +52,9 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 Project dependencies resolve from Hackage; `cabal.project` does not replace released packages with
-Git checkouts. Kioku 0.7's framework baseline is Keiki 0.9, Keiro 0.17, Kiroku Store 0.8,
-pg-migrate 1.1, and PGMQ 0.6 for Keiro's optional PGMQ integration. The composed migration plan
-remains 56 entries (Kiroku 11, Keiro 32, Kioku 13).
+Git checkouts. Kioku 0.8's framework baseline is Keiki 0.9, Keiro 0.19, Kiroku Store 0.9,
+pg-migrate 1.2, and PGMQ 0.6 for Keiro's optional PGMQ integration. The composed migration plan
+is 57 entries (Kiroku 12, Keiro 32, Kioku 13).
 
 The development shell is provided by Nix:
 

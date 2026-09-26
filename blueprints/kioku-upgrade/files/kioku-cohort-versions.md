@@ -11,6 +11,7 @@ edit. What to edit is in the edge prompt.
 
 | Kioku | `keiro` / `keiro-core` | `kiroku-store` | `keiki` | `shibuya-core` | `shibuya-kiroku-adapter` | `baikai` |
 |---|---|---|---|---|---|---|
+| 0.8.0.0 | `^>=0.19.0.0` | `^>=0.9.0.1` | `^>=0.9.1.0` | `^>=0.10.0.0` | `^>=0.5.1.5` | `^>=0.7.0.0` |
 | 0.7.0.0 | `^>=0.17.0.0` | `^>=0.8.0.0` | `^>=0.9.0.0` | `^>=0.9.0.0` | `^>=0.5.1.1` | `^>=0.7.0.0` |
 | 0.6.0.0 | `^>=0.16.0.0` | `^>=0.8.0.0` | `^>=0.9.0.0` | `^>=0.9.0.0` | `^>=0.5.1.1` | `^>=0.7.0.0` |
 | 0.5.2.0 | `^>=0.15.0.0` | `^>=0.8.0.0` | `^>=0.9.0.0` | `^>=0.9.0.0` | `^>=0.5.1.1` | `^>=0.6.0.0` |
@@ -27,6 +28,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `baikai` / `baikai-claude` | `baikai-openai` | `baikai-effectful` | `shikumi` | `shikumi-trace` |
 |---|---|---|---|---|---|
+| 0.8.0.0 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.7.0.0 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.6.0.0 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.5.2.0 | `^>=0.6.0.0` | — | `^>=0.4.0.0` | `^>=0.3.0.3` | `^>=0.2.0.3` |
@@ -37,6 +39,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `keiro-migrations` | `kiroku-store-migrations` | `pg-migrate` |
 |---|---|---|---|
+| 0.8.0.0 | `^>=0.19.0.0` | `^>=0.6.0.0` | `^>=1.2.0.0` |
 | 0.7.0.0 | `^>=0.17.0.0` | `^>=0.4.0.0` | `^>=1.1.0.0` |
 | 0.6.0.0 | `^>=0.16.0.0` | `^>=0.4.0.0` | `^>=1.1.0.0` |
 | 0.5.2.0 | `^>=0.15.0.0` | `^>=0.4.0.0` | `^>=1.1.0.0` |
@@ -62,6 +65,7 @@ asserts on migration counts or ids needs the right row for its release.
 
 | Kioku | Total | Kiroku | Keiro | Kioku |
 |---|---|---|---|---|
+| 0.8.0.0 | 57 | 12 | 32 | 13 |
 | 0.7.0.0 | 56 | 11 | 32 | 13 |
 | 0.6.0.0 | 56 | 11 | 32 | 13 |
 | 0.5.2.0 | 55 | 11 | 31 | 13 |
@@ -75,6 +79,11 @@ asserts on migration counts or ids needs the right row for its release.
 Most Kioku migrations are additive, and additive migrations need no special
 action. These are the exceptions — releases that changed the payload of an
 **already-released** migration, and therefore its recorded checksum.
+
+0.8.0.0 requires no Kioku ledger fixup: it adds no Kioku migration and corrects
+no released payload. Its plan grows to 57 through Kiroku's appended
+`kiroku/0012`, which is additive but must be applied with every Kiroku 0.8
+writer stopped; see the entailed `kiroku-upgrade` `0.8.0.2 -> 0.9.0.0` edge.
 
 0.7.0.0 requires none: it adds no migration and corrects no released payload.
 The composed plan remains at 56 migrations.

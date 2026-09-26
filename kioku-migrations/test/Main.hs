@@ -459,7 +459,7 @@ testFreshDatabase =
         runMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan
           >>= either (assertFailure . show) pure
       let MigrationReport {results = repeatedResults} = repeated
-      length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 56
+      length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 57
       length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
       verification <-
         verifyMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan
@@ -578,10 +578,10 @@ testLedgerChecksumRebaseline =
     plan <- either (fail . show) pure kiokuMigrationPlan
     let settings = Settings.connectionString connStr
     initial <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
-    length (appliedNow initial) @?= 56
+    length (appliedNow initial) @?= 57
 
     baselineLedger <- query connStr fullLedgerSnapshot
-    fst baselineLedger @?= 56
+    fst baselineLedger @?= 57
     baselineSchema <- query connStr cohortSchemaSnapshotStatement
     fixup <- Text.IO.readFile ledgerFixupPath
 
@@ -607,7 +607,7 @@ testLedgerChecksumRebaseline =
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 56
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 57
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
     withConnection connStr \conn -> run conn (Session.script fixup)
@@ -1072,12 +1072,12 @@ testKirokuOnlyAdoption =
     full <- either (fail . show) pure kiokuMigrationPlan
 
     kirokuReport <- runMigrationPlan defaultRunOptions settings kirokuOnly >>= either (assertFailure . show) pure
-    length (appliedNow kirokuReport) @?= 11
+    length (appliedNow kirokuReport) @?= 12
     ledgerBefore <- query connStr kirokuLedgerSnapshot
 
     adoption <- runMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let MigrationReport {results = adoptionResults} = adoption
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 11
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 12
     length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 45
 
     -- Verified and skipped, never re-executed: the stored rows keep their checksums and their
@@ -1091,7 +1091,7 @@ testKirokuOnlyAdoption =
     verification <- verifyMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let VerificationReport {issues = adoptionIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     adoptionIssues @?= []
-    length appliedMigrations @?= 56
+    length appliedMigrations @?= 57
     pendingMigrations @?= []
     unknownMigrations @?= []
 
@@ -1442,13 +1442,13 @@ testCoddCohortImport =
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 56
+    length appliedMigrations @?= 57
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 56
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 57
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 testSchemaConvergence :: Assertion
@@ -1613,6 +1613,7 @@ expectedForwardMigrationIds =
           migrationId "kiroku" "0009",
           migrationId "kiroku" "0010",
           migrationId "kiroku" "0011",
+          migrationId "kiroku" "0012",
           migrationId "keiro" "0015-keiro-outbox-claim-order-index",
           migrationId "keiro" "0016-keiro-inbox-drop-received-idx",
           migrationId "keiro" "0017-schema-management-comment",
@@ -1678,7 +1679,7 @@ forwardMigrationEffectCountStatement =
       (EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'kiroku' AND table_name = 'streams' AND column_name = 'truncate_before'))::int
       + (coalesce(obj_description(to_regnamespace('kiroku'), 'pg_namespace'), '') =
-          'Managed by pg-migrate component kiroku through 0011')::int
+          'Managed by pg-migrate component kiroku through 0012')::int
       + (to_regclass('keiro.keiro_outbox_claim_order_idx') IS NOT NULL)::int
       + (to_regclass('keiro.keiro_inbox_received_idx') IS NULL)::int
       + (coalesce(obj_description(to_regnamespace('keiro'), 'pg_namespace'), '') =

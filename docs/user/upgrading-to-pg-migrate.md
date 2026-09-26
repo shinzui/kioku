@@ -99,13 +99,13 @@ DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- status
 ```
 
 `up` reports the 30 imported migrations as already applied and applies only the forward suffix:
-Kiroku `0007` through `0011`, Keiro `0015` through `0032`, and Kioku `0011` through `0013`.
+Kiroku `0007` through `0012`, Keiro `0015` through `0032`, and Kioku `0011` through `0013`.
 The Kioku suffix partitions the read models, relocates the projections into the `kioku` schema,
-and installs the partition-aware full-text index. The final status is 56 applied migrations
+and installs the partition-aware full-text index. The final status is 57 applied migrations
 with no pending, unknown, or verification issues:
 
 ```text
-kiroku  11
+kiroku  12
 keiro  32
 kioku  13
 ```

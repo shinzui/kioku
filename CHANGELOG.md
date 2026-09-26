@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.0.0 — 2026-09-26
+
+### Breaking Changes
+
+- **Keiro cohort:** all direct Keiro packages now require `^>=0.19.0.0`, which moves the upstream
+  cohort to `kiroku-store ^>=0.9.0.1`, `kiroku-store-migrations ^>=0.6.0.0`,
+  `shibuya-core ^>=0.10.0.0`, `shibuya-kiroku-adapter ^>=0.5.1.5`, `keiki ^>=0.9.1.0`, and the
+  `pg-migrate` 1.2 family. The floor is `kiroku-store` 0.9.0.1 because 0.9.0.0 retains heap in
+  idle publishers. The optional PGMQ solve moves to Keiro PGMQ 0.19, `pgmq-migration >=0.6.1.1`,
+  and `shibuya-pgmq-adapter ^>=0.16.1.0`.
+- **Kiroku `0012` cutover:** the composed migration plan grows from 56 to **57** entries (Kiroku
+  12, Keiro 32, Kioku 13) through Kiroku's appended `kiroku/0012`. It adds a `category` column to
+  `$all` junction rows of `kiroku.stream_events`, backfills it, adds the check constraint
+  `ck_stream_events_all_category`, and indexes category reads. A database that holds data must
+  apply it with every Kiroku 0.8 writer stopped, then start the 0.9 code; a 0.8 writer that keeps
+  appending after `0012` fails with `23514`. Fresh databases need no special action.
+- **Package cohort:** all five Kioku packages move together to 0.8.0.0 and require one another at
+  `^>=0.8.0.0`.
+
+### Changed
+
+- No Kioku source or public API changes. Kioku adds no migration, alters no released payload, and
+  requires **no Kioku ledger fixup**.
+- The `0.7.0.0 -> 0.8.0.0` `kioku-upgrade` blueprint edge entails `keiro-upgrade`
+  `0.17.0.0 -> 0.18.0.0` and `0.18.0.0 -> 0.19.0.0`, the latter entailing `kiroku-upgrade`
+  `0.8.0.2 -> 0.9.0.0`.
+
 ## 0.7.0.0 — 2026-09-18
 
 ### Breaking Changes

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0.0 — 2026-09-26
+
+### Changed
+
+- Requires the Kioku 0.8 cohort, `kiroku-store ^>=0.9.0.1`, and the `pg-migrate` 1.2 family.
+- The plan grows to **57** entries through Kiroku's `0012`. On a database that holds data, run
+  `up` only after every Kiroku 0.8 writer has stopped. No Kioku ledger fixup is required.
+
 ## 0.7.0.0 — 2026-09-18
 
 ### Changed

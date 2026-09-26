@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0.0 — 2026-09-26
+
+### Changed
+
+- Requires the Kioku 0.8 cohort, `keiro ^>=0.19.0.0`, and `kiroku-store ^>=0.9.0.1`. Commands and
+  output are unchanged.
+
 ## 0.7.0.0 — 2026-09-18
 
 ### Changed

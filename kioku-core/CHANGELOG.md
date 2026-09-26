@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0.0 — 2026-09-26
+
+### Breaking Changes
+
+- Requires `keiro ^>=0.19.0.0`, `keiro-core ^>=0.19.0.0`, `kiroku-store ^>=0.9.0.1`,
+  `shibuya-core ^>=0.10.0.0`, `shibuya-kiroku-adapter ^>=0.5.1.5`, and `keiki ^>=0.9.1.0`.
+  Kiroku Store 0.9 writes a `category` on every `$all` row, which requires Kiroku migration `0012`
+  in the target database. Source and API are unchanged.
+
 ## 0.7.0.0 — 2026-09-18
 
 ### Breaking Changes

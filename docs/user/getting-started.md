@@ -2,8 +2,9 @@
 
 This guide takes you from an empty checkout to writing and recalling your first memory.
 
-The current 0.7 release cohort uses Keiro 0.17. Upgrading from Kioku 0.6 changes runtime APIs and
-catalog registration but appends no migration: the plan below remains 56 entries.
+The current 0.8 release cohort uses Keiro 0.19 and Kiroku Store 0.9. Upgrading from Kioku 0.7
+appends Kiroku migration `0012`, so the plan below grows to 57 entries. Apply it with every
+Kiroku 0.8 writer stopped; see the 0.8.0.0 changelog.
 
 ## Prerequisites
 
@@ -51,7 +52,7 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 The migration ledger records the stable `component/name` identity and SHA-256 checksum of all
-56 migrations (Kiroku 11, Keiro 32, Kioku 13). `verify` is read-only and fails if applied SQL no
+57 migrations (Kiroku 12, Keiro 32, Kioku 13). `verify` is read-only and fails if applied SQL no
 longer matches the bytes compiled into the executable.
 
 When authoring a Kioku migration, start with `just new-migration <slug>`, qualify every persistent
