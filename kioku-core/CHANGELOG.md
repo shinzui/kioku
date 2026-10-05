@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Admit effectful 2.7 alongside the existing supported range: `effectful <2.8` and
+  `effectful-core >=2.5 && <2.7 || >=2.7.1.1 && <2.8`. Exclude the
+  effectful-core 2.7.0.0–2.7.1.0 performance regression. Bounds only; no source changed.
+
 ## 0.8.0.0 — 2026-09-26
 
 ### Breaking Changes
