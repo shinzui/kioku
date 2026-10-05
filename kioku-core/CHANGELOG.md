@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.8.0.1 — 2026-10-05
+
 ### Changed
 
 - Admit effectful 2.7 alongside the existing supported range: `effectful <2.8` and

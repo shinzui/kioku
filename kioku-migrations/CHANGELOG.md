@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+## 0.8.0.1 — 2026-10-05
+
+### Changed
+
+- Shared 0.8.0.1 cohort release; no API or migration changes in this package.
+
 ## 0.8.0.0 — 2026-09-26
 
 ### Breaking Changes
