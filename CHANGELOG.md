@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0.2 — 2026-10-06
+
+### Fixed
+
+- Share the stable per-user temporary root owned by `mori://shinzui/keiro/packages/keiro-test-support` across bare and migrated test fixtures so later starts can reclaim abandoned PostgreSQL clusters across shell sessions.
+
 ## [Unreleased]
 
 ## 0.8.0.1 — 2026-10-05

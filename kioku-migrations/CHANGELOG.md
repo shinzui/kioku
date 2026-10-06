@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0.2 — 2026-10-06
+
+### Fixed
+
+- Pin bare-database fixtures to the same stable effective-uid temporary root owned by `mori://shinzui/keiro/packages/keiro-test-support` as the delegated migrated fixtures; keep stale-instance sweeping enabled and require `mori://shinzui/ephemeral-pg/packages/ephemeral-pg` >=0.3.1 && <0.4.
+
 ## [Unreleased]
 
 ## 0.8.0.1 — 2026-10-05

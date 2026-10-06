@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: kioku-migrations
-version: 0.8.0.1
+version: 0.8.0.2
 synopsis: Schema migrations for kioku
 description:
   Owns kioku schema evolution as a native pg-migrate component and composes
@@ -86,10 +86,12 @@ library test-support
   exposed-modules: Kioku.Migrations.TestSupport
   build-depends:
     base >=4.18 && <5,
-    ephemeral-pg ^>=0.3.1.0,
+    directory >=1.3 && <1.4,
+    ephemeral-pg >=0.3.1 && <0.4,
     keiro-test-support ^>=0.19.0.0,
-    kioku-migrations ^>=0.8.0.1,
+    kioku-migrations ^>=0.8.0.2,
     text >=2.0 && <2.2,
+    unix >=2.8 && <2.9,
 
 test-suite kioku-migrations-test
   import: warnings, shared
@@ -110,7 +112,7 @@ test-suite kioku-migrations-test
     containers >=0.6 && <0.8,
     hasql >=1.6,
     keiro-migrations ^>=0.19.0.0,
-    kioku-migrations ^>=0.8.0.1,
+    kioku-migrations ^>=0.8.0.2,
     kioku-migrations:test-support,
     kiroku-store-migrations ^>=0.6.0.0,
     pg-migrate ^>=1.2.0.0,

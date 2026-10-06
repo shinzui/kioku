@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0.2 — 2026-10-06
+
+### Fixed
+
+- Keep the shared Kioku release version and internal bounds aligned with the migration test-fixture cleanup fix.
+
 ## [Unreleased]
 
 ## 0.8.0.1 — 2026-10-05
