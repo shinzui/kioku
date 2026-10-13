@@ -38,14 +38,10 @@
         # `cabal build` never reconfigures it, so the shell looks fine until
         # something forces a fresh configure -- `cabal build --enable-profiling`
         # does exactly that, because the profiling way changes the unit-id hash.
-        #
-        # Project-specific (kept across nix-haskell-flake upgrades): pgvector must
-        # come from the SAME postgresql the dev server runs, or the extension's
-        # .so/.control files are not on the server's library path and the embedding
-        # migration's guarded DO block silently skips its columns. `.withPackages`
-        # yields only an `out` output, so the `pkgs.postgresql.dev` below is still
-        # required for libpq.pc.
-        (pkgs.postgresql.withPackages (ps: [ ps.pgvector ]))
+        # Postgres rebuilt with the requested extensions (e.g. pg_partman),
+        # so their .control/.sql land in share and CREATE EXTENSION works.
+        # pkgs.postgresql.dev below still supplies the matching libpq headers.
+        (pkgs.postgresql.withPackages (pgp: [ pgp.pgvector ]))
         pkgs.postgresql.dev
         pkgs.openssl.dev
         pkgs.jq

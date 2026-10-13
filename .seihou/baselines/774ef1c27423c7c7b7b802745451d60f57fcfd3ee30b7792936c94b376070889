@@ -38,7 +38,10 @@
         # `cabal build` never reconfigures it, so the shell looks fine until
         # something forces a fresh configure -- `cabal build --enable-profiling`
         # does exactly that, because the profiling way changes the unit-id hash.
-        pkgs.postgresql
+        # Postgres rebuilt with the requested extensions (e.g. pg_partman),
+        # so their .control/.sql land in share and CREATE EXTENSION works.
+        # pkgs.postgresql.dev below still supplies the matching libpq headers.
+        (pkgs.postgresql.withPackages (pgp: [ pgp.pgvector ]))
         pkgs.postgresql.dev
         pkgs.openssl.dev
         pkgs.jq
