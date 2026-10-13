@@ -7,15 +7,20 @@ where
 
 import Baikai.Embedding (EmbeddingModel)
 import Baikai.Embedding qualified as Embedding
+import Control.Concurrent (threadDelay)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Functor.Contravariant ((>$<))
 import Data.HashMap.Strict qualified as HashMap
+import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
+import Data.Int (Int64)
 import Data.List (sort)
 import Data.Set qualified as Set
+import Data.UUID qualified as UUID
 import Data.Vector qualified as Vector
 import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
+import Effectful.Exception qualified as Exception
 import Hasql.Decoders qualified as D
 import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
@@ -43,6 +48,7 @@ import Kioku.Memory.Embedding.Worker
     EmbeddingWorkerEnv (..),
     backfillMissingEmbeddings,
     embeddingHandler,
+    embeddingWorkerProcessor,
     selectEmbeddingCandidateIds,
     shouldSkipEmbedding,
   )
@@ -54,15 +60,18 @@ import Kioku.SpaceFixtures (otherContext, otherSpace, testContext, testContextPr
 import Kioku.Worker.Failure (embeddingRetryDelay, isTransientStoreError)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
-import Kiroku.Store.Effect.Resource (KirokuStoreResource)
+import Kiroku.Store.Effect.Resource (KirokuStoreResource, getKirokuStore)
 import Kiroku.Store.Error (StoreError (..))
 import Kiroku.Store.Read (readStreamForward)
+import Kiroku.Store.Settings (DecodeFailure (..))
 import Kiroku.Store.Transaction (runTransaction)
-import Kiroku.Store.Types (ExpectedVersion (..), RecordedEvent (..), StreamName (..), StreamVersion (..))
+import Kiroku.Store.Types (EventId (..), ExpectedVersion (..), RecordedEvent (..), StreamName (..), StreamVersion (..))
+import Shibuya.App qualified as App
 import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..), RetryDelay (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
 import Shibuya.Core.Ingested (Ingested (..))
 import Shibuya.Core.Types (Attempt (..), Envelope (..), MessageId (..))
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
 
@@ -77,6 +86,9 @@ tests =
         shouldSkipEmbedding True (Just "hash-b") "hash-a" @?= False,
       testCase "classifies only connection-shaped store errors as transient" testTransientClassification,
       testCase "backs off on the documented retry schedule" testRetrySchedule,
+      testCase "real adapter delivers, checkpoints, and shuts down" (testAdapterLifecycle False),
+      testCase "real adapter adopts a confirmed legacy checkpoint and resumes" (testAdapterLifecycle True),
+      testCase "real adapter refuses a conflicting target without advancing" testAdapterWrongTarget,
       testCase "provider failure acks retry" testProviderFailureRetries,
       testCase "undecodable payload acks dead-letter" testUndecodablePayloadDeadLetters,
       testCase "successful embedding acks ok and stores the vector" testSuccessStoresEmbedding,
@@ -93,6 +105,7 @@ tests =
 -- kiroku constructor breaks this test's exhaustiveness at the source, not here.
 testTransientClassification :: Assertion
 testTransientClassification = do
+  isTransientStoreError (EventDecodeFailed (DecodeFailure (EventId UUID.nil) "invalid stored payload")) @?= False
   isTransientStoreError PoolAcquisitionTimeout @?= True
   isTransientStoreError (ConnectionLost "reset by peer") @?= True
   isTransientStoreError (ConnectionError "pool closed") @?= True
@@ -106,6 +119,127 @@ testTransientClassification = do
   isTransientStoreError (StreamAlreadyExists (StreamName "s")) @?= False
   isTransientStoreError (EventAlreadyLinked (StreamName "s") Nothing) @?= False
   isTransientStoreError (LinkSourceEventMissing (StreamName "s")) @?= False
+
+-- | Exercise the production adapter and its acknowledgement bridge, not just the
+-- handler. A confirmed old checkpoint is represented by the unbound row that
+-- migration 0014 preserves; the migration suite independently proves that evolution.
+testAdapterLifecycle :: Bool -> Assertion
+testAdapterLifecycle legacy = withEmbeddingEnv $ \appEnv -> do
+  deliveries <- newIORef []
+  bounded "adapter delivery and shutdown" $ runOrFail appEnv $ do
+    capability <- detectVectorCapability embeddingDims
+    liftIO (capability @?= VectorAvailable)
+    when legacy $ do
+      (_, prior) <- recordFixtureMemory testContext "already consumed before upgrade"
+      position <- eventCheckpointPosition prior
+      seedCheckpoint position "unbound" Nothing
+    (memoryId, recorded) <- recordFixtureMemory testContext "delivered through the real adapter"
+    expected <- eventCheckpointPosition recorded
+    store <- getKirokuStore
+    processor <-
+      embeddingWorkerProcessor
+        testContextProvider
+        capability
+        ( mkTestEnv
+            ( \content -> do
+                modifyIORef' deliveries (content :)
+                content @?= "delivered through the real adapter"
+                pure (Right (Vector.replicate embeddingDims 0.1))
+            )
+        )
+        store
+    app <- App.runApp App.defaultAppConfig [processor] >>= liftIO . expectRight "runApp"
+    Exception.finally
+      ( do
+          awaitAdapter $ do
+            embedded <- loadEmbeddingState (idText memoryId)
+            checkpoint <- loadCheckpoint
+            pure (embedded && checkpoint == [(expected, "category", Just "kioku_memory")])
+      )
+      ( do
+          drained <- App.stopAppGracefully (App.ShutdownConfig 2 4) app
+          liftIO (assertBool "acknowledgements drained without forced shutdown" drained)
+          App.waitApp app
+      )
+  readIORef deliveries >>= (@?= ["delivered through the real adapter"])
+  -- Reopening the runtime verifies the position and binding are durable.
+  saved <- runOrFail appEnv loadCheckpoint
+  case saved of
+    [(position, "category", Just "kioku_memory")] -> assertBool "checkpoint advanced" (position > 0)
+    other -> assertFailure ("unexpected durable checkpoint: " <> show other)
+
+testAdapterWrongTarget :: Assertion
+testAdapterWrongTarget = withEmbeddingEnv $ \appEnv -> do
+  called <- newIORef False
+  bounded "target refusal and shutdown" $ runOrFail appEnv $ do
+    capability <- detectVectorCapability embeddingDims
+    seedCheckpoint 0 "category" (Just "another_category")
+    before <- loadCheckpoint
+    (memoryId, _) <- recordFixtureMemory testContext "must not reach provider"
+    store <- getKirokuStore
+    processor <-
+      embeddingWorkerProcessor
+        testContextProvider
+        capability
+        (mkTestEnv (\_ -> writeIORef called True >> pure (Right (Vector.replicate embeddingDims 0.1))))
+        store
+    app <- App.runApp App.defaultAppConfig [processor] >>= liftIO . expectRight "runApp"
+    Exception.finally
+      ( do
+          -- A valid subscription is infinite; a refused source terminates before
+          -- delivering. Terminal processors leave the master's live metrics map.
+          App.waitApp app
+          after <- loadCheckpoint
+          liftIO (after @?= before)
+          embedded <- loadEmbeddingState (idText memoryId)
+          liftIO (assertBool "refused subscription wrote no vector" (not embedded))
+      )
+      (App.stopApp app)
+  readIORef called >>= (@?= False)
+
+bounded :: String -> IO () -> IO ()
+bounded label action =
+  timeout 15_000_000 action >>= \case
+    Just () -> pure ()
+    Nothing -> assertFailure (label <> " exceeded 15 seconds")
+
+awaitAdapter :: Eff AppEffects Bool -> Eff AppEffects ()
+awaitAdapter check = do
+  ready <- check
+  unless ready (liftIO (threadDelay 10_000) >> awaitAdapter check)
+
+seedCheckpoint :: Int64 -> Text -> Maybe Text -> Eff AppEffects ()
+seedCheckpoint position kind category =
+  runTransaction $
+    Tx.statement (position, kind, category) $
+      preparable
+        "INSERT INTO kiroku.subscriptions (subscription_name, last_seen, target_kind, target_category) VALUES ('kioku-memory-embedding', $1, $2, $3)"
+        ( ((\(p, _, _) -> p) >$< E.param (E.nonNullable E.int8))
+            <> ((\(_, k, _) -> k) >$< E.param (E.nonNullable E.text))
+            <> ((\(_, _, c) -> c) >$< E.param (E.nullable E.text))
+        )
+        D.noResult
+
+-- Stream-local reads carry their own cursor. Subscription checkpoints use the
+-- durable $all position of the same event instead.
+eventCheckpointPosition :: RecordedEvent -> Eff AppEffects Int64
+eventCheckpointPosition recorded =
+  let EventId uuid = recorded.eventId
+   in runTransaction $
+        Tx.statement uuid $
+          preparable
+            "SELECT stream_version FROM kiroku.stream_events WHERE stream_id = 0 AND event_id = $1"
+            (E.param (E.nonNullable E.uuid))
+            (D.singleRow (D.column (D.nonNullable D.int8)))
+
+loadCheckpoint :: Eff AppEffects [(Int64, Text, Maybe Text)]
+loadCheckpoint =
+  runTransaction $
+    Tx.statement () $
+      preparable
+        "SELECT last_seen, target_kind, target_category FROM kiroku.subscriptions WHERE subscription_name = 'kioku-memory-embedding' ORDER BY consumer_group_member"
+        E.noParams
+        (D.rowList ((,,) <$> D.column (D.nonNullable D.int8) <*> D.column (D.nonNullable D.text) <*> D.column (D.nullable D.text)))
 
 testRetrySchedule :: Assertion
 testRetrySchedule = do

@@ -3,8 +3,8 @@ title: "Embedded, checksummed migration component and composed plan"
 type: Capability
 description: "Ship Kioku's schema as a native pg-migrate component whose ordered SQL manifest is embedded and checksummed at compile time, composed with the Kiroku and Keiro components in validated dependency order, so a host applies one plan and a stray or unlisted file fails the build."
 generated:
-  by: claude-code/opus-5
-  at: "2026-09-08T20:08:43Z"
+  by: codex-cli/gpt-6-astra
+  at: "2026-10-13T00:28:29Z"
 capabilityId: CAP-13
 provider: mori://shinzui/kioku
 status: shipped
@@ -55,6 +55,13 @@ own unqualified names exactly as it did before.
 `repair`, and `new` commands. `plan`, `list`, and `check` inspect the compiled plan and
 need no database; `status` and `verify` are read-only. A successful `up` also runs
 [read-model registry reconciliation (CAP-14)](read-model-registry-reconciliation.md).
+
+The 0.9.0.0 composed plan contains 60 entries: 15 Kiroku, 32 Keiro, and
+13 Kioku. Its previous-cohort test starts with the genuine released Kiroku 0.6
+manifest, preserves event/projection/checkpoint data and existing ledger rows,
+and applies only upstream 0013–0015. Kioku's released SQL remains unchanged.
+Persistent upgrades inherit the worker-stop, target-confirmation, and index-build
+maintenance requirements in the [operator guide](../user/upgrading-to-pg-migrate.md).
 
 ## Shape
 

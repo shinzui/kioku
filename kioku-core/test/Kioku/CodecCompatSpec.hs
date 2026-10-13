@@ -43,6 +43,7 @@ import Kioku.Memory.Domain
     MemoryTagsUpdatedData (..),
   )
 import Kioku.Memory.Domain qualified as MemoryDomain
+import Kioku.Memory.Domain qualified as Recorded (MemoryRecordedData (..))
 import Kioku.Memory.EventStream (parseMemoryEvent)
 import Kioku.Prelude (toJSON)
 import Kioku.Session.Domain
@@ -148,7 +149,7 @@ roundTripTests =
       decoded @?= event,
     testCase "a legacy-marked actor survives encode and decode" do
       -- A stream rebuilt and re-encoded must not launder its legacy actor into a real one.
-      let event = MemoryRecorded partitionedRecord {actorPrincipal = LegacyPrincipal (legacyPrincipalRef "demo-agent")}
+      let event = MemoryRecorded partitionedRecord {Recorded.actorPrincipal = LegacyPrincipal (legacyPrincipalRef "demo-agent")}
       decoded <- either (assertFailure . Text.unpack) pure (parseMemoryEvent (toJSON event))
       decoded @?= event
   ]

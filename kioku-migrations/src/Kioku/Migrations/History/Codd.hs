@@ -35,9 +35,11 @@ import Data.Text qualified as Text
 import Database.PostgreSQL.Migrate
   ( Confirmation,
     ConnectionProvider,
+    EvidenceKey,
     EvidenceRequirement (AllOf, Evidence),
     HistoryMapping,
     PayloadRelation (EquivalentState, SamePayload),
+    StateValidationError,
     StateValidator,
     evidenceKey,
     historyMapping,
@@ -223,18 +225,22 @@ cohortCoddStateValidators =
           else Left sessionRegistryValidationError
   ]
 
+keiroSchemaEvidenceKey :: EvidenceKey
 keiroSchemaEvidenceKey =
   definitionInvariant (evidenceKey "keiro:pre-pg-migrate-schema-relocated")
 
+keiroSchemaValidationError :: StateValidationError
 keiroSchemaValidationError =
   definitionInvariant
     ( stateValidationError
         "expected the relocated Keiro schema, tables, indexes, recovery columns, workflow backfill, and generation-aware workflow-step primary key"
     )
 
+sessionRegistryEvidenceKey :: EvidenceKey
 sessionRegistryEvidenceKey =
   definitionInvariant (evidenceKey "kioku:session-readmodels-v3")
 
+sessionRegistryValidationError :: StateValidationError
 sessionRegistryValidationError =
   definitionInvariant
     ( stateValidationError

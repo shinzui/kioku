@@ -1,5 +1,32 @@
 # Upgrading an existing Codd database to pg-migrate
 
+## Current 0.9 cohort maintenance
+
+The current Kioku plan contains 60 entries (15 Kiroku, 32 Keiro, 13 Kioku).
+Upgrading from 0.8 appends upstream 0013–0015; Kioku's own SQL and historical
+checksums are unchanged, and this release needs no new ledger fixup. The older
+cutover and checksum remedies below retain their original preconditions.
+
+Before applying the plan to persistent data, back up and rehearse on a restored
+clone. Stop **all subscription workers** for 0013/0014. Inspect historical group
+membership: 0013 infers group size from existing member rows, so an incomplete
+set can produce a startup refusal. Confirm each checkpoint's historical target
+before allowing 0014's unbound rows to be adopted. In particular, Kioku's
+`kioku-memory-embedding` subscription must historically target category
+`kioku_memory`; its adapter inherits upstream legacy adoption at startup.
+Do not start it until that identity has been confirmed, and never delete or
+retarget a checkpoint to bypass a refusal. Schedule a write pause for 0015's
+transactional browsing-index build. These obligations apply through
+`kioku-migrate` and through an embedded composed runner.
+
+Detailed upstream procedures are owned by mori://shinzui/kiroku, project-relative
+`blueprints/kiroku-upgrade/migrations/0.9.0.1-to-0.10.0.0.md` and
+`blueprints/kiroku-upgrade/migrations/0-10-to-0-11.md` (artifact-level blueprint
+URIs pending). The `kioku-upgrade` 0.8.0.2-to-0.9.0.0 edge entails them through
+Keiro. A Seihou receipt records source interaction, not database maintenance.
+Fresh disposable test databases need no operator cutover.
+
+
 This runbook moves a data-bearing database created by the pre-cutover kioku cohort onto
 pg-migrate without replaying any of its 30 historical migrations. The source profile is exact:
 Kiroku 6, Keiro 14, and Kioku 10. Twenty-five migrations added after those pins are not imported; the
@@ -99,13 +126,13 @@ DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- status
 ```
 
 `up` reports the 30 imported migrations as already applied and applies only the forward suffix:
-Kiroku `0007` through `0012`, Keiro `0015` through `0032`, and Kioku `0011` through `0013`.
+Kiroku `0007` through `0015`, Keiro `0015` through `0032`, and Kioku `0011` through `0013`.
 The Kioku suffix partitions the read models, relocates the projections into the `kioku` schema,
-and installs the partition-aware full-text index. The final status is 57 applied migrations
+and installs the partition-aware full-text index. The final status is 60 applied migrations
 with no pending, unknown, or verification issues:
 
 ```text
-kiroku  12
+kiroku  15
 keiro  32
 kioku  13
 ```

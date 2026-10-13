@@ -69,7 +69,7 @@ import Kioku.Memory.Domain (MemoryEvent (..), MemoryRecordedData (..))
 import Kioku.Memory.Embedding (EmbedError (..), embedWithRetry, embeddingModelCompatible, embeddingModelsCompatible, sha256Hex)
 import Kioku.Memory.EventStream (memoryCodec)
 import Kioku.Partition (memorySpaceColumn, memorySpaceParam)
-import Kioku.Prelude
+import Kioku.Prelude hiding (contexts)
 import Kioku.Recall.Capability (VectorCapability (..))
 import Kioku.Worker.Failure (embeddingRetryDelay, isTransientStoreError)
 import Kiroku.Store.Connection (KirokuStore)

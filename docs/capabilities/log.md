@@ -1,5 +1,8 @@
 # Bundle Update Log
 
+## 2026-10-13
+* **Update**: CAP-7, CAP-13, and CAP-16: record the 0.9 cohort, real embedding adapter lifecycle evidence, previous-cohort preservation fixture, and inherited operator maintenance requirements.
+
 ## 2026-09-08
 * **Addition**: the bundle is created, on the `coordination.capabilities` profile from
 okf-profiles v0.9.0, cataloguing what Kioku provides to a consumer today.

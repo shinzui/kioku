@@ -45,14 +45,14 @@ import Kioku.App (AppEffects, AppEnv, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L1 (scopedScanCandidates)
 import Kioku.Distill.L2 (SceneTimerPayload (..), l2SceneProcessManagerName, l2SceneTimerId)
 import Kioku.Distill.L3 (partitionedCorrelationId)
-import Kioku.Distill.Runtime (DistillRuntime, TestRunners (..), newDistillRuntime, testDistillRuntime, withDistillWorkspace, withTestRunners)
+import Kioku.Distill.Runtime (DistillRuntime, TestRunners (..), newDistillRuntime, testDistillRuntime, withTestRunners)
 import Kioku.Distill.Timer (L1TimerPayload (..), l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Deferred
 import Kioku.Distill.Timer.Outcome (FireOutcome (..), timerMarkerEventId)
 import Kioku.Distill.Timer.Worker (drainKiokuTimers, runKiokuTimerWorkerOnce)
 import Kioku.Id (SessionId, genSessionId, idText)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
-import Kioku.Prelude
+import Kioku.Prelude hiding (failing)
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
 import Kioku.SpaceFixtures (legacyContext, otherContext, otherSpace, testContext, testContextProvider, testSpace)

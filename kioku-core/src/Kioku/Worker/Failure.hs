@@ -53,6 +53,7 @@ isTransientStoreError = \case
   DuplicateEvent _ -> False
   EventAlreadyLinked _ _ -> False
   LinkSourceEventMissing _ -> False
+  EventDecodeFailed _ -> False
   UnexpectedServerError _ _ -> False
 
 -- | Backoff for a redelivered @MemoryRecorded@ event, by zero-based delivery

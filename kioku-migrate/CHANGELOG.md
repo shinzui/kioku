@@ -1,12 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+## 0.9.0.0 — 2026-10-12
+
+### Breaking Changes
+
+- Run the 0.9.0.0 composed 60-entry plan. Upstream checkpoint migrations require
+  stopped subscription workers and confirmed legacy targets; the browsing index
+  requires a write pause. Existing historical fixup preconditions are unchanged;
+  this release introduces no new fixup.
+
 ## 0.8.0.2 — 2026-10-06
 
 ### Fixed
 
 - Keep the shared Kioku release version and internal bounds aligned with the migration test-fixture cleanup fix.
-
-## [Unreleased]
 
 ## 0.8.0.1 — 2026-10-05
 

@@ -1,12 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+## 0.9.0.0 — 2026-10-12
+
+### Changed
+
+- Align the shared release version at 0.9.0.0. Public wire types and API behavior
+  are unchanged; remove a redundant test constraint for warnings-as-errors builds.
+
 ## 0.8.0.2 — 2026-10-06
 
 ### Fixed
 
 - Keep the shared Kioku release version and internal bounds aligned with the migration test-fixture cleanup fix.
-
-## [Unreleased]
 
 ## 0.8.0.1 — 2026-10-05
 

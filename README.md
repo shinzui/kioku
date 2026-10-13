@@ -52,9 +52,11 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 Project dependencies resolve from Hackage; `cabal.project` does not replace released packages with
-Git checkouts. Kioku 0.8's framework baseline is Keiki 0.9, Keiro 0.19, Kiroku Store 0.9,
+Git checkouts. Kioku 0.9's framework baseline is Keiki 0.9, Keiro 0.20, Kiroku Store 0.11,
 pg-migrate 1.2, and PGMQ 0.6 for Keiro's optional PGMQ integration. The composed migration plan
-is 57 entries (Kiroku 12, Keiro 32, Kioku 13).
+is 60 entries (Kiroku 15, Keiro 32, Kioku 13). Upgrading a persistent database
+requires a subscription-worker stop, confirmation of legacy checkpoint targets,
+and an index-build write pause; see [the migration guide](docs/user/upgrading-to-pg-migrate.md).
 
 The development shell is provided by Nix:
 

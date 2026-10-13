@@ -3,8 +3,8 @@ title: "Ephemeral-Postgres test support for the migrated schema"
 type: Capability
 description: "A published sublibrary that hands a test either a database with Kioku's whole composed plan already applied or a bare ephemeral server with nothing applied at all, so a consumer's integration tests run against the real schema without a shared database."
 generated:
-  by: claude-code/opus-5
-  at: "2026-09-08T20:08:43Z"
+  by: codex-cli/gpt-6-astra
+  at: "2026-10-13T00:28:29Z"
 capabilityId: CAP-16
 provider: mori://shinzui/kioku
 status: shipped
@@ -48,6 +48,11 @@ plan produces — start from there.
 Both hand back a **connection string** rather than a live connection, deliberately, so
 assertions cannot inherit the runner's session state: a test that changes `search_path`
 in its own session cannot leak that into the fixture's.
+
+The current 0.9 cohort fixture applies 60 migrations. The migration suite also
+uses the bare fixture to install the frozen released previous-cohort manifest,
+seed events, projections and legacy checkpoints, and prove a repeatable upgrade.
+That fixture is separate from the historical 30-entry Codd import rehearsal.
 
 ## Shape
 

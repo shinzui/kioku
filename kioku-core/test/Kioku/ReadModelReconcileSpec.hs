@@ -21,8 +21,7 @@ module Kioku.ReadModelReconcileSpec (tests) where
 
 import Data.Text qualified as Text
 import Data.Text.Encoding (encodeUtf8)
-import Data.Time (getCurrentTime)
-import Effectful (Eff, IOE, liftIO, (:>))
+import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
 import Hasql.Transaction qualified as Tx
 import Keiro.ReadModel
@@ -38,7 +37,7 @@ import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Id (SessionId, genMemoryId, genSessionId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
-import Kioku.Prelude
+import Kioku.Prelude hiding (use)
 import Kioku.ReadModel
   ( ReadModelSchema (..),
     ReconcileOutcome (..),

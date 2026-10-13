@@ -3,8 +3,8 @@ title: "Embedding worker, per-space backfill, and graceful vector degradation"
 type: Capability
 description: "Embed new memories through a subscription worker with a documented retry and dead-letter schedule, backfill missing or stale vectors across every space or one tenant, and detect at runtime when pgvector is unusable so recall falls back to keyword instead of failing."
 generated:
-  by: claude-code/opus-5
-  at: "2026-09-08T20:08:43Z"
+  by: codex-cli/gpt-6-astra
+  at: "2026-10-13T00:28:29Z"
 capabilityId: CAP-7
 provider: mori://shinzui/kioku
 status: shipped
@@ -74,6 +74,15 @@ embed every memory into a cast that must fail.
 `Kioku.Worker.Failure` carries the classification a host's own loop needs —
 `isTransientStoreError` and `embeddingRetryDelay` — and deliberately has no wildcard, so
 a new upstream store constructor forces a decision rather than defaulting to permanent.
+
+The production adapter lifecycle is exercised against disposable PostgreSQL with
+a fake embedding provider: delivery stores a vector and checkpoint, a confirmed
+legacy unbound checkpoint resumes without replaying older input, and a conflicting
+target refuses without advancing. Shutdown is bounded and drains acknowledgements.
+Stored-event `EventDecodeFailed` errors are permanent, not infrastructure retries.
+Before a persistent upgrade, operators must confirm that the durable
+`kioku-memory-embedding` checkpoint historically belongs to category `kioku_memory`;
+the adapter inherits upstream adoption of unbound legacy rows at startup.
 
 ## Shape
 

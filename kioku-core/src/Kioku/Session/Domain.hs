@@ -1,4 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
+-- deriveAggregate also emits is*/inp* convenience helpers; this module uses
+-- the inCtor* interface. Keep these generated helpers private, as in Memory.Domain.
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Kioku.Session.Domain
   ( SessionVertex (..),

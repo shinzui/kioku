@@ -46,7 +46,7 @@ import Kioku.Distill.Timer.Outcome
   )
 import Kioku.Id (parseIdLenient)
 import Kioku.Partition (parseOptionalPartitionSpace)
-import Kioku.Prelude
+import Kioku.Prelude hiding (contexts)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)

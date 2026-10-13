@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: kioku-migrations
-version: 0.8.0.2
+version: 0.9.0.0
 synopsis: Schema migrations for kioku
 description:
   Owns kioku schema evolution as a native pg-migrate component and composes
@@ -27,6 +27,10 @@ extra-source-files:
   migrations/*.sql
   migrations/manifest
   test/fixtures/*.sql
+  test/fixtures/kiroku-0.6.0.0/*.sql
+  test/fixtures/kiroku-0.6.0.0/README.md
+  test/fixtures/kiroku-0.6.0.0/SHA256SUMS
+  test/fixtures/kiroku-0.6.0.0/manifest
 
 source-repository head
   type: git
@@ -71,8 +75,8 @@ library
     containers >=0.6 && <0.8,
     hasql >=1.10 && <1.11,
     hasql-transaction >=1.2 && <1.3,
-    keiro-migrations ^>=0.19.0.0,
-    kiroku-store-migrations ^>=0.6.0.0,
+    keiro-migrations ^>=0.20.0.0,
+    kiroku-store-migrations ^>=0.7.1.0,
     pg-migrate ^>=1.2.0.0,
     pg-migrate-embed ^>=1.2.0.0,
     pg-migrate-import-codd ^>=1.2.0.0,
@@ -88,8 +92,8 @@ library test-support
     base >=4.18 && <5,
     directory >=1.3 && <1.4,
     ephemeral-pg >=0.3.1 && <0.4,
-    keiro-test-support ^>=0.19.0.0,
-    kioku-migrations ^>=0.8.0.2,
+    keiro-test-support ^>=0.20.0.0,
+    kioku-migrations ^>=0.9.0.0,
     text >=2.0 && <2.2,
     unix >=2.8 && <2.9,
 
@@ -111,10 +115,10 @@ test-suite kioku-migrations-test
     bytestring >=0.11 && <0.13,
     containers >=0.6 && <0.8,
     hasql >=1.6,
-    keiro-migrations ^>=0.19.0.0,
-    kioku-migrations ^>=0.8.0.2,
+    keiro-migrations ^>=0.20.0.0,
+    kioku-migrations ^>=0.9.0.0,
     kioku-migrations:test-support,
-    kiroku-store-migrations ^>=0.6.0.0,
+    kiroku-store-migrations ^>=0.7.1.0,
     pg-migrate ^>=1.2.0.0,
     pg-migrate-embed ^>=1.2.0.0,
     pg-migrate-import-codd ^>=1.2.0.0,

@@ -88,6 +88,7 @@ tests =
           testCase "public schema (long-lived dev databases)" (assertRegistryBump "public")
         ],
       testCase "the full migration chain applies to a fresh database" testFreshDatabase,
+      testCase "the released previous cohort preserves data and checkpoints through 0013–0015" testPreviousCohortUpgrade,
       testGroup
         "migration-session isolation"
         [testCase "restores the host search path before later components" testHostSearchPathRestored],
@@ -445,6 +446,137 @@ loadMigration name = do
     Nothing -> fail ("no manifest migration named " <> name)
     Just bytes -> pure (Text.Encoding.decodeUtf8 bytes)
 
+-- | A genuine released 12-entry Kiroku manifest, composed with the unchanged
+-- Keiro and Kioku payloads. No current SQL is sliced to simulate old history.
+testPreviousCohortUpgrade :: Assertion
+testPreviousCohortUpgrade = withBareDatabase $ \connStr -> do
+  let fixtureRoot = "test/fixtures/kiroku-0.6.0.0/"
+      settings = Settings.connectionString connStr
+  entries <- checkMigrationManifest (fixtureRoot <> "manifest") >>= either (assertFailure . show) pure
+  frozen <- Text.IO.readFile (fixtureRoot <> "SHA256SUMS") >>= either assertFailure pure . parseMigrationLock
+  [(name, checksumHex bytes) | (name, bytes) <- toList entries] @?= frozen
+  length entries @?= 12
+  oldKiroku <- either (assertFailure . show) pure (migrationComponentFromEmbeddedSql "kiroku" Set.empty entries)
+  keiro <- either (assertFailure . show) pure KeiroMigrations.keiroMigrations
+  kioku <- either (assertFailure . show) pure kiokuMigrations
+  old <- either (assertFailure . show) pure (migrationPlan (oldKiroku :| [keiro, kioku]))
+  current <- either (assertFailure . show) pure kiokuMigrationPlan
+  installed <- runMigrationPlan defaultRunOptions settings old >>= either (assertFailure . show) pure
+  length (appliedNow installed) @?= 57
+  withConnection connStr $ \conn -> do
+    run conn (Session.script previousCohortSeed)
+    -- Seed all seven application projections using the existing preservation fixture.
+    run conn (Session.script (Text.replace "kiroku.kioku_" "kioku." relocationSeedRows))
+  before <- query connStr previousCohortSnapshot
+  ledgerBefore <- query connStr previousCohortLedger
+  checkpointsBefore <- query connStr previousCheckpointSnapshot
+  query connStr previousCohortIsLegacy >>= (@?= True)
+  migrated <- runMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
+  appliedNow migrated @?= [expectRight (migrationId "kiroku" n) | n <- ["0013", "0014", "0015"]]
+  query connStr previousCohortSnapshot >>= (@?= before)
+  query connStr previousCohortLedger >>= (@?= ledgerBefore)
+  query connStr previousCheckpointSnapshot >>= (@?= checkpointsBefore)
+  query connStr upgradedCheckpointShape >>= (@?= True)
+  verification <- verifyMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
+  let VerificationReport {issues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
+  issues @?= []
+  length appliedMigrations @?= 60
+  pendingMigrations @?= []
+  unknownMigrations @?= []
+  repeated <- runMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
+  let MigrationReport {results} = repeated
+  length [() | MigrationResult {outcome = AlreadyApplied} <- toList results] @?= 60
+  appliedNow repeated @?= []
+  query connStr previousCohortSnapshot >>= (@?= before)
+  query connStr previousCheckpointSnapshot >>= (@?= checkpointsBefore)
+
+previousCohortSeed :: Text
+previousCohortSeed =
+  """
+  INSERT INTO kiroku.streams (stream_id, stream_name, stream_version)
+  VALUES (42, 'kioku_memory-upgrade-fixture', 1);
+  INSERT INTO kiroku.events (event_id, event_type, data, metadata)
+  VALUES ('00000000-0000-4000-8000-000000000048', 'UpgradeFixture', '{"content":"preserved"}', '{"origin":"previous-cohort"}');
+  INSERT INTO kiroku.stream_events
+    (event_id, stream_id, stream_version, original_stream_id, original_stream_version, category)
+  VALUES ('00000000-0000-4000-8000-000000000048', 42, 1, 42, 1, NULL),
+         ('00000000-0000-4000-8000-000000000048', 0, 1, 42, 1, 'kioku_memory');
+  UPDATE kiroku.streams SET stream_version = 1 WHERE stream_id = 0;
+  INSERT INTO kiroku.subscriptions
+    (subscription_name, stream_name, last_seen, consumer_group_member, consumer_group_size)
+  VALUES ('kioku-memory-embedding', 'kioku_memory', 1, 0, 1),
+         ('upgrade-group', 'kioku_memory', 1, 0, 1),
+         ('upgrade-group', 'kioku_memory', 0, 1, 1);
+  """
+
+-- Exact data, not just row counts: the envelope, junctions, stream metadata and
+-- every Kioku projection survive. Stable ordering makes the comparison deterministic.
+previousCohortSnapshot :: Statement () Text
+previousCohortSnapshot =
+  preparable
+    """
+    SELECT jsonb_build_object(
+      'events', (SELECT jsonb_agg(to_jsonb(t) ORDER BY event_id) FROM kiroku.events t),
+      'streams', (SELECT jsonb_agg(to_jsonb(t) ORDER BY stream_id) FROM kiroku.streams t),
+      'junctions', (SELECT jsonb_agg(to_jsonb(t) ORDER BY stream_id, stream_version) FROM kiroku.stream_events t),
+      'memories', (SELECT jsonb_agg(to_jsonb(t) ORDER BY memory_id) FROM kioku.memories t),
+      'sessions', (SELECT jsonb_agg(to_jsonb(t) ORDER BY session_id) FROM kioku.sessions t),
+      'turns', (SELECT jsonb_agg(to_jsonb(t) ORDER BY turn_id) FROM kioku.turns t),
+      'watermarks', (SELECT jsonb_agg(to_jsonb(t) ORDER BY session_id) FROM kioku.l1_watermarks t),
+      'decisions', (SELECT jsonb_agg(to_jsonb(t) ORDER BY decision_id) FROM kioku.consolidation_decisions t),
+      'scenes', (SELECT jsonb_agg(to_jsonb(t) ORDER BY scene_id) FROM kioku.scenes t),
+      'personas', (SELECT jsonb_agg(to_jsonb(t) ORDER BY persona_id) FROM kioku.personas t)
+    )::text
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
+
+previousCheckpointSnapshot :: Statement () Text
+previousCheckpointSnapshot =
+  preparable
+    "SELECT jsonb_agg(to_jsonb(t) ORDER BY subscription_name, consumer_group_member)::text FROM kiroku.subscription_checkpoints_v1 t"
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
+
+previousCohortLedger :: Statement () Text
+previousCohortLedger =
+  preparable
+    """
+    SELECT jsonb_agg(to_jsonb(t) ORDER BY component, migration)::text
+    FROM pgmigrate.migrations t
+    WHERE NOT (component = 'kiroku' AND migration IN ('0013', '0014', '0015'))
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
+
+previousCohortIsLegacy :: Statement () Bool
+previousCohortIsLegacy =
+  preparable
+    """
+    SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'kiroku'
+      AND table_name = 'subscriptions' AND column_name = 'stream_name')
+      AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'kiroku'
+      AND table_name = 'subscriptions' AND column_name = 'target_kind')
+      AND (SELECT bool_and(consumer_group_size = 1) FROM kiroku.subscriptions)
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.bool)))
+
+upgradedCheckpointShape :: Statement () Bool
+upgradedCheckpointShape =
+  preparable
+    """
+    SELECT (SELECT count(*) = 3 AND bool_and(target_kind = 'unbound' AND target_category IS NULL)
+      AND bool_and(consumer_group_size = CASE WHEN subscription_name = 'upgrade-group' THEN 2 ELSE 1 END)
+      FROM kiroku.subscriptions)
+      AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'kiroku'
+        AND table_name = 'subscriptions' AND column_name = 'stream_name')
+      AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'kiroku'
+        AND indexname = 'ix_streams_browse_name')
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.bool)))
+
 -- * The fresh-database test
 
 -- | The rewritten body still applies inside the real pg-migrate chain.
@@ -459,7 +591,7 @@ testFreshDatabase =
         runMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan
           >>= either (assertFailure . show) pure
       let MigrationReport {results = repeatedResults} = repeated
-      length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 57
+      length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 60
       length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
       verification <-
         verifyMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan
@@ -578,10 +710,10 @@ testLedgerChecksumRebaseline =
     plan <- either (fail . show) pure kiokuMigrationPlan
     let settings = Settings.connectionString connStr
     initial <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
-    length (appliedNow initial) @?= 57
+    length (appliedNow initial) @?= 60
 
     baselineLedger <- query connStr fullLedgerSnapshot
-    fst baselineLedger @?= 57
+    fst baselineLedger @?= 60
     baselineSchema <- query connStr cohortSchemaSnapshotStatement
     fixup <- Text.IO.readFile ledgerFixupPath
 
@@ -607,7 +739,7 @@ testLedgerChecksumRebaseline =
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 57
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 60
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
     withConnection connStr \conn -> run conn (Session.script fixup)
@@ -1072,12 +1204,12 @@ testKirokuOnlyAdoption =
     full <- either (fail . show) pure kiokuMigrationPlan
 
     kirokuReport <- runMigrationPlan defaultRunOptions settings kirokuOnly >>= either (assertFailure . show) pure
-    length (appliedNow kirokuReport) @?= 12
+    length (appliedNow kirokuReport) @?= 15
     ledgerBefore <- query connStr kirokuLedgerSnapshot
 
     adoption <- runMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let MigrationReport {results = adoptionResults} = adoption
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 12
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 15
     length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 45
 
     -- Verified and skipped, never re-executed: the stored rows keep their checksums and their
@@ -1091,7 +1223,7 @@ testKirokuOnlyAdoption =
     verification <- verifyMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let VerificationReport {issues = adoptionIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     adoptionIssues @?= []
-    length appliedMigrations @?= 57
+    length appliedMigrations @?= 60
     pendingMigrations @?= []
     unknownMigrations @?= []
 
@@ -1442,13 +1574,13 @@ testCoddCohortImport =
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 57
+    length appliedMigrations @?= 60
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 57
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 60
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 testSchemaConvergence :: Assertion
@@ -1614,6 +1746,9 @@ expectedForwardMigrationIds =
           migrationId "kiroku" "0010",
           migrationId "kiroku" "0011",
           migrationId "kiroku" "0012",
+          migrationId "kiroku" "0013",
+          migrationId "kiroku" "0014",
+          migrationId "kiroku" "0015",
           migrationId "keiro" "0015-keiro-outbox-claim-order-index",
           migrationId "keiro" "0016-keiro-inbox-drop-received-idx",
           migrationId "keiro" "0017-schema-management-comment",
@@ -1679,7 +1814,7 @@ forwardMigrationEffectCountStatement =
       (EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'kiroku' AND table_name = 'streams' AND column_name = 'truncate_before'))::int
       + (coalesce(obj_description(to_regnamespace('kiroku'), 'pg_namespace'), '') =
-          'Managed by pg-migrate component kiroku through 0012')::int
+          'Managed by pg-migrate component kiroku through 0015')::int
       + (to_regclass('keiro.keiro_outbox_claim_order_idx') IS NOT NULL)::int
       + (to_regclass('keiro.keiro_inbox_received_idx') IS NULL)::int
       + (coalesce(obj_description(to_regnamespace('keiro'), 'pg_namespace'), '') =

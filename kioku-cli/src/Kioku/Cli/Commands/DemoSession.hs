@@ -101,7 +101,7 @@ requireEnv :: String -> IO String
 requireEnv name = do
   found <- lookupEnv name
   case found of
-    Just value -> pure value
+    Just result -> pure result
     Nothing -> ioError (userError (name <> " is not set"))
 
 printTurn :: TurnRow -> IO ()

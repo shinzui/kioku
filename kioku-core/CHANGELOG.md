@@ -1,12 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+## 0.9.0.0 — 2026-10-12
+
+### Breaking Changes
+
+- Require the Keiro 0.20 / Kiroku Store 0.11 cohort, Shibuya core 0.10.0.1,
+  and Kiroku adapter 0.6.0.1, with internal packages at 0.9.0.0.
+
+### Changed
+
+- Classify `EventDecodeFailed` as permanent. Preserve subscription identity,
+  authorization, retry policy, and timer transaction boundaries.
+- Verify real adapter delivery, durable checkpoints, confirmed legacy adoption,
+  conflicting-target refusal, and clean shutdown with a fake embedding provider.
+
 ## 0.8.0.2 — 2026-10-06
 
 ### Fixed
 
 - Keep the shared Kioku release version and internal bounds aligned with the migration test-fixture cleanup fix.
-
-## [Unreleased]
 
 ## 0.8.0.1 — 2026-10-05
 

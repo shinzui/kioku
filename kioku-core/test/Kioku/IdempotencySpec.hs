@@ -20,6 +20,7 @@ import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (ArchiveMemoryData (..), RecordMemoryData (..), SupersedeMemoryData (..))
+import Kioku.Memory.Domain qualified as Record (RecordMemoryData (..))
 import Kioku.Memory.EventStream (memoryStream)
 import Kioku.Memory.ReadModel (MemoryRow (..))
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
@@ -223,7 +224,7 @@ testRecordLineageTarget =
       expectRightM "record with supersedes"
         =<< Memory.recordWithContext
           testContext
-          (recordData source now "record lineage source") {supersedes = Just target}
+          (recordData source now "record lineage source") {Record.supersedes = Just target}
     row <- getMemoryRow source
     liftIO $ assertEqual "the record projection keeps its target" (Just (idText target)) row.supersedes
     assertMemoryEvents source 1

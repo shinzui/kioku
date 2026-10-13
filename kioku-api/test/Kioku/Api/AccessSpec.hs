@@ -425,7 +425,7 @@ assertLeft label = \case
   Left _ -> pure ()
   Right unexpected -> fail (label <> ": expected rejection, got " <> show unexpected)
 
-assertRight :: (Show a) => Either Text a -> IO ()
+assertRight :: Either Text a -> IO ()
 assertRight = \case
   Right _ -> pure ()
   Left message -> fail ("expected acceptance, got: " <> Text.unpack message)

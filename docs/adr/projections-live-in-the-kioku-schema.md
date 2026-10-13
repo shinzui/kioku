@@ -5,7 +5,7 @@ description: >-
   Kioku keeps appending to the host's Kiroku event store while every relation Kioku owns moves
   into a dedicated `kioku` PostgreSQL schema, named explicitly in SQL rather than resolved
   through the connection's search path.
-timestamp: 2026-09-18T22:46:49Z
+timestamp: 2026-10-13T00:25:46Z
 docId: ADR-10
 status: accepted
 date: 2026-08-07
@@ -136,6 +136,21 @@ identities are component-qualified, so a ledger holding exactly the Kiroku prefi
 those rows and applies the rest. A host that also has its own migration component must compose
 Kiroku, Keiro, Kioku, and its own into one complete plan and run that; standalone `kioku-migrate`
 rejects the unknown component on purpose, and this change does not soften that.
+
+**Composing upstream migrations also inherits their operational constraints.** A Kioku
+release can require maintenance even when every Kioku-owned SQL byte is unchanged.
+The 0.9 cohort adds upstream subscription group/target hardening and a browsing index:
+workers stop for the checkpoint migration, historical targets are confirmed before legacy
+adoption, and the transactional index build gets a write pause. The embedding adapter
+inherits upstream automatic adoption of unbound checkpoints; operator confirmation must
+precede startup. A wrong bound target is a refusal, never a reason to delete a checkpoint.
+The [migration guide](../user/upgrading-to-pg-migrate.md) carries the current runbook.
+
+Upgrade guidance follows the same ownership boundary: Kioku's Seihou edge entails the
+exact edge from mori://shinzui/keiro, which recursively entails the relevant edges from
+mori://shinzui/kiroku. Source interaction receipts do not establish that database maintenance
+ran. Persistent application remains an operator action; disposable integration fixtures prove
+preservation and repeatability without rewriting historical migration payloads.
 
 ## Alternatives rejected
 

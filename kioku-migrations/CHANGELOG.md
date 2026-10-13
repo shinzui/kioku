@@ -1,12 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+## 0.9.0.0 — 2026-10-12
+
+### Breaking Changes
+
+- Compose Keiro migrations 0.20 and Kiroku migrations 0.7.1: **60 entries**
+  (15 Kiroku, 32 Keiro, 13 Kioku). Upstream 0013/0014 require subscription
+  workers stopped and historical targets confirmed; 0015 needs an index-build
+  write pause. No Kioku SQL bytes or existing checksums change, and no new
+  Kioku ledger fixup is required.
+
+### Changed
+
+- Align the public test-support sublibrary with Keiro test support 0.20.
+- Exercise the genuine released 0.6 Kiroku manifest with events, checkpoints,
+  and Kioku projections before upgrading; preserve the historical 30-entry Codd import.
+- Add explicit types for existing Codd evidence helpers under warnings-as-errors.
+
 ## 0.8.0.2 — 2026-10-06
 
 ### Fixed
 
 - Pin bare-database fixtures to the same stable effective-uid temporary root owned by `mori://shinzui/keiro/packages/keiro-test-support` as the delegated migrated fixtures; keep stale-instance sweeping enabled and require `mori://shinzui/ephemeral-pg/packages/ephemeral-pg` >=0.3.1 && <0.4.
-
-## [Unreleased]
 
 ## 0.8.0.1 — 2026-10-05
 

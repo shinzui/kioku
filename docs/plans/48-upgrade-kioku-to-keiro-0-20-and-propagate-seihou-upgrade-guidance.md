@@ -43,31 +43,56 @@ migration during this work.
 
 ## Progress
 
-- [ ] Milestone 1: the released Keiro 0.20 cohort resolves, all Kioku components compile
+- [x] Milestone 1 (2026-10-13): the released Keiro 0.20 cohort resolves, all Kioku components compile
   with warnings as errors, and a real embedding adapter starts, delivers an event, and
-  shuts down cleanly against a disposable migrated database.
-- [ ] Milestone 2: fresh, previous-cohort, Kiroku-only, and supported Codd-upgrade fixtures
+  shuts down cleanly against a disposable migrated database. The full warnings-as-errors
+  build passed; all 15 focused embedding tests passed, including adoption and refusal.
+- [x] Milestone 2 (2026-10-13): fresh, previous-cohort, Kiroku-only, and supported Codd-upgrade fixtures
   converge on the 60-entry plan, preserve data and historical checksums, and rerun cleanly.
+  All 31 migration tests passed. The released old plan applies exactly 0013–0015;
+  all seven projection rows, event/junction data, checkpoint positions/timestamps,
+  and original ledger rows survive. Group size is inferred, targets remain unbound,
+  the browsing index exists, and repeat-up reports 60 already-applied entries.
 - [x] Milestone 3 (2026-10-13): the new Kioku blueprint edge resolves the two Kiroku edges and the
   exact Keiro edge once each before Kioku's own guidance; historical edges remain intact.
   Dhall validation/format check passed. Disposable Seihou previews from all three
   0.8 patches produced four ordered steps; 0.7 produced eight distinct steps.
-- [ ] Milestone 4: all five packages and release-facing documentation agree on Kioku
+- [x] Milestone 4 (2026-10-13): all five packages and release-facing documentation agree on Kioku
   0.9.0.0, the complete validation matrix passes, and durable decisions are distilled.
+  Final warnings-as-errors build and all 471 tests passed; five Cabal checks,
+  conventions, formatting, Darwin Nix checks, blueprint checks and whitespace
+  checks passed. ADR-10 and ADR-14 carry the durable operational/warning context.
 
-Implementation is underway. Release endpoints and peeled tags still match the target.
-The initial tree was clean; concurrent toolchain work described during planning is
-already committed. Bounds resolve without new overrides. Worker lifecycle tests are
-being compiled before extending migration fixtures.
+Implementation is complete. All five package versions and internal bounds agree
+at 0.9.0.0. No toolchain files or persistent databases have been changed; publication
+is outside this plan.
 
 
 ## Surprises & Discoveries
 
-The warnings-as-errors gate exposed pre-existing warnings: a redundant `Show`
-constraint in the API test helper and four missing Codd evidence/validation type
-signatures. Remove the redundant constraint and declare the exported pg-migrate
-types rather than weakening the gate. The new solve also selects compatible AI
-patch/minor releases within unchanged bounds.
+The warnings-as-errors gate exposed existing missing signatures, redundant
+constraints/imports, prelude name collisions, and ambiguous record updates.
+These were repaired without changing behavior. Session's generated convenience
+helpers now use the same local unused-binding treatment as Memory's; ADR-14
+records that narrow exception. The solve selects compatible AI releases within
+unchanged bounds.
+
+The initial lifecycle fixture incorrectly treated a stream-local event cursor
+as the durable `$all` checkpoint position. Querying the event's `$all` junction
+position fixes both the exact checkpoint assertion and legacy resume setup.
+Shibuya removes terminal processors from its live metrics map, so a refusal test
+must await termination and verify unchanged checkpoint/vector plus zero provider
+calls, rather than wait for a terminal metric to remain registered. All three
+real adapter cases then passed; no production adapter change was needed.
+
+The previous-cohort fixture was fetched from Hackage 0.6.0.0 and matched every
+payload against the verified upstream tag at
+`691c6efed78ca6bb344c9cac5d122eb5ca4980b2`. The checked-in fixture records the
+archive SHA-256 and checks each payload before constructing the 57-entry old plan.
+The full capability bundle's optional strict audit reports pre-existing missing
+review metadata on all 19 records; normal profile and log enforcement passes.
+Only the three relevant capabilities were updated, preserving the corpus's
+existing review history.
 
 
 ## Decision Log
@@ -93,7 +118,52 @@ patch/minor releases within unchanged bounds.
 
 ## Outcomes & Retrospective
 
-(To be filled during and after implementation.)
+Kioku 0.9.0.0 is release-ready on the verified released cohort. The final Cabal
+solution contains Keiro, core, migrations, and test support at 0.20.0.0; Kiroku
+Store 0.11.0.0 and migrations 0.7.1.0; Shibuya core 0.10.0.1 and the Kiroku
+adapter 0.6.0.1; and pg-migrate 1.2.0.0. Optional PGMQ constraints remain
+outside Kioku's build closure. No source pins or solver exceptions were added.
+The blueprint's actual version probe returns 0.9.0.0.
+
+The final `nix develop -c cabal build all --enable-tests --ghc-options=-Werror`
+and `nix develop -c cabal test all --enable-tests --test-show-details=direct`
+both exited zero. The latter passed all four suites:
+
+```text
+kioku-api-test         125 passed
+kioku-test             251 passed
+kioku-cli-test          64 passed
+kioku-migrations-test   31 passed
+Total                 471 passed
+```
+
+All five `cabal check` invocations reported no errors or warnings. The Haskell
+convention script, `nix fmt -- --ci`, and `nix flake check` passed; the flake ran
+its three checks on aarch64-darwin. `git diff --check` passed, and the native
+migration/lock diff against v0.8.0.2 is empty. The Keiro migration payload diff
+between its 0.19.0.1 and 0.20.0.0 tags is also empty. Capability profile and log
+enforcement passed after updating CAP-7, CAP-13, and CAP-16; the optional strict
+review-metadata audit retains the pre-existing corpus limitation noted above.
+
+Blueprint artifact 0.4.0 validates and formats cleanly. The three 0.8 patch
+windows each expand to Kiroku hardening, Kiroku inspection, Keiro 0.20, and
+Kioku 0.9, exactly once and in that order. The 0.7 window retains eight distinct
+steps. Published edge coordinates and prompts were not rewritten. Searches
+confirmed no owned DSL specifications, custom Store interpreter, Subscriber
+construction, sharded worker, or inspection server requiring adaptation.
+
+ADR distillation updated ADR-10 with inherited migration maintenance and exact
+upstream guidance ownership, and ADR-14 with the narrow generated-helper warning
+exception. The existing catalog/timer transaction boundary remains unchanged.
+The useful integration lesson is to assert the durable subscription cursor and
+lifecycle directly rather than infer either from stream-local cursors or the
+live metrics inventory.
+
+Publication remains a separate release operation. Operators of persistent
+systems still need backup and clone rehearsal, all subscription workers stopped
+for 0013/0014, historical checkpoint targets confirmed before adoption, and the
+0015 index-build write pause. No persistent migration, checkpoint rebinding,
+ledger repair, package upload, or release tag was performed.
 
 
 ## Context and Orientation
@@ -101,7 +171,7 @@ patch/minor releases within unchanged bounds.
 Kioku has five Cabal packages: `kioku-api/kioku-api.cabal`,
 `kioku-core/kioku-core.cabal`, `kioku-cli/kioku-cli.cabal`,
 `kioku-migrations/kioku-migrations.cabal`, and `kioku-migrate/kioku-migrate.cabal`.
-Each currently reports 0.8.0.2. Their internal dependencies, including the qualified
+Each reported 0.8.0.2 before implementation and now reports 0.9.0.0. Their internal dependencies, including the qualified
 `kioku-migrations:test-support` sublibrary, move together. A cohort means the mutually
 compatible package versions selected together. `cabal.project` also constrains optional
 PGMQ queue packages which Kioku itself does not build. Preserve that distinction when
@@ -163,7 +233,7 @@ subscription is `kioku-memory-embedding`, targeting category `kioku_memory` and 
 
 `Kioku.Migrations.kiokuMigrationPlan` in
 `kioku-migrations/src/Kioku/Migrations.hs` composes Kiroku, Keiro, then Kioku components.
-It currently has 57 entries: 12 Kiroku, 32 Keiro, 13 Kioku. The target is 60: 15, 32,
+Before this upgrade it had 57 entries: 12 Kiroku, 32 Keiro, 13 Kioku. The implemented target is 60: 15, 32,
 and 13 respectively; Keiro's own composed plan is 47. The native Kioku manifest and SQL
 are under `kioku-migrations/migrations/`, with frozen payload evidence in
 `kioku-migrations/test/Main.hs`. That file also asserts total counts, the 12-entry
@@ -173,9 +243,10 @@ migration system. That historical count must remain 30. Test fixtures delegate t
 Keiro test support through
 `kioku-migrations/test-support/Kioku/Migrations/TestSupport.hs`.
 
-`blueprints/kioku-upgrade/blueprint.dhall` is currently version 0.3.0. Its latest edge is
+At planning time `blueprints/kioku-upgrade/blueprint.dhall` was version 0.3.0. Its latest edge was
 0.7.0.0-to-0.8.0.0 and entails both Keiro 0.17-to-0.18 and 0.18-to-0.19. The README
-still says blueprint version 0.2.0 and omits that latest edge. The cohort reference at
+then said blueprint version 0.2.0 and omitted that latest edge. Implementation
+corrects the README and appends the new edge in artifact version 0.4.0. The cohort reference at
 `blueprints/kioku-upgrade/files/kioku-cohort-versions.md` includes Kioku 0.8.0.1 and
 0.8.0.2 as bounds/test-fixture patches without new edges. Seihou selects declared edges
 within a version window; gaps mean no intervention was needed. An entailed edge names

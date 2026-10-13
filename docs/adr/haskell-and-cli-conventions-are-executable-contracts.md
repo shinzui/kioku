@@ -4,7 +4,7 @@ title: Haskell and CLI conventions are executable contracts
 description: >-
   Kioku keeps one GHC 9.12 and GHC 2024 package baseline, checks source conventions in
   pre-commit and Nix, and treats fixed-width CLI help and shell completion as tested public output.
-timestamp: 2026-09-18T22:59:57Z
+timestamp: 2026-10-13T00:27:44Z
 docId: ADR-14
 status: accepted
 date: 2026-09-18
@@ -37,6 +37,10 @@ width depended on the invoking terminal.
 Every package declares `tested-with: ghc >=9.12 && <9.13`, uses `default-language: GHC2024`, and
 imports the shared warning policy. Component-specific suppressions remain local: only the Codd
 upgrade bridge may suppress the deprecation warning it deliberately implements or rehearses.
+The memory and session domain modules suppress unused top-level bindings because
+`deriveAggregate` from mori://shinzui/keiki/packages/keiki generates `is*`/`inp*`
+convenience helpers alongside the `inCtor*` interface they use. Keep those generated
+helpers private; this exception does not justify suppressing handwritten warnings.
 Durable product records use strict fields; newtype fields remain unannotated because GHC forbids
 strictness annotations on them.
 

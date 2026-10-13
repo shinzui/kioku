@@ -1,5 +1,32 @@
 # Upgrading to the kioku schema
 
+## Current 0.9 cohort maintenance
+
+The current Kioku plan contains 60 entries (15 Kiroku, 32 Keiro, 13 Kioku).
+Upgrading from 0.8 appends upstream 0013–0015; Kioku's own SQL and historical
+checksums are unchanged, and this release needs no new ledger fixup. The older
+cutover and checksum remedies below retain their original preconditions.
+
+Before applying the plan to persistent data, back up and rehearse on a restored
+clone. Stop **all subscription workers** for 0013/0014. Inspect historical group
+membership: 0013 infers group size from existing member rows, so an incomplete
+set can produce a startup refusal. Confirm each checkpoint's historical target
+before allowing 0014's unbound rows to be adopted. In particular, Kioku's
+`kioku-memory-embedding` subscription must historically target category
+`kioku_memory`; its adapter inherits upstream legacy adoption at startup.
+Do not start it until that identity has been confirmed, and never delete or
+retarget a checkpoint to bypass a refusal. Schedule a write pause for 0015's
+transactional browsing-index build. These obligations apply through
+`kioku-migrate` and through an embedded composed runner.
+
+Detailed upstream procedures are owned by mori://shinzui/kiroku, project-relative
+`blueprints/kiroku-upgrade/migrations/0.9.0.1-to-0.10.0.0.md` and
+`blueprints/kiroku-upgrade/migrations/0-10-to-0-11.md` (artifact-level blueprint
+URIs pending). The `kioku-upgrade` 0.8.0.2-to-0.9.0.0 edge entails them through
+Keiro. A Seihou receipt records source interaction, not database maintenance.
+Fresh disposable test databases need no operator cutover.
+
+
 Kioku's seven projection tables move out of the `kiroku` schema and into a schema of their own.
 `kiroku.kioku_memories` becomes `kioku.memories`, and so on for sessions, turns, L1 watermarks,
 consolidation decisions, scenes, and personas.
@@ -125,7 +152,7 @@ hand-write registry SQL.
    DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- status
    ```
 
-   `status` must report all 57 migrations applied (Kiroku 12, Keiro 32, Kioku 13), with nothing
+   `status` must report all 60 migrations applied (Kiroku 15, Keiro 32, Kioku 13), with nothing
    pending or failed.
 5. **Grant schema usage if your runtime role is not the owner.** Table grants moved with the
    tables; usage on a schema that did not exist before is a separate privilege.

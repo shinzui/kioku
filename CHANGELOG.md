@@ -1,12 +1,34 @@
 # Changelog
 
+## [Unreleased]
+
+## 0.9.0.0 — 2026-10-12
+
+### Breaking Changes
+
+- Align all five packages at 0.9.0.0 with Keiro `^>=0.20.0.0`, Kiroku Store
+  `^>=0.11.0.0`, migrations `^>=0.7.1.0`, Shibuya core `^>=0.10.0.1`, and
+  the Kiroku adapter `^>=0.6.0.1`. AI and Effectful bounds are unchanged.
+- The composed plan grows to **60 entries (15 Kiroku, 32 Keiro, 13 Kioku)**.
+  Stop all subscription workers for upstream 0013/0014, confirm historical
+  checkpoint targets before legacy adoption, and schedule the 0015 index-build
+  write pause. See `docs/user/upgrading-to-pg-migrate.md`.
+
+### Changed
+
+- Treat typed stored-event decode failures as permanent. Exercise the real
+  embedding adapter's delivery, checkpoint adoption/refusal, and bounded shutdown.
+- Freeze the released previous-cohort migration fixture and verify preservation,
+  repeat-up, fresh installation, and the existing 30-entry Codd import.
+- Publish blueprint artifact 0.4.0 with an append-only 0.8.0.2-to-0.9.0.0 edge,
+  entailing Keiro's exact 0.19.0.1-to-0.20.0.0 edge and its two recursive Kiroku
+  edges. No new Kioku SQL, historical checksum changes, or new ledger fixup.
+
 ## 0.8.0.2 — 2026-10-06
 
 ### Fixed
 
 - Share the stable per-user temporary root owned by `mori://shinzui/keiro/packages/keiro-test-support` across bare and migrated test fixtures so later starts can reclaim abandoned PostgreSQL clusters across shell sessions.
-
-## [Unreleased]
 
 ## 0.8.0.1 — 2026-10-05
 

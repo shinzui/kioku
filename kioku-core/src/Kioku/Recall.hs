@@ -119,6 +119,7 @@ import Kioku.Api.Recall
     recallTargetIsNamespaceWide,
     recallTargetNamespace,
   )
+import Kioku.Api.Recall qualified as RecallApi
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..), scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), MemoryType, memoryTypeToText)
 import Kioku.Database.Schema (memoriesTable)
@@ -364,7 +365,7 @@ recall ai capability context request = case runtimeEmbeddingModel ai QueryEmbedd
     Embedding -> pure (Left (RecallAIUnavailable err))
     _ -> do
       when (request.strategy == Hybrid) (liftIO (System.IO.hPutStrLn System.IO.stderr "kioku recall: query embeddings disabled by AI policy; using keyword search"))
-      recallWithEmbeddingAdapter emptyEmbeddingModel VectorExtensionUnavailable context request {strategy = Keyword}
+      recallWithEmbeddingAdapter emptyEmbeddingModel VectorExtensionUnavailable context request {RecallApi.strategy = Keyword}
 
 -- | Explicit host/test adapter. The supplied model is an independent API capability.
 recallWithEmbeddingAdapter ::

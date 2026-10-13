@@ -15,6 +15,7 @@ import Kioku.Id (SessionId, genSessionId, idText)
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
 import Kioku.Session qualified as Session
 import Kioku.Session.Domain (StartSessionData (..))
+import Kioku.Session.Domain qualified as Start (StartSessionData (..))
 import Kioku.Session.ReadModel (SessionRow (..))
 import Kioku.SpaceFixtures (testActorPrincipal, testContext, testSpace)
 import Kiroku.Store.Connection (defaultConnectionSettings)
@@ -99,12 +100,12 @@ baseStart sid _other startedAt =
     }
 
 selfPrevious, selfParent, negativeDepth, depthPastCap, parentAtDepthZero, rootAtDepthOne :: LineageCase
-selfPrevious sid o t = (baseStart sid o t) {previousSessionId = Just sid}
-selfParent sid o t = (baseStart sid o t) {parentSessionId = Just sid, delegationDepth = 1}
-negativeDepth sid o t = (baseStart sid o t) {delegationDepth = -1}
-depthPastCap sid o t = (baseStart sid o t) {parentSessionId = Just o, delegationDepth = 65}
-parentAtDepthZero sid o t = (baseStart sid o t) {parentSessionId = Just o, delegationDepth = 0}
-rootAtDepthOne sid o t = (baseStart sid o t) {delegationDepth = 1}
+selfPrevious sid o t = (baseStart sid o t) {Start.previousSessionId = Just sid}
+selfParent sid o t = (baseStart sid o t) {Start.parentSessionId = Just sid, Start.delegationDepth = 1}
+negativeDepth sid o t = (baseStart sid o t) {Start.delegationDepth = -1}
+depthPastCap sid o t = (baseStart sid o t) {Start.parentSessionId = Just o, Start.delegationDepth = 65}
+parentAtDepthZero sid o t = (baseStart sid o t) {Start.parentSessionId = Just o, Start.delegationDepth = 0}
+rootAtDepthOne sid o t = (baseStart sid o t) {Start.delegationDepth = 1}
 
 assertInvalidLineage :: LineageCase -> IO ()
 assertInvalidLineage mkCommand =
@@ -172,7 +173,7 @@ testChainTerminatesOnCycle =
             (sort (rowSessionId <$> chain))
 
 insertCyclicPair ::
-  (IOE :> es, Store :> es) =>
+  (Store :> es) =>
   SessionId ->
   SessionId ->
   Eff es ()

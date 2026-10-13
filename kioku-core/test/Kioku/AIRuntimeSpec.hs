@@ -174,10 +174,12 @@ smoke rt = runDistillProgram (newDistillRuntime rt Nothing) Extraction runtimeSm
 interactiveConfig :: AIConfig
 interactiveConfig = disabledAIConfig {distillationDefault = InteractiveConfig I.InteractiveClaude ((I.interactiveLaunchRequest "") {I.modelId = Just "fixture"})}
 
+interactive :: (AIFeature -> I.InteractiveLaunchRequest -> IO (Either AIExecutionError I.InteractiveLaunchResult)) -> IO AIRuntime
 interactive launch = expect =<< newAIRuntime noHostCapabilities {allowInteractive = True, launchInteractive = Just launch} interactiveConfig
 
 data Variant = Valid | WrongId | Missing | BadDomain | Nonzero | Symlink | Oversized | Cancelled deriving (Show)
 
+fixture :: Variant -> AIFeature -> I.InteractiveLaunchRequest -> IO (Either AIExecutionError I.InteractiveLaunchResult)
 fixture Cancelled feature _ = pure (Left (AIInteractiveFailed feature "cancelled"))
 fixture variant feature req = do
   let raw = T.drop 1 (snd (T.breakOn "\n" req.userPrompt))

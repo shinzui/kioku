@@ -22,7 +22,6 @@ import Kioku.Api.Access
   ( MemoryAccessContext,
     MemoryPermission (..),
     MemorySpaceId,
-    RecordedPrincipal,
     legacyMemorySpaceId,
     memoryContextRecordedActor,
     memoryContextSpace,
@@ -32,10 +31,11 @@ import Kioku.Api.Scope (MemoryScope (..), Namespace (..), ScopeKind (..))
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
 import Kioku.App (AppEffects, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L1 (L1Error (..), L1RunMode (..), distillSessionL1, scopedScanCandidates)
-import Kioku.Distill.Runtime (DistillRuntime, TestRunners (..), testDistillRuntime, withDistillWorkspace, withTestRunners)
+import Kioku.Distill.Runtime (TestRunners (..), testDistillRuntime, withTestRunners)
 import Kioku.Id (MemoryId, SessionId, genMemoryId, genSessionId, idText)
 import Kioku.Memory qualified as Memory
 import Kioku.Memory.Domain (ArchiveMemoryData (..), MemoryEvent (..), MemoryRecordedData (..), RecordMemoryData (..), SupersedeMemoryData (..))
+import Kioku.Memory.Domain qualified as Record (RecordMemoryData (..))
 import Kioku.Memory.EventStream (memoryStream, parseMemoryEvent)
 import Kioku.Memory.ReadModel (MemoryRow (..))
 import Kioku.Migrations.TestSupport (withKiokuMigratedDatabase)
@@ -198,7 +198,7 @@ testPayloadSpaceMismatch =
     result <-
       Memory.recordWithContext
         testContext
-        (recordData mid testContext now) {memorySpaceId = otherSpace}
+        (recordData mid testContext now) {Record.memorySpaceId = otherSpace}
     liftIO case result of
       Left (Memory.MemorySpaceMismatch requested authorized) -> do
         assertEqual "names the requested space" otherSpace requested
@@ -219,7 +219,7 @@ testPayloadActorMismatch =
     result <-
       Memory.recordWithContext
         testContext
-        (recordData mid testContext now) {actorPrincipal = otherActorPrincipal}
+        (recordData mid testContext now) {Record.actorPrincipal = otherActorPrincipal}
     liftIO case result of
       Left (Memory.MemoryActorMismatch claimed authorized) -> do
         assertEqual "names the claimed actor" otherActorPrincipal claimed
@@ -371,9 +371,9 @@ testRecordLineageTargetRejected =
     elsewhere <- recordFixture otherContext "record lineage target in another space"
     now <- liftIO getCurrentTime
     missingResult <-
-      Memory.recordWithContext testContext (recordData source testContext now) {supersedes = Just absent}
+      Memory.recordWithContext testContext (recordData source testContext now) {Record.supersedes = Just absent}
     crossSpaceResult <-
-      Memory.recordWithContext testContext (recordData source testContext now) {supersedes = Just elsewhere}
+      Memory.recordWithContext testContext (recordData source testContext now) {Record.supersedes = Just elsewhere}
     assertHiddenTarget "record" missingResult crossSpaceResult
     assertMemoryEventCount source 0
 
@@ -439,7 +439,7 @@ recordFixture ::
 recordFixture context content = do
   mid <- liftIO genMemoryId
   now <- liftIO getCurrentTime
-  result <- Memory.recordWithContext context (recordData mid context now) {content}
+  result <- Memory.recordWithContext context (recordData mid context now) {Record.content = content}
   case result of
     Left err -> liftIO (assertFailure ("Memory.recordWithContext: " <> show err))
     Right written -> pure written

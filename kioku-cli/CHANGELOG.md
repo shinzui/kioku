@@ -1,12 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+## 0.9.0.0 — 2026-10-12
+
+### Changed
+
+- Align Kioku dependencies at 0.9.0.0 and the directly consumed Keiro/Kiroku
+  packages with the released 0.20/0.11 cohort. Command names and supervision
+  behavior are unchanged; operators must confirm legacy targets before worker startup.
+
 ## 0.8.0.2 — 2026-10-06
 
 ### Fixed
 
 - Keep the shared Kioku release version and internal bounds aligned with the migration test-fixture cleanup fix.
-
-## [Unreleased]
 
 ## 0.8.0.1 — 2026-10-05
 

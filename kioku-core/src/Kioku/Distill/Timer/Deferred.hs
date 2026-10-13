@@ -29,7 +29,7 @@ import Kioku.Distill.Timer (L1TimerPayload (..), l1ExtractProcessManagerName)
 import Kioku.Distill.Timer.Outcome (FireOutcome (..))
 import Kioku.Distill.Timer.Worker (fireKiokuTimer)
 import Kioku.Id (SessionId, parseIdLenient)
-import Kioku.Prelude
+import Kioku.Prelude hiding (contexts)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
 import Kiroku.Store.Error (StoreError)
