@@ -5,7 +5,7 @@
 > edge is **entailed**, so a project that depends only on Kioku — and has never
 > named Keiro — still crosses Keiro's edge, exactly once, in the right order.
 
-**Version:** `0.2.0`
+**Version:** `0.4.0`
 
 **Kind:** Blueprint migration (run with `seihou agent migrate`, not
 `seihou agent run` — this blueprint declares no baseline and applies no modules)
@@ -45,6 +45,11 @@ remediated. For a database holding production data, use the `cohort-migrate`
 skill, which proves the remediation on a restored clone before production is
 touched.
 
+The 0.9.0.0 edge also leaves persistent database work to the operator: stop all
+subscription workers for upstream 0013/0014, confirm legacy checkpoint targets,
+and schedule the 0015 index-build write pause. The recursively entailed upstream
+prompts own that runbook. This release introduces no new Kioku ledger fixup.
+
 ## Declared edges
 
 | From | To | Entails |
@@ -53,6 +58,8 @@ touched.
 | `0.5.1.0` | `0.5.2.0` | `keiro-upgrade` `0.14.0.0 -> 0.15.0.0` |
 | `0.5.2.0` | `0.6.0.0` | `keiro-upgrade` `0.15.0.0 -> 0.16.0.0` |
 | `0.6.0.0` | `0.7.0.0` | `keiro-upgrade` `0.16.0.0 -> 0.17.0.0` |
+| `0.7.0.0` | `0.8.0.0` | `keiro-upgrade` `0.17.0.0 -> 0.18.0.0`, then `0.18.0.0 -> 0.19.0.0` |
+| `0.8.0.2` | `0.9.0.0` | `keiro-upgrade` `0.19.0.1 -> 0.20.0.0` |
 
 Gaps between edges are deliberate and legal: they mean no agent intervention was
 needed in that interval. `0.4.0.0 -> 0.4.1.0` is exactly such a gap — that
@@ -60,6 +67,10 @@ release was a bounds-only move onto the Baikai 0.5 cohort with no source change,
 so a project coming from 0.4.0.0 crosses this edge and nothing else.
 `0.5.0.0 -> 0.5.1.0` is another: the Baikai 0.6 move changed Kioku's internals
 but nothing a consumer names.
+
+The 0.8.0.1 and 0.8.0.2 patches need no separate edge. Starting from any
+0.8.0.x release still selects the new 0.9 edge. Its four steps are Kiroku
+hardening, Kiroku inspection, Keiro 0.20, then Kioku 0.9, once each.
 
 Note what the `0.5.1.0 -> 0.5.2.0` edge shows: **a bounds-only Kioku release can
 still need an edge.** Kioku itself requires nothing across that window, but
@@ -82,7 +93,7 @@ describes, not reconstructed. Write it if a project on 0.3.0.0 needs it.
 
 ## Version probe
 
-```
+```sh
 jq -r '."install-plan"[] | select(."pkg-name"|startswith("kioku-")) | ."pkg-version"' \
   dist-newstyle/cache/plan.json 2>/dev/null | sort -u | tail -1 | grep .
 ```

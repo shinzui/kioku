@@ -10,6 +10,12 @@ provenance:
     model: "gpt-6.1-sol"
     harness: "codex-cli"
     at: 2026-10-13T00:03:51Z
+  revisions:
+    - model: "gpt-6-astra"
+      harness: "codex-cli"
+      at: 2026-10-13T00:20:39Z
+      mode: "implement"
+      note: "Implement released cohort, subscription lifecycle, migration preservation, and downstream upgrade guidance"
 ---
 
 # Upgrade Kioku to Keiro 0.20 and propagate Seihou upgrade guidance
@@ -42,20 +48,26 @@ migration during this work.
   shuts down cleanly against a disposable migrated database.
 - [ ] Milestone 2: fresh, previous-cohort, Kiroku-only, and supported Codd-upgrade fixtures
   converge on the 60-entry plan, preserve data and historical checksums, and rerun cleanly.
-- [ ] Milestone 3: the new Kioku blueprint edge resolves the two Kiroku edges and the
+- [x] Milestone 3 (2026-10-13): the new Kioku blueprint edge resolves the two Kiroku edges and the
   exact Keiro edge once each before Kioku's own guidance; historical edges remain intact.
+  Dhall validation/format check passed. Disposable Seihou previews from all three
+  0.8 patches produced four ordered steps; 0.7 produced eight distinct steps.
 - [ ] Milestone 4: all five packages and release-facing documentation agree on Kioku
   0.9.0.0, the complete validation matrix passes, and durable decisions are distilled.
 
-Planning is complete; implementation has not started. The plan's intention was created
-with `mina ci --json`. Other work began changing the Seihou-managed Nix shell, formatter,
-and manifest while this plan was being researched. Preserve those concurrent edits and
-validate against the resulting shell; do not attribute them to this upgrade.
+Implementation is underway. Release endpoints and peeled tags still match the target.
+The initial tree was clean; concurrent toolchain work described during planning is
+already committed. Bounds resolve without new overrides. Worker lifecycle tests are
+being compiled before extending migration fixtures.
 
 
 ## Surprises & Discoveries
 
-(None yet.)
+The warnings-as-errors gate exposed pre-existing warnings: a redundant `Show`
+constraint in the API test helper and four missing Codd evidence/validation type
+signatures. Remove the redundant constraint and declare the exported pg-migrate
+types rather than weakening the gate. The new solve also selects compatible AI
+patch/minor releases within unchanged bounds.
 
 
 ## Decision Log
