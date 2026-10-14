@@ -11,6 +11,7 @@ edit. What to edit is in the edge prompt.
 
 | Kioku | `keiro` / `keiro-core` | `kiroku-store` | `keiki` | `shibuya-core` | `shibuya-kiroku-adapter` | `baikai` |
 |---|---|---|---|---|---|---|
+| 0.9.0.1 | `^>=0.21.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `^>=0.7.0.0` |
 | 0.9.0.0 | `^>=0.20.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `^>=0.7.0.0` |
 | 0.8.0.2 | `^>=0.19.0.0` | `^>=0.9.0.1` | `^>=0.9.1.0` | `^>=0.10.0.0` | `^>=0.5.1.5` | `^>=0.7.0.0` |
 | 0.8.0.1 | `^>=0.19.0.0` | `^>=0.9.0.1` | `^>=0.9.1.0` | `^>=0.10.0.0` | `^>=0.5.1.5` | `^>=0.7.0.0` |
@@ -31,6 +32,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `baikai` / `baikai-claude` | `baikai-openai` | `baikai-effectful` | `shikumi` | `shikumi-trace` |
 |---|---|---|---|---|---|
+| 0.9.0.1 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.9.0.0 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.8.0.2 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.8.0.1 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
@@ -45,6 +47,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `keiro-migrations` | `kiroku-store-migrations` | `pg-migrate` |
 |---|---|---|---|
+| 0.9.0.1 | `^>=0.21.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
 | 0.9.0.0 | `^>=0.20.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
 | 0.8.0.2 | `^>=0.19.0.0` | `^>=0.6.0.0` | `^>=1.2.0.0` |
 | 0.8.0.1 | `^>=0.19.0.0` | `^>=0.6.0.0` | `^>=1.2.0.0` |
@@ -89,6 +92,14 @@ asserts on migration counts or ids needs the right row for its release.
 Most Kioku migrations are additive, and additive migrations need no special
 action. These are the exceptions — releases that changed the payload of an
 **already-released** migration, and therefore its recorded checksum.
+
+0.9.0.1 changes only dependency bounds to the `mori://shinzui/keiro` 0.21
+cohort. The composed plan remains at 60 entries (15 Kiroku, 32 Keiro, 13 Kioku),
+with no SQL or checksum changes and no new ledger fixup. No upgrade edge is
+needed: the upstream DSL API and generated-service changes do not reach
+consumers through Kioku. Projects using that DSL directly should follow the
+`keiro-upgrade` 0.20.0.0-to-0.21.0.0 edge owned by `mori://shinzui/keiro`
+(project-relative `blueprints/keiro-upgrade/blueprint.dhall`; artifact URI pending).
 
 0.9.0.0 requires no new Kioku ledger fixup and changes no Kioku SQL. Its three
 new entries come from mori://shinzui/kiroku: 0013 infers group size, 0014 binds

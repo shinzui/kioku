@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## 0.9.0.1 — 2026-10-14
+
+### Changed
+
+- Align runtime and migration dependencies at 0.9.0.1 for the `mori://shinzui/keiro`
+  0.21 cohort. The migration command and composed 60-entry plan are unchanged; no new
+  ledger fixup is required.
+
 ## 0.9.0.0 — 2026-10-12
 
 ### Breaking Changes

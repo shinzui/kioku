@@ -2,10 +2,12 @@
 
 ## [Unreleased]
 
+## 0.9.0.1 — 2026-10-14
+
 ### Changed
 
-- Require `keiro ^>=0.21.0.0` in the library and tests. Commands and output
-  are unchanged.
+- Require `mori://shinzui/keiro/packages/keiro` `^>=0.21.0.0` in the library and tests.
+  Commands and output are unchanged.
 
 ## 0.9.0.0 — 2026-10-12
 

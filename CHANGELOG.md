@@ -2,12 +2,17 @@
 
 ## [Unreleased]
 
+## 0.9.0.1 — 2026-10-14
+
 ### Changed
 
-- Require the released Keiro `^>=0.21.0.0` cohort throughout runtime, migrations,
-  test support, and the optional PGMQ constraint. Kioku does not use the changed
-  DSL APIs. The upstream dependency cohort and composed 60-entry migration plan
+- Require the released `mori://shinzui/keiro` `^>=0.21.0.0` cohort throughout runtime,
+  migrations, test support, and the optional PGMQ constraint. Kioku does not use the
+  changed DSL APIs. The upstream dependency cohort and composed 60-entry migration plan
   are unchanged; no new database migration or ledger fixup is required.
+
+- No new `kioku-upgrade` edge is needed: upstream DSL adaptation does not reach Kioku
+  consumers through the packages Kioku exposes.
 
 ## 0.9.0.0 — 2026-10-12
 
