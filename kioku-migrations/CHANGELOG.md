@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Require `keiro-migrations ^>=0.21.0.0` and `keiro-test-support ^>=0.21.0.0`,
+  including upstream managed binding-view schema verification. The composed
+  plan remains at 60 entries, with unchanged Kioku SQL and checksums.
+
 ## 0.9.0.0 — 2026-10-12
 
 ### Breaking Changes

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Require the released Keiro `^>=0.21.0.0` cohort throughout runtime, migrations,
+  test support, and the optional PGMQ constraint. Kioku does not use the changed
+  DSL APIs. The upstream dependency cohort and composed 60-entry migration plan
+  are unchanged; no new database migration or ledger fixup is required.
+
 ## 0.9.0.0 — 2026-10-12
 
 ### Breaking Changes
