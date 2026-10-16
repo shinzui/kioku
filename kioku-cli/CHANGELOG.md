@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Admit `mori://shinzui/baikai/packages/baikai` 0.8 alongside 0.7 so the shared
+  Rei-family cohort can select the released pricing and subprocess-cleanup update.
+  No Kioku API or migration change.
+
 ## 0.9.0.1 — 2026-10-14
 
 ### Changed

@@ -14,7 +14,9 @@
     # `nix develop --command …` under launchd with a minimal PATH, where every
     # git call in scripts/upgrade-baikai.sh fails and the branch it reads comes
     # back empty. See docs/user/automated-baikai-upgrades.md.
-    haskellProject.extraDevPackages = [ pkgs.git ];
+    # libpq.pc also requires libcurl on this pinned PostgreSQL build. Keep its
+    # development metadata available for a fresh Cabal libpq configuration.
+    haskellProject.extraDevPackages = [ pkgs.git pkgs.curl.dev ];
 
     checks.haskell-conventions = pkgs.runCommand "kioku-haskell-conventions"
       {

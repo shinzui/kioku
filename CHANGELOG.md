@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Admit `mori://shinzui/baikai/packages/baikai` 0.8 in Kioku Core and CLI while
+  retaining 0.7 compatibility. No migration change.
+- Include libcurl development metadata in the project shell so fresh Cabal libpq
+  configuration succeeds with the pinned PostgreSQL package.
+
+
 ## 0.9.0.1 — 2026-10-14
 
 ### Changed
