@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.9.0.2 — 2026-10-16
+
 ### Changed
 
 - Admit `mori://shinzui/baikai/packages/baikai` 0.8 alongside 0.7 so the shared

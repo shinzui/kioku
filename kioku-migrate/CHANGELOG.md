@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.9.0.2 — 2026-10-16
+
+### Changed
+
+- Align runtime and migration dependencies at 0.9.0.2. The migration command and composed 60-entry plan are unchanged; no ledger fixup is required.
+
 ## 0.9.0.1 — 2026-10-14
 
 ### Changed

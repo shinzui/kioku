@@ -11,6 +11,7 @@ edit. What to edit is in the edge prompt.
 
 | Kioku | `keiro` / `keiro-core` | `kiroku-store` | `keiki` | `shibuya-core` | `shibuya-kiroku-adapter` | `baikai` |
 |---|---|---|---|---|---|---|
+| 0.9.0.2 | `^>=0.21.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `>=0.7.0.0 && <0.9` |
 | 0.9.0.1 | `^>=0.21.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `^>=0.7.0.0` |
 | 0.9.0.0 | `^>=0.20.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `^>=0.7.0.0` |
 | 0.8.0.2 | `^>=0.19.0.0` | `^>=0.9.0.1` | `^>=0.9.1.0` | `^>=0.10.0.0` | `^>=0.5.1.5` | `^>=0.7.0.0` |
@@ -32,6 +33,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `baikai` / `baikai-claude` | `baikai-openai` | `baikai-effectful` | `shikumi` | `shikumi-trace` |
 |---|---|---|---|---|---|
+| 0.9.0.2 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.9.0.1 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.9.0.0 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.8.0.2 | `^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
@@ -47,6 +49,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `keiro-migrations` | `kiroku-store-migrations` | `pg-migrate` |
 |---|---|---|---|
+| 0.9.0.2 | `^>=0.21.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
 | 0.9.0.1 | `^>=0.21.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
 | 0.9.0.0 | `^>=0.20.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
 | 0.8.0.2 | `^>=0.19.0.0` | `^>=0.6.0.0` | `^>=1.2.0.0` |
@@ -92,6 +95,11 @@ asserts on migration counts or ids needs the right row for its release.
 Most Kioku migrations are additive, and additive migrations need no special
 action. These are the exceptions — releases that changed the payload of an
 **already-released** migration, and therefore its recorded checksum.
+
+0.9.0.2 admits `mori://shinzui/baikai/packages/baikai` 0.8 while retaining 0.7
+support. No upgrade edge or ledger fixup is needed: the optional wider bound
+requires no consumer source change, and the composed 60-entry plan, SQL, and
+checksums are unchanged. Provider bounds retain their existing ranges.
 
 0.9.0.1 changes only dependency bounds to the `mori://shinzui/keiro` 0.21
 cohort. The composed plan remains at 60 entries (15 Kiroku, 32 Keiro, 13 Kioku),

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.9.0.2 — 2026-10-16
+
+### Changed
+
+- Align the shared release version and test dependency at 0.9.0.2; wire types and API behavior are unchanged.
+
 ## 0.9.0.1 — 2026-10-14
 
 ### Changed
