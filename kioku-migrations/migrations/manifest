@@ -12,3 +12,4 @@
 0012-relocate-projections-to-kioku-schema.sql
 0013-partition-aware-fts-index.sql
 0014-bounded-session-memory-pages.sql
+0015-active-memory-recency.sql

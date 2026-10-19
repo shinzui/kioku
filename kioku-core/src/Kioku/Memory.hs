@@ -66,6 +66,12 @@ module Kioku.Memory
     MemoryRow (..),
     BoundedReadError (..),
     getPageWithContext,
+    getMetadataWithContext,
+    getMetadataPageWithContext,
+    getTagsPageWithContext,
+    getNewestActiveMetadataWithContext,
+    MemoryTag (..),
+    MemoryMetadata (..),
     getCountsWithContext,
   )
 where
@@ -104,9 +110,13 @@ import Kioku.Memory.ReadModel
     MemoryByIdQuery (..),
     MemoryCounts (..),
     MemoryFilter (..),
+    MemoryMetadata (..),
+    MemoryNewestActiveQuery (..),
     MemoryRow (..),
     MemorySelection (..),
     MemorySupersessionChainQuery (..),
+    MemoryTag (..),
+    MemoryTagsPageQuery (..),
     memoriesByNamespaceRowsReadModel,
     memoriesByScopeRowsReadModel,
     memoriesBySessionRowsReadModel,
@@ -114,7 +124,11 @@ import Kioku.Memory.ReadModel
     memoriesCountReadModel,
     memoriesPageReadModel,
     memoryByIdReadModel,
+    memoryMetadataByIdReadModel,
+    memoryMetadataPageReadModel,
+    memoryNewestActiveReadModel,
     memorySupersessionChainReadModel,
+    memoryTagsPageReadModel,
   )
 import Kioku.Pagination (BoundedReadError (..), Connection, PageRequest, gatedPage, gatedRead)
 import Kioku.Prelude
@@ -673,3 +687,18 @@ getPageWithContext context selection page = gatedPage context (runQueryWithFresh
 
 getCountsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemorySelection -> Eff es (Either BoundedReadError MemoryCounts)
 getCountsWithContext context selection = gatedRead context (runQueryWithFreshness Nothing Immediate memoriesCountReadModel MemoriesCountQuery {context, selection})
+
+getMetadataWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemoryId -> Eff es (Either BoundedReadError (Maybe MemoryMetadata))
+getMetadataWithContext context mid = gatedRead context (runQueryWithFreshness Nothing Immediate memoryMetadataByIdReadModel MemoryByIdQuery {memorySpaceId = memoryContextSpace context, memoryId = idText mid})
+
+getMetadataPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemorySelection -> PageRequest -> Eff es (Either BoundedReadError (Connection MemoryMetadata))
+getMetadataPageWithContext context selection page = gatedPage context (runQueryWithFreshness Nothing Immediate memoryMetadataPageReadModel MemoriesPageQuery {context, selection, page})
+
+-- | Missing and foreign parents are absent; an existing empty collection is Just.
+-- Tag cursors refer to current array positions. Restart after a tag update.
+getTagsPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemoryId -> PageRequest -> Eff es (Either BoundedReadError (Maybe (Connection MemoryTag)))
+getTagsPageWithContext context mid page = gatedPage context (runQueryWithFreshness Nothing Immediate memoryTagsPageReadModel MemoryTagsPageQuery {context, memoryId = idText mid, page})
+
+-- | Newest active row, ignoring priority and intersecting every supplied filter.
+getNewestActiveMetadataWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemoryFilter -> Eff es (Either BoundedReadError (Maybe MemoryMetadata))
+getNewestActiveMetadataWithContext context filters = gatedRead context (runQueryWithFreshness Nothing Immediate memoryNewestActiveReadModel MemoryNewestActiveQuery {context, filters})

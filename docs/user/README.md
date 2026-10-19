@@ -47,6 +47,9 @@ Start here, in order:
     boundary: what breaks at compile time, what happens to data already stored, and how to deploy
     and verify the migration that backfills it.
 
+13. **[Bounded reads](bounded-reads.md)** — permission-checked metadata, tag pages,
+    complete counts, scope-kind filters, recency and catalog adoption.
+
 ## At a glance
 
 ```text

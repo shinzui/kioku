@@ -73,7 +73,11 @@ import Kioku.Memory.ReadModel
     memoriesPageReadModel,
     memoryByIdReadModel,
     memoryInlineProjection,
+    memoryMetadataByIdReadModel,
+    memoryMetadataPageReadModel,
+    memoryNewestActiveReadModel,
     memorySupersessionChainReadModel,
+    memoryTagsPageReadModel,
   )
 import Kioku.Prelude
 import Kioku.Session.Domain (SessionEvent)
@@ -172,7 +176,11 @@ kiokuProjectionCatalogDefinition =
 
 memoryQueryBindings :: [SomeQueryModelBinding]
 memoryQueryBindings =
-  [ binding memoriesPageReadModel memoryGroupId memoriesTargetId,
+  [ binding memoryMetadataByIdReadModel memoryGroupId memoriesTargetId,
+    binding memoryMetadataPageReadModel memoryGroupId memoriesTargetId,
+    binding memoryTagsPageReadModel memoryGroupId memoriesTargetId,
+    binding memoryNewestActiveReadModel memoryGroupId memoriesTargetId,
+    binding memoriesPageReadModel memoryGroupId memoriesTargetId,
     binding memoriesCountReadModel memoryGroupId memoriesTargetId,
     binding memoryByIdReadModel memoryGroupId memoriesTargetId,
     binding memoriesByNamespaceReadModel memoryGroupId memoriesTargetId,

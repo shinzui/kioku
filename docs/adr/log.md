@@ -1,5 +1,10 @@
 # Bundle Update Log
 
+## 2026-10-19
+
+- Added [ADR-15](fixed-memory-fields-and-ordinal-tag-pages.md): direct scalar metadata, ordinal
+  tag cursors, intersecting kind/recency queries and public catalog adoption before startup.
+
 ## 2026-09-18
 
 - Added [ADR-14](haskell-and-cli-conventions-are-executable-contracts.md): all five packages

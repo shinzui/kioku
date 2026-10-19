@@ -10,6 +10,12 @@ provenance:
     model: "gpt-6-astra"
     harness: "codex-cli"
     at: 2026-10-19T23:24:23Z
+  revisions:
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-19T23:41:08Z
+      mode: "implement"
+      note: "Implement fixed metadata, tag pagination and recency reads with upgrade and release evidence"
 ---
 
 # Expose fixed Memory metadata, tag pages and recency queries
@@ -22,22 +28,26 @@ This ExecPlan is a living document. Keep Progress, Surprises & Discoveries, Deci
 
 Give hosts permission-checked Memory inspection without loading every tag, and let them ask for the newest active Memory or all Memories of a scope kind without loading and sorting collections themselves. A caller will page fixed-field metadata and tags separately, obtain full-population scalar counts, and distinguish an absent Memory from a failed read. Complete content and individual tag values remain intact.
 
-This implements [IR-6](../improvement-requests/expose-fixed-memory-metadata-tag-pages-and-recency-queries.md). Validation found the request valid and consistent with Kioku's ownership boundaries, with the clarifications below. This session creates the plan only; implementation and publication remain future work. The IR's publication requirement remains a completion criterion, not a claim that a release has happened.
+This implements [IR-6](../improvement-requests/expose-fixed-memory-metadata-tag-pages-and-recency-queries.md). Validation found the request valid and consistent with Kioku's ownership boundaries, with the clarifications below. Implementation follows the milestones below. The IR's publication requirement remains a completion criterion, not a claim that a release has happened.
 
 
 ## Progress
 
 
-- [ ] Fixed Memory metadata pages and point reads work through the public permission-checked facade, with an exact 0.10.0.0 catalog upgrade rehearsal.
-- [ ] Separate tag Connections traverse complete values in both directions with bounded continuation keys and distinguish missing parents from empty collections.
-- [ ] Scope-kind selection and newest-active lookup agree with complete counts and preserve existing list ordering and memory-space isolation.
+- [x] 2026-10-19: Fixed metadata point/page reads select scalar fields directly, traverse 106 tied Memories forward/backward, and preserve old-catalog data through public adoption before startup. The initial bounded/catalog suite passed all 21 tests on ephemeral PostgreSQL.
+- [x] 2026-10-19: Separate ordinal tag pages traverse 205 complete values forward/backward, retain large Unicode values, keep cursor size independent of tag length, and distinguish absent, foreign, empty and archived parents. Focused PostgreSQL tests pass.
+- [x] 2026-10-19: Kind intersections, full counts and deterministic newest-active metadata pass the priority/recency counterexample, status/type/session/exact-target matrix, and space isolation tests. All 30 bounded/catalog/reconciliation cases and the previous-manifest upgrade case pass. Migration 0015 adds the measured active recency index.
 - [ ] Failure, performance, upgrade and consumer documentation checks pass, and all five packages ship in a supported release with migration notes.
 
-Planning handoff: source validation was performed against checkout `bb99b5e` and release `v0.10.0.0` (`5f4afc872b09d615d1bb8c78369d6912161c550f`). No runtime changes or acceptance tests have been executed for this plan.
+Implementation is in progress on the current branch. The exact twenty-five-query 0.10.0.0 historical fixture retains its original fingerprint independently of the expanded catalog; the older nineteen-query rehearsal remains intact.
 
 
 ## Surprises & Discoveries
 
+
+2026-10-19: With 40,000 rows across four spaces, existing indexes made namespace recency sort 8,000 matches (9.097 ms, 1,827 shared buffers) and kind recency sort 4,000 (9.358 ms, 4,007 buffers). The added active-only index removed both sorts: namespace touched four buffers (0.028 ms), kind five (0.059 ms, one nonmatching entry skipped). Metadata paging already used the priority index (38 rows, 41 buffers). Timings are illustrative fixture measurements, not latency guarantees; no planner switches forced index choice.
+
+2026-10-19: The current manifest does not declare a profiled ADR bundle. ADR-15 follows the established local metadata/file convention without adding a profile or inventing a cross-repository handle.
 
 
 ## Decision Log
@@ -50,6 +60,9 @@ Planning handoff: source validation was performed against checkout `bb99b5e` and
 2026-10-19: Page tags by their existing JSON array ordinality, using Relay's `int8Key`. This gives a unique bounded-size key without truncating text, hash-collision assumptions, a new projection or a data migration. Order is stored array order. Continuation applies to an unchanged tag collection; restart after tag updates. Hosts own transport context/revision binding, as they do for existing Kioku pages. Snapshot-stable paging across concurrent tag replacements is not an added requirement.
 
 2026-10-19: Add optional `scopeKind` to `MemoryFilter`, and apply it as an intersection with the explicit target. This deliberately changes an exported constructor and requires a PVP major version; use 0.11.0.0 if it is still the next unpublished version at release time. Do not silently reinterpret exact global scope or introduce a second filter vocabulary just to avoid that change.
+
+
+2026-10-19: Add only `0015-active-memory-recency.sql`, an active-only `(memory_space_id, namespace, created_at DESC, memory_id ASC)` index. Measured namespace and kind lookups both use it without sorting; no kind-specific index is justified. The composed plan grows from 61 to 62 entries. The migration builds under a SHARE lock in the migration transaction, preserving reads while writers wait for commit. The previous fourteen-entry prefix upgrades with one additive step and unchanged Memory rows.
 
 
 ## Outcomes & Retrospective

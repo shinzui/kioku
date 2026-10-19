@@ -1,12 +1,14 @@
 module Kioku.ProjectionCatalogSpec (tests) where
 
+import Control.Exception (IOException, try)
 import Data.Foldable (for_)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Set qualified as Set
+import Data.Text (Text)
 import Data.Time (getCurrentTime)
 import Data.Vector qualified as Vector
-import Effectful (liftIO)
+import Effectful (Eff, liftIO)
 import Keiro.Command
   ( SqlCommandOutcome (..),
     SqlTransactionDecision (..),
@@ -50,7 +52,7 @@ import Keiro.Stream qualified as Stream
 import Keiro.Timer (lookupTimer)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
 import Kioku.Api.Types (Confidence (..), MemoryType (..))
-import Kioku.App (runAppIO, withNoopAppEnv)
+import Kioku.App (AppEffects, AppEnv (..), noopTracer, runAppIO, withNoopAppEnv)
 import Kioku.Distill.L2 (l2SceneTimerId, l2SceneTimerScheduleProjection)
 import Kioku.Id (genMemoryId, genSessionId, idText)
 import Kioku.Memory qualified as Memory
@@ -83,6 +85,7 @@ tests =
     "ProjectionCatalog"
     [ testCase "the Kioku catalog has one stable complete inventory" testInventory,
       testCase "bounded queries adopt from the exact released catalog through public lifecycle APIs" testCompatibleAdoption,
+      testCase "0.10.0.0 adopts before startup and preserves existing metadata" testMetadataAdoption,
       testCase "typed projection sets select only application-owned handlers" testTypedHandlers,
       testCase "both hand-written event streams validate explicitly" testEventStreams,
       testCase "duplicate target ownership is rejected with a stable diagnostic" testDuplicateOwnership,
@@ -103,8 +106,8 @@ testInventory = do
   assertEqual "targets" 3 (length kiokuCatalogInventory.inventoryTargets)
   assertEqual "groups" 2 (length kiokuCatalogInventory.inventoryGroups)
   assertEqual "projection owners" 2 (length kiokuCatalogInventory.inventoryProjections)
-  assertEqual "query models" 25 (length kiokuCatalogInventory.inventoryQueryModels)
-  assertEqual "registrations" 25 (length (catalogRegistrations kiokuProjectionCatalog))
+  assertEqual "query models" 29 (length kiokuCatalogInventory.inventoryQueryModels)
+  assertEqual "registrations" 29 (length (catalogRegistrations kiokuProjectionCatalog))
   assertBool
     "every query is immediate and cursorless"
     ( all
@@ -113,7 +116,7 @@ testInventory = do
     )
   assertEqual
     "canonical fingerprint"
-    "catalog-v7:8cce393084799278ee21a4aba3356e1f88d34c630e8c1b97aa8743e543616956"
+    "catalog-v7:e5d496cc534d2438d880b7708a87d36c017b129fd8fc38d3c3af788075bb96d4"
     (catalogFingerprintText kiokuCatalogFingerprint)
   where
     noCursor :: Maybe InventoryQueryCursor -> Bool
@@ -361,7 +364,7 @@ must = either (error . show) id
 testCompatibleAdoption :: Assertion
 testCompatibleAdoption = withKiokuMigratedDatabase \conn ->
   withNoopAppEnv (defaultConnectionSettings conn) \env -> do
-    let added = ["kioku-memories-page", "kioku-memories-count", "kioku-sessions-page", "kioku-sessions-count", "kioku-turns-page", "kioku-session-relations-count"]
+    let added = metadataQueries <> ["kioku-memories-page", "kioku-memories-count", "kioku-sessions-page", "kioku-sessions-count", "kioku-turns-page", "kioku-session-relations-count"]
         historical definition = definition {queryModels = filter (\(SomeQueryModelBinding binding) -> binding.readModel.name `notElem` added) definition.queryModels}
     prior <- case validateKiokuProjectionCatalogWith historical of
       Failure errors -> assertFailure (show errors)
@@ -382,3 +385,71 @@ testCompatibleAdoption = withKiokuMigratedDatabase \conn ->
       registered <- registerProjectionCatalog kiokuProjectionCatalog
       liftIO (either (assertFailure . show) (const (pure ())) registered)
     either (assertFailure . show) pure result
+
+-- Preserve the complete released twenty-five-query catalog independently of later additions.
+metadataQueries :: [Text]
+metadataQueries = ["kioku-memory-metadata-by-id", "kioku-memory-metadata-page", "kioku-memory-tags-page", "kioku-memory-newest-active-metadata"]
+
+testMetadataAdoption :: Assertion
+testMetadataAdoption = withKiokuMigratedDatabase \conn -> do
+  tracer <- noopTracer
+  let settings = defaultConnectionSettings conn
+      env = AppEnv {connectionSettings = settings, tracer, metrics = Nothing}
+      historical definition = definition {queryModels = filter (\(SomeQueryModelBinding binding) -> binding.readModel.name `notElem` metadataQueries) definition.queryModels}
+      run :: Eff AppEffects a -> IO a
+      run action = runAppIO env action >>= either (assertFailure . show) pure
+      checked :: (Show e) => Eff AppEffects (Either e a) -> IO a
+      checked action = run action >>= either (assertFailure . show) pure
+  prior <- case validateKiokuProjectionCatalogWith historical of
+    Failure errors -> assertFailure (show errors)
+    Success catalog -> pure catalog
+  assertEqual "0.10.0.0 inventory" 25 (length (catalogRegistrations prior))
+  assertEqual "0.10.0.0 fingerprint" "catalog-v7:8cce393084799278ee21a4aba3356e1f88d34c630e8c1b97aa8743e543616956" (catalogFingerprintText (catalogFingerprint prior))
+  _ <- checked (registerProjectionCatalog prior)
+  now <- getCurrentTime
+  mid <- genMemoryId
+  _ <-
+    checked
+      ( Memory.recordWithContext
+          testContext
+          RecordMemoryData
+            { memoryId = mid,
+              memorySpaceId = testSpace,
+              actorPrincipal = testActorPrincipal,
+              ownerPrincipal = Nothing,
+              agentId = "upgrade",
+              sessionId = Nothing,
+              scope = ScopeGlobal (Namespace "upgrade"),
+              memoryType = MemoryFact,
+              content = "existing complete content — 記憶",
+              priority = 50,
+              confidence = HighConfidence,
+              tags = Set.fromList ["one", "two"],
+              supersedes = Nothing,
+              recordedAt = now
+            }
+      )
+  startup <- try @IOException (withNoopAppEnv settings (const (pure ())))
+  assertBool "ordinary startup refuses old catalog" (case startup of Left _ -> True; Right _ -> False)
+  -- This is the compiled administrative recipe documented in bounded-reads.md.
+  preview <- run (previewCatalogAdoption kiokuProjectionCatalog)
+  let groups =
+        NonEmpty.fromList
+          [ group.rebuildGroupId
+          | group <- kiokuCatalogInventory.inventoryGroups,
+            any (\(identity, state) -> identity == group.rebuildGroupId && case state of AdoptionSliceChanged _ _ -> True; _ -> False) preview.groupStates
+          ]
+  assertEqual "only memory group changes" 1 (length groups)
+  _ <- checked (adoptCatalogGroups kiokuProjectionCatalog groups)
+  _ <- checked (registerProjectionCatalog kiokuProjectionCatalog)
+  _ <- checked (adoptCatalogGroups kiokuProjectionCatalog groups)
+  _ <- checked (registerProjectionCatalog kiokuProjectionCatalog)
+  withNoopAppEnv settings \newEnv -> do
+    result <- runAppIO newEnv (Memory.getMetadataWithContext testContext mid)
+    case result of
+      Right (Right (Just row)) -> do
+        assertEqual "identity" (idText mid) row.memoryId
+        assertEqual "content" "existing complete content — 記憶" row.content
+        assertEqual "timestamps" (now, now) (row.createdAt, row.updatedAt)
+        assertEqual "tag count" 2 row.tagCount
+      other -> assertFailure (show other)

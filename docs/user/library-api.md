@@ -247,6 +247,52 @@ fields. `RecordedPrincipal` has three cases: `KnownPrincipal` for a principal a 
 `UnattributedPrincipal` for older events that recorded no actor at all. Kioku never turns a legacy
 label into a directory principal.
 
+## Permission-checked Memory inspection
+
+The bounded facade in `Kioku.Memory` checks `MemoryRead` before any Store operation.
+Use it for host resources that must distinguish denial, missing data and failures:
+
+```haskell
+import Kioku.Memory qualified as Memory
+import Kioku.Api.Recall (RecallTarget (..))
+import Kioku.Api.Scope (Namespace (..), ScopeKind (..))
+import Relay.Pagination (PageRequest (..), Direction (..))
+
+let filters = Memory.MemoryFilter
+      { Memory.target = NamespaceWide (Namespace "rei")
+      , Memory.status = Nothing
+      , Memory.memoryType = Nothing
+      , Memory.sessionId = Nothing
+      , Memory.scopeKind = Just (ScopeKind "intention")
+      }
+metadata <- Memory.getMetadataWithContext context memoryId
+memories <- Memory.getMetadataPageWithContext context
+  (Memory.FilteredMemories filters) (PageRequest 25 Forward Nothing)
+tags <- Memory.getTagsPageWithContext context memoryId
+  (PageRequest 25 Forward Nothing)
+counts <- Memory.getCountsWithContext context (Memory.FilteredMemories filters)
+newest <- Memory.getNewestActiveMetadataWithContext context filters
+```
+
+`MemoryMetadata` retains full content and all scalar Memory fields, replacing
+`tags` with `tagCount :: Int64`. Metadata pages never decode the tag array.
+`MemoryTag` has numeric `ordinal` and complete text `value`. Metadata point reads
+and tag-parent lookup return `Right Nothing` for absent or foreign IDs. Existing
+empty tags return `Right (Just connection)` with no edges. Archived metadata and
+tags are retained. See [bounded reads](bounded-reads.md) for all four signatures,
+errors, the 100-row maximum, tie/order rules and the restart-after-tag-update
+contract. Newest active ignores priority; an explicitly non-active status filter
+intersects to an empty selection.
+
+When upgrading to 0.11.0.0, append `Nothing` to positional `MemoryFilter`
+constructions to preserve selection, or supply a `ScopeKind` to filter all refs
+of that kind. For record construction, set the new field explicitly. Kind never
+widens an exact target. Apply additive migration 0015, then run the public
+[catalog adoption recipe](bounded-reads.md#fixed-memory-metadata-01100) before
+normal startup. A composed host uses its complete validated catalog for adoption.
+`runAppIO` keeps storage failures in its outer `Either StoreError`; the inner
+result remains the flat `BoundedReadError` protocol.
+
 ## Sessions (`Kioku.Session`)
 
 Session writes take a context on the same terms, and all of them ask for `MemoryRecord`: a

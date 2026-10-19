@@ -8,6 +8,14 @@
 module Kioku.Memory.ReadModel
   ( MemoryFilter (..),
     MemorySelection (..),
+    MemoryMetadata (..),
+    MemoryTag (..),
+    MemoryTagsPageQuery (..),
+    MemoryNewestActiveQuery (..),
+    memoryTagsPageReadModel,
+    memoryNewestActiveReadModel,
+    memoryMetadataByIdReadModel,
+    memoryMetadataPageReadModel,
     MemoriesPageQuery (..),
     MemoriesCountQuery (..),
     MemoryCounts (..),
@@ -64,9 +72,9 @@ import Keiro.ReadModel
     ReadModelBlueprint (..),
     immediateReadModel,
   )
-import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId)
+import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId, memorySpaceIdText)
 import Kioku.Api.Recall (RecallTarget)
-import Kioku.Api.Scope (scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Api.Scope (ScopeKind (..), scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), MemoryStatus, MemoryType, confidenceToText, memoryStatusToText, memoryTypeToText)
 import Kioku.Database.Schema (kiokuSchema, memoriesRelation, memoriesTable)
 import Kioku.Id (idText)
@@ -90,6 +98,27 @@ data MemoryRow = MemoryRow
     priority :: !Int,
     confidence :: !Text,
     tags :: !(Set Text),
+    status :: !Text,
+    supersededBy :: !(Maybe Text),
+    supersedes :: !(Maybe Text),
+    createdAt :: !UTCTime,
+    updatedAt :: !UTCTime
+  }
+  deriving stock (Generic, Eq, Show)
+
+data MemoryMetadata = MemoryMetadata
+  { memorySpaceId :: !MemorySpaceId,
+    memoryId :: !Text,
+    agentId :: !Text,
+    sessionId :: !(Maybe Text),
+    namespace :: !Text,
+    scopeKind :: !(Maybe Text),
+    scopeRef :: !(Maybe Text),
+    memoryType :: !Text,
+    content :: !Text,
+    priority :: !Int,
+    confidence :: !Text,
+    tagCount :: !Int64,
     status :: !Text,
     supersededBy :: !(Maybe Text),
     supersedes :: !(Maybe Text),
@@ -398,6 +427,27 @@ memoryRowDecoder =
     <*> (fromIntegral @Int32 @Int <$> D.column (D.nonNullable D.int4))
     <*> D.column (D.nonNullable D.text)
     <*> (decodeTags <$> D.column (D.nonNullable D.text))
+    <*> D.column (D.nonNullable D.text)
+    <*> D.column (D.nullable D.text)
+    <*> D.column (D.nullable D.text)
+    <*> D.column (D.nonNullable D.timestamptz)
+    <*> D.column (D.nonNullable D.timestamptz)
+
+memoryMetadataDecoder :: D.Row MemoryMetadata
+memoryMetadataDecoder =
+  MemoryMetadata
+    <$> memorySpaceColumn
+    <*> D.column (D.nonNullable D.text)
+    <*> D.column (D.nonNullable D.text)
+    <*> D.column (D.nullable D.text)
+    <*> D.column (D.nonNullable D.text)
+    <*> D.column (D.nullable D.text)
+    <*> D.column (D.nullable D.text)
+    <*> D.column (D.nonNullable D.text)
+    <*> D.column (D.nonNullable D.text)
+    <*> (fromIntegral @Int32 @Int <$> D.column (D.nonNullable D.int4))
+    <*> D.column (D.nonNullable D.text)
+    <*> D.column (D.nonNullable D.int8)
     <*> D.column (D.nonNullable D.text)
     <*> D.column (D.nullable D.text)
     <*> D.column (D.nullable D.text)
@@ -741,7 +791,7 @@ updateMemoryConfidenceStmt =
     D.noResult
 
 data MemoryFilter = MemoryFilter
-  {target :: !RecallTarget, status :: !(Maybe MemoryStatus), memoryType :: !(Maybe MemoryType), sessionId :: !(Maybe Text)}
+  {target :: !RecallTarget, status :: !(Maybe MemoryStatus), memoryType :: !(Maybe MemoryType), sessionId :: !(Maybe Text), scopeKind :: !(Maybe ScopeKind)}
   deriving stock (Eq, Show)
 
 data MemorySelection = FilteredMemories !MemoryFilter | SupersessionChain !Text
@@ -764,7 +814,7 @@ memoriesPageReadModel =
         version = memoryReadModelVersion,
         shapeHash = memoryReadModelShapeHash,
         cursorAuthority = NoQueryCursor,
-        query = \q -> boundedPage (memoryPageOrder q.selection) memoryRowDecoder (memorySelectionBase q.context q.selection) q.page
+        query = \q -> boundedPage (memoryPageOrder (.createdAt) (.memoryId) (.priority) q.selection) memoryRowDecoder (memorySelectionBase memoryRowColumns q.context q.selection) q.page
       }
 
 memoriesCountReadModel :: ReadModel MemoriesCountQuery MemoryCounts
@@ -781,49 +831,180 @@ memoriesCountReadModel =
           Tx.statement
             ()
             ( S.toPreparableStatement
-                ("SELECT count(*),count(*) FILTER(WHERE status='active'),count(*) FILTER(WHERE status='superseded'),count(*) FILTER(WHERE status='merged'),count(*) FILTER(WHERE status='archived') FROM (" <> memorySelectionBase q.context q.selection <> ") selected")
+                ("SELECT count(*),count(*) FILTER(WHERE status='active'),count(*) FILTER(WHERE status='superseded'),count(*) FILTER(WHERE status='merged'),count(*) FILTER(WHERE status='archived') FROM (" <> memorySelectionBase "status" q.context q.selection <> ") selected")
                 (D.singleRow (MemoryCounts <$> int8 <*> int8 <*> int8 <*> int8 <*> int8))
             )
       }
   where
     int8 = D.column (D.nonNullable D.int8)
 
-memoryPageOrder :: MemorySelection -> R.SortSpec MemoryRow
-memoryPageOrder selection = R.SortSpec $ case selection of
-  SupersessionChain _ -> R.KeyColumn "created_at" R.Asc (.createdAt) R.timestamptzKey :| [identity]
+memoryPageOrder :: (row -> UTCTime) -> (row -> Text) -> (row -> Int) -> MemorySelection -> R.SortSpec row
+memoryPageOrder createdAt memoryId priority selection = R.SortSpec $ case selection of
+  SupersessionChain _ -> R.KeyColumn "created_at" R.Asc createdAt R.timestamptzKey :| [identity]
   FilteredMemories filters -> case filters.sessionId of
     Just _ -> recent :| [identity]
-    Nothing -> R.KeyColumn "priority" R.Asc (fromIntegral . (.priority)) R.int8Key :| [recent, identity]
+    Nothing -> R.KeyColumn "priority" R.Asc (fromIntegral . priority) R.int8Key :| [recent, identity]
   where
-    recent = R.KeyColumn "created_at" R.Desc (.createdAt) R.timestamptzKey
-    identity = R.KeyColumn "memory_id" R.Asc (.memoryId) R.textKey
+    recent = R.KeyColumn "created_at" R.Desc createdAt R.timestamptzKey
+    identity = R.KeyColumn "memory_id" R.Asc memoryId R.textKey
 
-memorySelectionBase :: MemoryAccessContext -> MemorySelection -> S.Snippet
-memorySelectionBase context = \case
+-- | Select fixed fields directly; the recursive walk carries only identity links.
+-- UNION deduplicates cycles, and both the seed and joins retain the space boundary.
+memorySelectionBase :: Text -> MemoryAccessContext -> MemorySelection -> S.Snippet
+memorySelectionBase columns context = \case
   FilteredMemories filters ->
     "SELECT "
-      <> S.sql memoryRowColumns
+      <> S.sql columns
       <> " FROM "
       <> S.sql memoriesTable
-      <> " WHERE memory_space_id="
-      <> contextSpaceSnippet context
-      <> recallTargetSnippet filters.target
-      <> maybe "" (\value -> " AND status=" <> S.param (memoryStatusToText value)) filters.status
-      <> maybe "" (\value -> " AND memory_type=" <> S.param (memoryTypeToText value)) filters.memoryType
-      <> maybe "" (\value -> " AND session_id=" <> S.param value) filters.sessionId
+      <> memoryFilterWhere context filters
   SupersessionChain identity ->
-    "WITH RECURSIVE chain AS (SELECT "
-      <> S.sql memoryRowColumns
-      <> " FROM "
+    "WITH RECURSIVE chain AS (SELECT memory_space_id,memory_id,supersedes,superseded_by FROM "
       <> S.sql memoriesTable
       <> " WHERE memory_space_id="
       <> contextSpaceSnippet context
       <> " AND memory_id="
       <> S.param identity
-      <> " UNION SELECT "
-      <> S.sql (qualifiedMemoryRowColumns "m")
-      <> " FROM "
+      <> " UNION SELECT m.memory_space_id,m.memory_id,m.supersedes,m.superseded_by FROM "
       <> S.sql memoriesTable
       <> " m JOIN chain c ON m.memory_space_id=c.memory_space_id AND (m.memory_id=c.supersedes OR m.supersedes=c.memory_id OR m.memory_id=c.superseded_by OR m.superseded_by=c.memory_id)) SELECT "
-      <> S.sql memoryRowColumns
-      <> " FROM chain"
+      <> S.sql columns
+      <> " FROM "
+      <> S.sql memoriesTable
+      <> " WHERE memory_space_id="
+      <> contextSpaceSnippet context
+      <> " AND memory_id IN (SELECT memory_id FROM chain)"
+
+memoryMetadataColumns :: Text
+memoryMetadataColumns =
+  "memory_space_id, memory_id, agent_id, session_id, namespace, scope_kind, scope_ref, memory_type, content, priority, confidence, jsonb_array_length(tags)::bigint AS tag_count, status, superseded_by, supersedes, created_at, updated_at"
+
+memoryMetadataByIdReadModel :: ReadModel MemoryByIdQuery (Maybe MemoryMetadata)
+memoryMetadataByIdReadModel =
+  immediateReadModel
+    ReadModelBlueprint
+      { name = "kioku-memory-metadata-by-id",
+        schema = kiokuSchema,
+        tableName = memoriesRelation,
+        version = memoryReadModelVersion,
+        shapeHash = memoryReadModelShapeHash,
+        cursorAuthority = NoQueryCursor,
+        query = \q ->
+          Tx.statement
+            ()
+            ( S.toPreparableStatement
+                ( "SELECT "
+                    <> S.sql memoryMetadataColumns
+                    <> " FROM "
+                    <> S.sql memoriesTable
+                    <> " WHERE memory_space_id="
+                    <> S.param (memorySpaceIdText q.memorySpaceId)
+                    <> " AND memory_id="
+                    <> S.param q.memoryId
+                )
+                (D.rowMaybe memoryMetadataDecoder)
+            )
+      }
+
+memoryMetadataPageReadModel :: ReadModel MemoriesPageQuery (Either BoundedPageError (Connection MemoryMetadata))
+memoryMetadataPageReadModel =
+  immediateReadModel
+    ReadModelBlueprint
+      { name = "kioku-memory-metadata-page",
+        schema = kiokuSchema,
+        tableName = memoriesRelation,
+        version = memoryReadModelVersion,
+        shapeHash = memoryReadModelShapeHash,
+        cursorAuthority = NoQueryCursor,
+        query = \q ->
+          boundedPage
+            (memoryPageOrder (.createdAt) (.memoryId) (.priority) q.selection)
+            memoryMetadataDecoder
+            (memorySelectionBase memoryMetadataColumns q.context q.selection)
+            q.page
+      }
+
+-- | All filters intersect; in particular a kind never widens an exact target.
+memoryFilterWhere :: MemoryAccessContext -> MemoryFilter -> S.Snippet
+memoryFilterWhere context filters =
+  " WHERE memory_space_id="
+    <> contextSpaceSnippet context
+    <> recallTargetSnippet filters.target
+    <> maybe "" (\value -> " AND status=" <> S.param (memoryStatusToText value)) filters.status
+    <> maybe "" (\value -> " AND memory_type=" <> S.param (memoryTypeToText value)) filters.memoryType
+    <> maybe "" (\value -> " AND session_id=" <> S.param value) filters.sessionId
+    <> maybe "" (\(ScopeKind value) -> " AND scope_kind=" <> S.param value) filters.scopeKind
+
+-- | Position in the current stored tag array, with the complete tag value.
+-- Restart traversal after replacing tags: ordinality is not a snapshot identity.
+data MemoryTag = MemoryTag {ordinal :: !Int64, value :: !Text}
+  deriving stock (Generic, Eq, Show)
+
+data MemoryTagsPageQuery = MemoryTagsPageQuery {context :: !MemoryAccessContext, memoryId :: !Text, page :: !PageRequest}
+
+data MemoryNewestActiveQuery = MemoryNewestActiveQuery {context :: !MemoryAccessContext, filters :: !MemoryFilter}
+
+memoryTagsPageReadModel :: ReadModel MemoryTagsPageQuery (Either BoundedPageError (Maybe (Connection MemoryTag)))
+memoryTagsPageReadModel =
+  immediateReadModel
+    ReadModelBlueprint
+      { name = "kioku-memory-tags-page",
+        schema = kiokuSchema,
+        tableName = memoriesRelation,
+        version = memoryReadModelVersion,
+        shapeHash = memoryReadModelShapeHash,
+        cursorAuthority = NoQueryCursor,
+        query = \q -> do
+          -- Validate even missing parents before reporting absence. No rich row decoder
+          -- participates, and both page/existence statements share this transaction.
+          result <-
+            boundedPage
+              tagOrder
+              tagDecoder
+              ( "SELECT tag.ordinal,tag.value FROM (SELECT tags FROM "
+                  <> S.sql memoriesTable
+                  <> parentWhere q
+                  <> ") parent CROSS JOIN LATERAL jsonb_array_elements_text(parent.tags) WITH ORDINALITY AS tag(value,ordinal)"
+              )
+              q.page
+          case result of
+            Left failure -> pure (Left failure)
+            Right connection -> do
+              exists <-
+                Tx.statement
+                  ()
+                  ( S.toPreparableStatement
+                      ("SELECT EXISTS(SELECT 1 FROM " <> S.sql memoriesTable <> parentWhere q <> ")")
+                      (D.singleRow (D.column (D.nonNullable D.bool)))
+                  )
+              pure (Right (if exists then Just connection else Nothing))
+      }
+  where
+    tagOrder = R.SortSpec (R.KeyColumn "ordinal" R.Asc (.ordinal) R.int8Key :| [])
+    tagDecoder = MemoryTag <$> D.column (D.nonNullable D.int8) <*> D.column (D.nonNullable D.text)
+    parentWhere q = " WHERE memory_space_id=" <> contextSpaceSnippet q.context <> " AND memory_id=" <> S.param q.memoryId
+
+memoryNewestActiveReadModel :: ReadModel MemoryNewestActiveQuery (Maybe MemoryMetadata)
+memoryNewestActiveReadModel =
+  immediateReadModel
+    ReadModelBlueprint
+      { name = "kioku-memory-newest-active-metadata",
+        schema = kiokuSchema,
+        tableName = memoriesRelation,
+        version = memoryReadModelVersion,
+        shapeHash = memoryReadModelShapeHash,
+        cursorAuthority = NoQueryCursor,
+        query = \q ->
+          Tx.statement
+            ()
+            ( S.toPreparableStatement
+                ( "SELECT "
+                    <> S.sql memoryMetadataColumns
+                    <> " FROM "
+                    <> S.sql memoriesTable
+                    <> memoryFilterWhere q.context q.filters
+                    <> " AND status='active' ORDER BY created_at DESC,memory_id ASC LIMIT 1"
+                )
+                (D.rowMaybe memoryMetadataDecoder)
+            )
+      }
