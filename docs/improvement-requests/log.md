@@ -2,6 +2,7 @@
 
 ## 2026-10-19
 
+* **Status change**: Accept IR-7 after source and ADR validation; link ExecPlan 50 and its intention. Scope the change to a deprecated legacy-only archive receipt bridge with unchanged attribution, authorization boundaries and typed outcomes. Implementation and publication remain pending.
 * **Status change**: Accept IR-6 after Kioku source and architecture validation; link ExecPlan 49 and record fixed-field metadata, tag cursor, ordering, PVP and catalog-adoption clarifications. Implementation and publication remain pending.
 * **Addition**: IR-6 requests fixed Memory metadata, separate tag pages, recency and scope-kind queries against released Kioku 0.10.0.0; IR-7 separately requests truthful archive receipts for existing unattributed hosts. Both remain proposed; implementation and publication are separate.
 

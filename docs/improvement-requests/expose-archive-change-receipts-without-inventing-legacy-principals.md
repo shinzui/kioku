@@ -3,12 +3,15 @@ type: Improvement Request
 title: Expose archive change receipts without inventing legacy principals
 description: Provide a supported authoritative archive changed receipt for hosts whose existing legacy-space commands truthfully carry UnattributedPrincipal, without weakening context-first authorization or fabricating identity.
 requestId: IR-7
-status: proposed
+status: accepted
 origin: mori://shinzui/rei/plans/255-expose-agent-execution-sessions-memory-schedules-and-review-workflows
 generated:
-  by: openai/gpt-6.1-sol
-  at: "2026-10-19T22:55:57Z"
-timestamp: "2026-10-19T22:55:57Z"
+  by: openai/gpt-6-astra
+  at: "2026-10-19T23:37:23Z"
+timestamp: "2026-10-19T23:37:23Z"
+verified:
+  - by: openai/gpt-6-astra
+    at: "2026-10-19T23:37:23Z"
 reviews:
   - kind: model
     reviewer: "codex (author self-review)"
@@ -24,10 +27,50 @@ reviews:
       current published Store versions and the selected cohort where relevant.
       This author self-review approves request accuracy only; it does not
       approve implementation, dependency adoption or publication.
+  - kind: model
+    reviewer: "codex (Kioku source validation and scope clarification)"
+    reviewed_at: "2026-10-19T23:37:23Z"
+    document_timestamp: "2026-10-19T23:37:23Z"
+    scope: content-and-metadata
+    outcome: approved
+    provider: openai
+    model: gpt-6-astra
+    effort: unspecified
+    context: >-
+      Confirmed the facade gap, shared append receipt, legacy consumer mapping,
+      typed errors and tests against the working tree; verified the 0.10.0.0
+      baseline against Hackage and the upstream tag. ADRs 1, 3, 4, 5 and 14
+      support receipt parity only as an explicitly deprecated legacy bridge,
+      not a permanent historical-marker context. ExecPlan 50 records this scope,
+      acceptance tests and publication prerequisite. Implementation remains pending.
 
 ---
 
 # Expose archive change receipts without inventing legacy principals
+
+## Status and implementation plan
+
+Accepted on 2026-10-19 as a temporary compatibility extension after validating
+the request against Kioku's source, its consumer adapter and architectural
+decisions. Implementation is tracked by
+[ExecPlan 50](../plans/50-expose-legacy-archive-change-receipts-without-inventing-principals.md),
+linked to intention `intention_01m5b89rmzey4vy07z7ypf4az4`.
+Implementation tests and publication remain pending.
+
+The owner-side design exposes `Kioku.Memory.archiveLegacyChanged` over the
+existing legacy-space guard and authoritative archive worker. It preserves the
+supplied attribution and errors, and is deprecated from introduction with removal
+coupled to `archive`. Support requires a documented, tested and published
+migration bridge; it does not establish a permanent API for new unattributed writes.
+
+[ADR-5](../adr/historical-attribution-is-marked-never-invented.md) explicitly
+rejects historical-marker actors in new authorization contexts and acknowledges
+the temporary exception in the existing deprecated wrappers. The plan requires
+clarifying that exception for receipt parity while retaining the permanent
+context-first contract. A host with no directory may vouch for a real stable
+principal under [ADR-1](../adr/kioku-owns-memory-not-identity.md); inventing one
+solely to obtain a receipt is not an attribution-preserving migration. Hosts
+retain responsibility for authorization at their own boundary.
 
 ## Verified baseline and consumer
 
@@ -85,6 +128,8 @@ and idempotent-repeat behavior.
 5. Document and publish the supported API/migration before Rei adoption.
    An unpublished local wrapper is not an accepted dependency.
 
-This is a request for owner review, not authorization to implement or publish an
-upstream change. It is separate from [IR-6](expose-fixed-memory-metadata-tag-pages-and-recency-queries.md),
-which concerns read resources.
+Owner validation and implementation planning are now recorded in ExecPlan 50.
+Acceptance does not claim completed implementation or authorize publication as
+part of the current documentation task. This remains separate from
+[IR-6](expose-fixed-memory-metadata-tag-pages-and-recency-queries.md), which
+concerns read resources; the plans coordinate releases if shipped together.
