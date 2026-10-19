@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- The bounded reads (`Kioku.Session.getPageWithContext`, `getCountsWithContext`,
+  `getTurnsPageWithContext`, `getRelationsWithContext`; `Kioku.Memory.getPageWithContext`,
+  `getCountsWithContext`) now refuse a context that does not grant `MemoryRead` before any
+  SQL runs, and return one flat `Kioku.Pagination.BoundedReadError` instead of
+  `Either ReadModelError (Either BoundedPageError a)`.
+- `SessionFilter.status` is a typed `SessionStatus` (now exported, with
+  `parseSessionStatus` and `sessionStatusToText`) instead of `Text`.
+
+### Changed
+
+- The session and memory collections share one namespace/scope predicate and one space
+  parameter from `Kioku.Pagination`; the page limit is exported as `maxBoundedPageSize`.
+- Document that migration 0014 blocks writes to the three tables while its indexes build.
+  The catalog fingerprint and read-model identities are unchanged.
+
 ## 0.9.1.0 — 2026-10-19
 
 - Add context-first Session/Memory Relay pages, scalar status and relation counts, turns and cycle-safe lineage traversal. Preserve native Memory ordering and expose authoritative archive changed receipts. Register six read-only query models and test explicit public catalog adoption from the exact previous release. Existing facades remain compatible.

@@ -4,7 +4,10 @@
 -- space. Both columns are written by the projection from the event payload rather than looked
 -- up, and every query below filters on the space as well as on whatever it is keyed by.
 module Kioku.Session.ReadModel
-  ( SessionFilter (..),
+  ( SessionStatus (..),
+    parseSessionStatus,
+    sessionStatusToText,
+    SessionFilter (..),
     SessionSelection (..),
     SessionsPageQuery (..),
     SessionsCountQuery (..),
@@ -65,9 +68,9 @@ import Keiro.ReadModel
     ReadModelBlueprint (..),
     immediateReadModel,
   )
-import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId, memoryContextSpace, memorySpaceIdText)
-import Kioku.Api.Recall (RecallTarget (..))
-import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId)
+import Kioku.Api.Recall (RecallTarget)
+import Kioku.Api.Scope (scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Database.Schema
   ( kiokuSchema,
     sessionsRelation,
@@ -76,7 +79,7 @@ import Kioku.Database.Schema
     turnsTable,
   )
 import Kioku.Id (idText)
-import Kioku.Pagination (BoundedPageError, Connection, PageRequest, boundedPage)
+import Kioku.Pagination (BoundedPageError, Connection, PageRequest, boundedPage, contextSpaceSnippet, recallTargetSnippet)
 import Kioku.Partition (memorySpaceColumn, memorySpaceParam)
 import Kioku.Prelude
 import Kioku.Session.Domain
@@ -482,6 +485,16 @@ turnReadModelVersion = 3
 
 turnReadModelShapeHash :: Text
 turnReadModelShapeHash = "kioku-turn-v3"
+
+-- | The relations count has its own identity rather than the session row's: its result is one
+-- existence flag and three counts over keys that have not changed since the base schema, so a
+-- session or turn row reshape does not change what it returns. Changing either value changes
+-- the persisted catalog fingerprint and requires a catalog adoption.
+sessionRelationsReadModelVersion :: Int
+sessionRelationsReadModelVersion = 1
+
+sessionRelationsReadModelShapeHash :: Text
+sessionRelationsReadModelShapeHash = "kioku-session-relations-count-v1"
 
 sessionRowDecoder :: D.Row SessionRow
 sessionRowDecoder =
@@ -890,11 +903,39 @@ turnRowEncoder =
     <> ((\row -> fmap (fromIntegral @Int @Int32) row.outputTokens) >$< E.param (E.nullable E.int4))
     <> ((\row -> row.recordedAt) >$< E.param (E.nonNullable E.timestamptz))
 
+-- | The five statuses the projection writes. Parsing at the point of decision keeps
+-- 'SessionRow.status' a 'Text' (it is part of the read-model shape hosts consume) while
+-- removing stringly-typed comparisons from the decision logic and from filters.
+data SessionStatus
+  = StatusRunning
+  | StatusAwaiting
+  | StatusCompleted
+  | StatusFailed
+  | StatusInteractive
+  deriving stock (Eq, Show, Enum, Bounded)
+
+parseSessionStatus :: Text -> Maybe SessionStatus
+parseSessionStatus = \case
+  "running" -> Just StatusRunning
+  "awaiting" -> Just StatusAwaiting
+  "completed" -> Just StatusCompleted
+  "failed" -> Just StatusFailed
+  "interactive" -> Just StatusInteractive
+  _ -> Nothing
+
+sessionStatusToText :: SessionStatus -> Text
+sessionStatusToText = \case
+  StatusRunning -> "running"
+  StatusAwaiting -> "awaiting"
+  StatusCompleted -> "completed"
+  StatusFailed -> "failed"
+  StatusInteractive -> "interactive"
+
 -- All optional predicates apply inside the trusted SQL relation before paging.
 data SessionFilter = SessionFilter
   { target :: !RecallTarget,
     focus :: !(Maybe Text),
-    status :: !(Maybe Text),
+    status :: !(Maybe SessionStatus),
     subjectRef :: !(Maybe Text),
     startedSince :: !(Maybe UTCTime),
     startedUntil :: !(Maybe UTCTime)
@@ -967,7 +1008,7 @@ turnsPageReadModel =
           boundedPage
             order
             turnRowDecoder
-            ("SELECT memory_space_id,turn_id,session_id,turn_index,role,content,tool_summary,prompt_tokens,output_tokens,recorded_at FROM " <> S.sql turnsTable <> " WHERE memory_space_id=" <> spaceParam q.context <> " AND session_id=" <> S.param q.sessionId)
+            ("SELECT memory_space_id,turn_id,session_id,turn_index,role,content,tool_summary,prompt_tokens,output_tokens,recorded_at FROM " <> S.sql turnsTable <> " WHERE memory_space_id=" <> contextSpaceSnippet q.context <> " AND session_id=" <> S.param q.sessionId)
             q.page
       }
   where
@@ -980,8 +1021,8 @@ sessionRelationsReadModel =
       { name = "kioku-session-relations-count",
         schema = kiokuSchema,
         tableName = sessionsRelation,
-        version = 1,
-        shapeHash = "kioku-session-relations-count-v1",
+        version = sessionRelationsReadModelVersion,
+        shapeHash = sessionRelationsReadModelShapeHash,
         cursorAuthority = NoQueryCursor,
         query = \q ->
           Tx.statement
@@ -990,14 +1031,14 @@ sessionRelationsReadModel =
                 ( "SELECT EXISTS(SELECT 1 FROM "
                     <> S.sql sessionsTable
                     <> " WHERE memory_space_id="
-                    <> spaceParam q.context
+                    <> contextSpaceSnippet q.context
                     <> " AND session_id="
                     <> S.param q.sessionId
                     <> "),"
                     <> "(SELECT count(*) FROM "
                     <> S.sql turnsTable
                     <> " WHERE memory_space_id="
-                    <> spaceParam q.context
+                    <> contextSpaceSnippet q.context
                     <> " AND session_id="
                     <> S.param q.sessionId
                     <> "),"
@@ -1007,7 +1048,7 @@ sessionRelationsReadModel =
                     <> "(SELECT count(*) FROM "
                     <> S.sql sessionsTable
                     <> " WHERE memory_space_id="
-                    <> spaceParam q.context
+                    <> contextSpaceSnippet q.context
                     <> " AND parent_session_id="
                     <> S.param q.sessionId
                     <> ")"
@@ -1023,9 +1064,6 @@ sessionPageOrder selection = R.SortSpec (R.KeyColumn "started_at" direction (.st
   where
     direction = case selection of FilteredSessions _ -> R.Desc; _ -> R.Asc
 
-spaceParam :: MemoryAccessContext -> S.Snippet
-spaceParam = S.param . memorySpaceIdText . memoryContextSpace
-
 sessionSelectionBase :: MemoryAccessContext -> SessionSelection -> S.Snippet
 sessionSelectionBase context = \case
   FilteredSessions filters ->
@@ -1034,34 +1072,28 @@ sessionSelectionBase context = \case
       <> " FROM "
       <> S.sql sessionsTable
       <> " WHERE memory_space_id="
-      <> spaceParam context
-      <> sessionTarget filters.target
+      <> contextSpaceSnippet context
+      <> recallTargetSnippet filters.target
       <> maybe "" (\value -> " AND focus=" <> S.param value) filters.focus
-      <> maybe "" (\value -> " AND status=" <> S.param value) filters.status
+      <> maybe "" (\value -> " AND status=" <> S.param (sessionStatusToText value)) filters.status
       <> maybe "" (\value -> " AND subject_ref=" <> S.param value) filters.subjectRef
       <> maybe "" (\value -> " AND started_at >= " <> S.param value) filters.startedSince
       <> maybe "" (\value -> " AND started_at < " <> S.param value) filters.startedUntil
-  DelegationChildren parent -> "SELECT " <> S.sql sessionRowColumns <> " FROM " <> S.sql sessionsTable <> " WHERE memory_space_id=" <> spaceParam context <> " AND parent_session_id=" <> S.param parent
+  DelegationChildren parent -> "SELECT " <> S.sql sessionRowColumns <> " FROM " <> S.sql sessionsTable <> " WHERE memory_space_id=" <> contextSpaceSnippet context <> " AND parent_session_id=" <> S.param parent
   ContinuationChain identity ->
     "WITH RECURSIVE chain(session_id,previous_session_id) AS (SELECT session_id,previous_session_id FROM "
       <> S.sql sessionsTable
       <> " WHERE memory_space_id="
-      <> spaceParam context
+      <> contextSpaceSnippet context
       <> " AND session_id="
       <> S.param identity
       <> " UNION SELECT s.session_id,s.previous_session_id FROM "
       <> S.sql sessionsTable
       <> " s JOIN chain c ON s.session_id=c.previous_session_id WHERE s.memory_space_id="
-      <> spaceParam context
+      <> contextSpaceSnippet context
       <> ") SELECT "
       <> S.sql (qualifiedSessionRowColumns "s")
       <> " FROM "
       <> S.sql sessionsTable
       <> " s JOIN chain c ON s.session_id=c.session_id WHERE s.memory_space_id="
-      <> spaceParam context
-
-sessionTarget :: RecallTarget -> S.Snippet
-sessionTarget = \case
-  NamespaceWide (Namespace ns) -> " AND namespace=" <> S.param ns
-  ExactScope (ScopeGlobal (Namespace ns)) -> " AND namespace=" <> S.param ns <> " AND scope_kind IS NULL AND scope_ref IS NULL"
-  ExactScope scope -> " AND namespace=" <> S.param (scopeNamespaceText scope) <> " AND scope_kind=" <> maybe "NULL" S.param (scopeKindText scope) <> " AND scope_ref=" <> maybe "NULL" S.param (scopeRefText scope)
+      <> contextSpaceSnippet context

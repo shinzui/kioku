@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Breaking: the 0.9.1.0 bounded Session/Memory reads require `MemoryRead` on their
+  context and return one flat `BoundedReadError`; `SessionFilter.status` is a typed
+  `SessionStatus`. No migration, catalog or read-model identity change.
+- Cover delegation children, started ranges, memory type/session filters, page-size
+  errors and the read permission gate in the bounded-read suite.
+
 ## 0.9.1.0 — 2026-10-19
 
 - Add context-first, SQL-bounded Session and Memory pages, scalar counts,

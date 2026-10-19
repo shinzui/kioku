@@ -47,11 +47,13 @@ module Kioku.Session
     getDelegationChildren,
     getAwaitingByCorrelationKey,
     getTurns,
+    SessionStatus (..),
     SessionFilter (..),
     SessionSelection (..),
     SessionCounts (..),
     SessionRelations (..),
     TurnRow (..),
+    BoundedReadError (..),
     getPageWithContext,
     getCountsWithContext,
     getTurnsPageWithContext,
@@ -81,7 +83,7 @@ import Kioku.Api.Access
 import Kioku.Api.Scope (MemoryScope, Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Timer (l1TimerScheduleProjection)
 import Kioku.Id (SessionId, idText)
-import Kioku.Pagination (BoundedPageError, Connection, PageRequest)
+import Kioku.Pagination (BoundedReadError (..), Connection, PageRequest, gatedPage, gatedRead)
 import Kioku.Prelude
 import Kioku.ProjectionCatalog (kiokuProjectionCatalog, sessionProjectionSet)
 import Kioku.Session.Domain
@@ -97,6 +99,7 @@ import Kioku.Session.ReadModel
     SessionRelationsQuery (..),
     SessionRow (..),
     SessionSelection (..),
+    SessionStatus (..),
     SessionsByFocusQuery (..),
     SessionsByNamespaceQuery (..),
     SessionsByScopeQuery (..),
@@ -107,6 +110,7 @@ import Kioku.Session.ReadModel
     TurnsBySessionQuery (..),
     TurnsPageQuery (..),
     awaitingSessionsByCorrelationKeyReadModel,
+    parseSessionStatus,
     sessionByIdReadModel,
     sessionChainReadModel,
     sessionDelegationChildrenReadModel,
@@ -235,26 +239,6 @@ validateLineage d
   | otherwise = Nothing
 
 -- * Idempotent accepts
-
--- | The five statuses the projection writes. Parsing at the point of decision keeps
--- 'SessionRow.status' a 'Text' (it is part of the read-model shape hosts consume) while
--- removing stringly-typed comparisons from the decision logic.
-data SessionStatus
-  = StatusRunning
-  | StatusAwaiting
-  | StatusCompleted
-  | StatusFailed
-  | StatusInteractive
-  deriving stock (Eq, Show)
-
-parseSessionStatus :: Text -> Maybe SessionStatus
-parseSessionStatus = \case
-  "running" -> Just StatusRunning
-  "awaiting" -> Just StatusAwaiting
-  "completed" -> Just StatusCompleted
-  "failed" -> Just StatusFailed
-  "interactive" -> Just StatusInteractive
-  _ -> Nothing
 
 -- | Look up the session and hand its row plus parsed status to the caller.
 withExistingSession ::
@@ -844,15 +828,16 @@ runSessionCommand sid cmd = do
       Left err -> Left (SessionCommandRejected err)
       Right _ -> Right sid
 
--- | Filters and lineage selection are applied in SQL before the bounded page.
-getPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionSelection -> PageRequest -> Eff es (Either ReadModelError (Either BoundedPageError (Connection SessionRow)))
-getPageWithContext context selection page = runQueryWithFreshness Nothing Immediate sessionsPageReadModel SessionsPageQuery {context, selection, page}
+-- | Filters and lineage selection are applied in SQL before the bounded page. Like every
+-- bounded read, this refuses a context that does not grant 'MemoryRead' before any SQL runs.
+getPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionSelection -> PageRequest -> Eff es (Either BoundedReadError (Connection SessionRow))
+getPageWithContext context selection page = gatedPage context (runQueryWithFreshness Nothing Immediate sessionsPageReadModel SessionsPageQuery {context, selection, page})
 
-getCountsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionSelection -> Eff es (Either ReadModelError SessionCounts)
-getCountsWithContext context selection = runQueryWithFreshness Nothing Immediate sessionsCountReadModel SessionsCountQuery {context, selection}
+getCountsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionSelection -> Eff es (Either BoundedReadError SessionCounts)
+getCountsWithContext context selection = gatedRead context (runQueryWithFreshness Nothing Immediate sessionsCountReadModel SessionsCountQuery {context, selection})
 
-getTurnsPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionId -> PageRequest -> Eff es (Either ReadModelError (Either BoundedPageError (Connection TurnRow)))
-getTurnsPageWithContext context sid page = runQueryWithFreshness Nothing Immediate turnsPageReadModel TurnsPageQuery {context, sessionId = idText sid, page}
+getTurnsPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionId -> PageRequest -> Eff es (Either BoundedReadError (Connection TurnRow))
+getTurnsPageWithContext context sid page = gatedPage context (runQueryWithFreshness Nothing Immediate turnsPageReadModel TurnsPageQuery {context, sessionId = idText sid, page})
 
-getRelationsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionId -> Eff es (Either ReadModelError SessionRelations)
-getRelationsWithContext context sid = runQueryWithFreshness Nothing Immediate sessionRelationsReadModel SessionRelationsQuery {context, sessionId = idText sid}
+getRelationsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionId -> Eff es (Either BoundedReadError SessionRelations)
+getRelationsWithContext context sid = gatedRead context (runQueryWithFreshness Nothing Immediate sessionRelationsReadModel SessionRelationsQuery {context, sessionId = idText sid})

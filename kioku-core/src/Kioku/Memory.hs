@@ -28,6 +28,11 @@
 -- takes the space rather than the whole context because these functions return
 -- @Either ReadModelError@, and a permission denial has already been decided — a context exists
 -- only for permissions 'Kioku.Api.Access.authorizeMemoryAccess' actually checked.
+--
+-- The bounded reads ('getPageWithContext', 'getCountsWithContext') are the exception: they take
+-- the whole context, refuse one that does not grant 'MemoryRead' with
+-- 'BoundedReadNotPermitted', and only then read the context's space. A context minted only to
+-- record or forget cannot be spent on listing the space.
 module Kioku.Memory
   ( MemoryWriteError (..),
 
@@ -59,6 +64,7 @@ module Kioku.Memory
     MemorySelection (..),
     MemoryCounts (..),
     MemoryRow (..),
+    BoundedReadError (..),
     getPageWithContext,
     getCountsWithContext,
   )
@@ -110,7 +116,7 @@ import Kioku.Memory.ReadModel
     memoryByIdReadModel,
     memorySupersessionChainReadModel,
   )
-import Kioku.Pagination (BoundedPageError, Connection, PageRequest)
+import Kioku.Pagination (BoundedReadError (..), Connection, PageRequest, gatedPage, gatedRead)
 import Kioku.Prelude
 import Kioku.ProjectionCatalog (kiokuProjectionCatalog, memoryProjectionSet)
 import Kiroku.Store.Effect (Store)
@@ -661,8 +667,9 @@ runMemoryCommandChanged mid cmd = do
       Left err -> Left (MemoryCommandRejected err)
       Right receipt -> Right (mid, receipt.eventsAppended > 0)
 
-getPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemorySelection -> PageRequest -> Eff es (Either ReadModelError (Either BoundedPageError (Connection MemoryRow)))
-getPageWithContext context selection page = runQueryWithFreshness Nothing Immediate memoriesPageReadModel MemoriesPageQuery {context, selection, page}
+-- | Bounded reads refuse a context that does not grant 'MemoryRead' before any SQL runs.
+getPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemorySelection -> PageRequest -> Eff es (Either BoundedReadError (Connection MemoryRow))
+getPageWithContext context selection page = gatedPage context (runQueryWithFreshness Nothing Immediate memoriesPageReadModel MemoriesPageQuery {context, selection, page})
 
-getCountsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemorySelection -> Eff es (Either ReadModelError MemoryCounts)
-getCountsWithContext context selection = runQueryWithFreshness Nothing Immediate memoriesCountReadModel MemoriesCountQuery {context, selection}
+getCountsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemorySelection -> Eff es (Either BoundedReadError MemoryCounts)
+getCountsWithContext context selection = gatedRead context (runQueryWithFreshness Nothing Immediate memoriesCountReadModel MemoriesCountQuery {context, selection})

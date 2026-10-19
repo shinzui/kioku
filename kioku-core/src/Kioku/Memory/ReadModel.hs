@@ -64,14 +64,14 @@ import Keiro.ReadModel
     ReadModelBlueprint (..),
     immediateReadModel,
   )
-import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId, memoryContextSpace, memorySpaceIdText)
-import Kioku.Api.Recall (RecallTarget (..))
-import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId)
+import Kioku.Api.Recall (RecallTarget)
+import Kioku.Api.Scope (scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Api.Types (MemoryRecord (..), MemoryStatus, MemoryType, confidenceToText, memoryStatusToText, memoryTypeToText)
 import Kioku.Database.Schema (kiokuSchema, memoriesRelation, memoriesTable)
 import Kioku.Id (idText)
 import Kioku.Memory.Domain
-import Kioku.Pagination (BoundedPageError, Connection, PageRequest, boundedPage)
+import Kioku.Pagination (BoundedPageError, Connection, PageRequest, boundedPage, contextSpaceSnippet, recallTargetSnippet)
 import Kioku.Partition (memorySpaceColumn, memorySpaceParam)
 import Kioku.Prelude
 import Kiroku.Store.Types (RecordedEvent)
@@ -798,9 +798,6 @@ memoryPageOrder selection = R.SortSpec $ case selection of
     recent = R.KeyColumn "created_at" R.Desc (.createdAt) R.timestamptzKey
     identity = R.KeyColumn "memory_id" R.Asc (.memoryId) R.textKey
 
-contextSpaceSnippet :: MemoryAccessContext -> S.Snippet
-contextSpaceSnippet = S.param . memorySpaceIdText . memoryContextSpace
-
 memorySelectionBase :: MemoryAccessContext -> MemorySelection -> S.Snippet
 memorySelectionBase context = \case
   FilteredMemories filters ->
@@ -810,7 +807,7 @@ memorySelectionBase context = \case
       <> S.sql memoriesTable
       <> " WHERE memory_space_id="
       <> contextSpaceSnippet context
-      <> memoryTarget filters.target
+      <> recallTargetSnippet filters.target
       <> maybe "" (\value -> " AND status=" <> S.param (memoryStatusToText value)) filters.status
       <> maybe "" (\value -> " AND memory_type=" <> S.param (memoryTypeToText value)) filters.memoryType
       <> maybe "" (\value -> " AND session_id=" <> S.param value) filters.sessionId
@@ -830,9 +827,3 @@ memorySelectionBase context = \case
       <> " m JOIN chain c ON m.memory_space_id=c.memory_space_id AND (m.memory_id=c.supersedes OR m.supersedes=c.memory_id OR m.memory_id=c.superseded_by OR m.superseded_by=c.memory_id)) SELECT "
       <> S.sql memoryRowColumns
       <> " FROM chain"
-
-memoryTarget :: RecallTarget -> S.Snippet
-memoryTarget = \case
-  NamespaceWide (Namespace ns) -> " AND namespace=" <> S.param ns
-  ExactScope (ScopeGlobal (Namespace ns)) -> " AND namespace=" <> S.param ns <> " AND scope_kind IS NULL AND scope_ref IS NULL"
-  ExactScope scope -> " AND namespace=" <> S.param (scopeNamespaceText scope) <> " AND scope_kind=" <> maybe "NULL" S.param (scopeKindText scope) <> " AND scope_ref=" <> maybe "NULL" S.param (scopeRefText scope)
