@@ -1,5 +1,9 @@
 # Bundle Update Log
 
+## 2026-10-19
+
+* **Addition**: IR-6 requests fixed Memory metadata, separate tag pages, recency and scope-kind queries against released Kioku 0.10.0.0; IR-7 separately requests truthful archive receipts for existing unattributed hosts. Both remain proposed; implementation and publication are separate.
+
 ## 2026-09-08
 
 * **Migration**: Move the bundle to OKF 0.2 on the `coordination.improvementRequests`
