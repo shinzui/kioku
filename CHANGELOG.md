@@ -2,11 +2,27 @@
 
 ## [Unreleased]
 
-- Breaking: the 0.9.1.0 bounded Session/Memory reads require `MemoryRead` on their
+## 0.10.0.0 — 2026-10-19
+
+### Breaking Changes
+
+- The 0.9.1.0 bounded Session/Memory reads now require `MemoryRead` on their
   context and return one flat `BoundedReadError`; `SessionFilter.status` is a typed
-  `SessionStatus`. No migration, catalog or read-model identity change.
+  `SessionStatus`. In 0.9.1.0 these reads never checked the context, so a context
+  minted only to record or forget could list and count its whole memory space.
+  No migration, catalog or read-model identity change; the composed plan stays at
+  61 entries.
+
+### Changed
+
 - Cover delegation children, started ranges, memory type/session filters, page-size
   errors and the read permission gate in the bounded-read suite.
+- Document that migration 0014 blocks writes to `kioku.sessions`, `kioku.turns` and
+  `kioku.memories` while its indexes build.
+- Add the `kioku-upgrade` 0.9.1.0-to-0.10.0.0 edge. A consumer moving from 0.9.0.2
+  crosses the 0.9.1.0 edge and then this one.
+- 0.9.1.0 was tagged but never published to Hackage, so that it would not ship the
+  ungated reads. Hackage moves from 0.9.0.2 to 0.10.0.0.
 
 ## 0.9.1.0 — 2026-10-19
 

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.10.0.0 — 2026-10-19
+
 ### Breaking Changes
 
 - The bounded reads (`Kioku.Session.getPageWithContext`, `getCountsWithContext`,

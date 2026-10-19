@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.10.0.0 — 2026-10-19
+
+### Changed
+
+- Align the shared release version and test dependency at 0.10.0.0. Wire types and identifiers are unchanged.
+
 ## 0.9.1.0 — 2026-10-19
 
 - Align the shared cohort at 0.9.1.0. Existing wire types and identifiers are unchanged.

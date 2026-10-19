@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.10.0.0 — 2026-10-19
+
+### Changed
+
+- Adopt the 0.10.0.0 Core cohort. Commands, output and existing call signatures are unchanged; the CLI does not call the bounded reads.
+
 ## 0.9.1.0 — 2026-10-19
 
 - Adopt the 0.9.1.0 shared Core cohort. Native commands and existing call signatures remain compatible.

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.10.0.0 — 2026-10-19
+
+### Changed
+
+- Align runtime and migration dependencies at 0.10.0.0. The migration command and composed 61-entry plan are unchanged, and the catalog fingerprint and read-model identities are the same as 0.9.1.0, so no further catalog adoption is needed.
+
 ## 0.9.1.0 — 2026-10-19
 
 - Adopt migration 0014 and reconcile six added query identities. Existing persisted catalogs require supported Keiro preview/adoption after draining old hosts; no private registry SQL or projection rebuild is needed.

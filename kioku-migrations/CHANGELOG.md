@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.10.0.0 — 2026-10-19
+
+### Changed
+
+- Align the shared release version and internal dependencies at 0.10.0.0. Kioku SQL, checksums and the composed 61-entry plan are unchanged; no ledger fixup is required.
+
 ## 0.9.1.0 — 2026-10-19
 
 - Add migration 0014 with partition-leading keyset indexes for bounded Session, turn and Memory reads. The composed plan has 61 entries (15 Kiroku, 32 Keiro, 14 Kioku); the thirteen previously released Kioku payload hashes are unchanged.
