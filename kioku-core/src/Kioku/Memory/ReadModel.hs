@@ -6,7 +6,14 @@
 -- from writing, outside the space it was authorized for, and it makes the partition visible in
 -- every query a reviewer reads.
 module Kioku.Memory.ReadModel
-  ( memoryInlineProjection,
+  ( MemoryFilter (..),
+    MemorySelection (..),
+    MemoriesPageQuery (..),
+    MemoriesCountQuery (..),
+    MemoryCounts (..),
+    memoriesPageReadModel,
+    memoriesCountReadModel,
+    memoryInlineProjection,
     MemoryRow (..),
     MemoryByIdQuery (..),
     MemoriesByNamespaceQuery (..),
@@ -41,11 +48,12 @@ import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy qualified as BL
 import Data.Functor.Contravariant ((>$<))
 import Data.Generics.Labels ()
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text.Encoding qualified as TE
 import Hasql.Decoders qualified as D
+import Hasql.DynamicStatements.Snippet qualified as S
 import Hasql.Encoders qualified as E
 import Hasql.Statement (Statement, preparable)
 import Hasql.Transaction qualified as Tx
@@ -56,15 +64,18 @@ import Keiro.ReadModel
     ReadModelBlueprint (..),
     immediateReadModel,
   )
-import Kioku.Api.Access (MemorySpaceId)
-import Kioku.Api.Scope (scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
-import Kioku.Api.Types (MemoryRecord (..), confidenceToText, memoryTypeToText)
+import Kioku.Api.Access (MemoryAccessContext, MemorySpaceId, memoryContextSpace, memorySpaceIdText)
+import Kioku.Api.Recall (RecallTarget (..))
+import Kioku.Api.Scope (MemoryScope (..), Namespace (..), scopeFromColumns, scopeKindText, scopeNamespaceText, scopeRefText)
+import Kioku.Api.Types (MemoryRecord (..), MemoryStatus, MemoryType, confidenceToText, memoryStatusToText, memoryTypeToText)
 import Kioku.Database.Schema (kiokuSchema, memoriesRelation, memoriesTable)
 import Kioku.Id (idText)
 import Kioku.Memory.Domain
+import Kioku.Pagination (BoundedPageError, Connection, PageRequest, boundedPage)
 import Kioku.Partition (memorySpaceColumn, memorySpaceParam)
 import Kioku.Prelude
 import Kiroku.Store.Types (RecordedEvent)
+import Relay.Pagination.Hasql qualified as R
 
 data MemoryRow = MemoryRow
   { memorySpaceId :: !MemorySpaceId,
@@ -728,3 +739,100 @@ updateMemoryConfidenceStmt =
         <> ((\c -> c.updatedAt) >$< E.param (E.nonNullable E.timestamptz))
     )
     D.noResult
+
+data MemoryFilter = MemoryFilter
+  {target :: !RecallTarget, status :: !(Maybe MemoryStatus), memoryType :: !(Maybe MemoryType), sessionId :: !(Maybe Text)}
+  deriving stock (Eq, Show)
+
+data MemorySelection = FilteredMemories !MemoryFilter | SupersessionChain !Text
+  deriving stock (Eq, Show)
+
+data MemoriesPageQuery = MemoriesPageQuery {context :: !MemoryAccessContext, selection :: !MemorySelection, page :: !PageRequest}
+
+data MemoriesCountQuery = MemoriesCountQuery {context :: !MemoryAccessContext, selection :: !MemorySelection}
+
+data MemoryCounts = MemoryCounts {total :: !Int64, active :: !Int64, superseded :: !Int64, merged :: !Int64, archived :: !Int64}
+  deriving stock (Generic, Eq, Show)
+
+memoriesPageReadModel :: ReadModel MemoriesPageQuery (Either BoundedPageError (Connection MemoryRow))
+memoriesPageReadModel =
+  immediateReadModel
+    ReadModelBlueprint
+      { name = "kioku-memories-page",
+        schema = kiokuSchema,
+        tableName = memoriesRelation,
+        version = memoryReadModelVersion,
+        shapeHash = memoryReadModelShapeHash,
+        cursorAuthority = NoQueryCursor,
+        query = \q -> boundedPage (memoryPageOrder q.selection) memoryRowDecoder (memorySelectionBase q.context q.selection) q.page
+      }
+
+memoriesCountReadModel :: ReadModel MemoriesCountQuery MemoryCounts
+memoriesCountReadModel =
+  immediateReadModel
+    ReadModelBlueprint
+      { name = "kioku-memories-count",
+        schema = kiokuSchema,
+        tableName = memoriesRelation,
+        version = memoryReadModelVersion,
+        shapeHash = memoryReadModelShapeHash,
+        cursorAuthority = NoQueryCursor,
+        query = \q ->
+          Tx.statement
+            ()
+            ( S.toPreparableStatement
+                ("SELECT count(*),count(*) FILTER(WHERE status='active'),count(*) FILTER(WHERE status='superseded'),count(*) FILTER(WHERE status='merged'),count(*) FILTER(WHERE status='archived') FROM (" <> memorySelectionBase q.context q.selection <> ") selected")
+                (D.singleRow (MemoryCounts <$> int8 <*> int8 <*> int8 <*> int8 <*> int8))
+            )
+      }
+  where
+    int8 = D.column (D.nonNullable D.int8)
+
+memoryPageOrder :: MemorySelection -> R.SortSpec MemoryRow
+memoryPageOrder selection = R.SortSpec $ case selection of
+  SupersessionChain _ -> R.KeyColumn "created_at" R.Asc (.createdAt) R.timestamptzKey :| [identity]
+  FilteredMemories filters -> case filters.sessionId of
+    Just _ -> recent :| [identity]
+    Nothing -> R.KeyColumn "priority" R.Asc (fromIntegral . (.priority)) R.int8Key :| [recent, identity]
+  where
+    recent = R.KeyColumn "created_at" R.Desc (.createdAt) R.timestamptzKey
+    identity = R.KeyColumn "memory_id" R.Asc (.memoryId) R.textKey
+
+contextSpaceSnippet :: MemoryAccessContext -> S.Snippet
+contextSpaceSnippet = S.param . memorySpaceIdText . memoryContextSpace
+
+memorySelectionBase :: MemoryAccessContext -> MemorySelection -> S.Snippet
+memorySelectionBase context = \case
+  FilteredMemories filters ->
+    "SELECT "
+      <> S.sql memoryRowColumns
+      <> " FROM "
+      <> S.sql memoriesTable
+      <> " WHERE memory_space_id="
+      <> contextSpaceSnippet context
+      <> memoryTarget filters.target
+      <> maybe "" (\value -> " AND status=" <> S.param (memoryStatusToText value)) filters.status
+      <> maybe "" (\value -> " AND memory_type=" <> S.param (memoryTypeToText value)) filters.memoryType
+      <> maybe "" (\value -> " AND session_id=" <> S.param value) filters.sessionId
+  SupersessionChain identity ->
+    "WITH RECURSIVE chain AS (SELECT "
+      <> S.sql memoryRowColumns
+      <> " FROM "
+      <> S.sql memoriesTable
+      <> " WHERE memory_space_id="
+      <> contextSpaceSnippet context
+      <> " AND memory_id="
+      <> S.param identity
+      <> " UNION SELECT "
+      <> S.sql (qualifiedMemoryRowColumns "m")
+      <> " FROM "
+      <> S.sql memoriesTable
+      <> " m JOIN chain c ON m.memory_space_id=c.memory_space_id AND (m.memory_id=c.supersedes OR m.supersedes=c.memory_id OR m.memory_id=c.superseded_by OR m.superseded_by=c.memory_id)) SELECT "
+      <> S.sql memoryRowColumns
+      <> " FROM chain"
+
+memoryTarget :: RecallTarget -> S.Snippet
+memoryTarget = \case
+  NamespaceWide (Namespace ns) -> " AND namespace=" <> S.param ns
+  ExactScope (ScopeGlobal (Namespace ns)) -> " AND namespace=" <> S.param ns <> " AND scope_kind IS NULL AND scope_ref IS NULL"
+  ExactScope scope -> " AND namespace=" <> S.param (scopeNamespaceText scope) <> " AND scope_kind=" <> maybe "NULL" S.param (scopeKindText scope) <> " AND scope_ref=" <> maybe "NULL" S.param (scopeRefText scope)

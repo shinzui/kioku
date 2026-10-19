@@ -35,6 +35,7 @@ module Kioku.Memory
     recordWithContext,
     supersedeWithContext,
     archiveWithContext,
+    archiveWithContextChanged,
     updateTagsWithContext,
     updateConfidenceWithContext,
     mergeWithContext,
@@ -54,13 +55,19 @@ module Kioku.Memory
     getRowsBySession,
     getActiveRowsByType,
     getSupersessionChain,
+    MemoryFilter (..),
+    MemorySelection (..),
+    MemoryCounts (..),
+    MemoryRow (..),
+    getPageWithContext,
+    getCountsWithContext,
   )
 where
 
 import Data.List (find)
 import Effectful (Eff, IOE, (:>))
 import Effectful.Error.Static (Error)
-import Keiro.Command (CommandError (..), defaultRunCommandOptions)
+import Keiro.Command (CommandError (..), CommandResult (..), defaultRunCommandOptions)
 import Keiro.Projection (runCommandWithProjections)
 import Keiro.Projection.Catalog (typedInlineProjections)
 import Keiro.ReadModel (QueryFreshness (Immediate), ReadModelError, runQueryWithFreshness)
@@ -86,16 +93,24 @@ import Kioku.Memory.ReadModel
     MemoriesByScopeQuery (..),
     MemoriesBySessionQuery (..),
     MemoriesByTypeQuery (..),
+    MemoriesCountQuery (..),
+    MemoriesPageQuery (..),
     MemoryByIdQuery (..),
+    MemoryCounts (..),
+    MemoryFilter (..),
     MemoryRow (..),
+    MemorySelection (..),
     MemorySupersessionChainQuery (..),
     memoriesByNamespaceRowsReadModel,
     memoriesByScopeRowsReadModel,
     memoriesBySessionRowsReadModel,
     memoriesByTypeRowsReadModel,
+    memoriesCountReadModel,
+    memoriesPageReadModel,
     memoryByIdReadModel,
     memorySupersessionChainReadModel,
   )
+import Kioku.Pagination (BoundedPageError, Connection, PageRequest)
 import Kioku.Prelude
 import Kioku.ProjectionCatalog (kiokuProjectionCatalog, memoryProjectionSet)
 import Kiroku.Store.Effect (Store)
@@ -249,16 +264,32 @@ archiveIn ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
   ArchiveMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
-archiveIn cmdData = do
+archiveIn cmdData = fmap (fmap fst) (archiveInChanged cmdData)
+
+-- | The flag records whether this command appended an archive event, including
+-- concurrent retries. A matching archive by another command returns False.
+archiveWithContextChanged ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext -> ArchiveMemoryData -> Eff es (Either MemoryWriteError (MemoryId, Bool))
+archiveWithContextChanged context cmdData =
+  underContext context MemoryForget cmdData.memorySpaceId cmdData.actorPrincipal (archiveInChanged cmdData)
+
+archiveInChanged ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  ArchiveMemoryData -> Eff es (Either MemoryWriteError (MemoryId, Bool))
+archiveInChanged cmdData = do
   existing <- lookupMemory cmdData.memorySpaceId cmdData.memoryId
   case existing of
     Left err -> pure (Left (MemoryReadFailed err))
     Right Nothing -> pure (Left MemoryNotFound)
     Right (Just row)
-      | row.status /= "active" -> pure (idempotentOr "archive" archiveMismatch row cmdData.memoryId)
-      | otherwise ->
-          runMemoryCommand cmdData.memoryId (ArchiveMemory cmdData)
-            >>= acceptRejectedIfMatches cmdData.memorySpaceId cmdData.memoryId (isNothing . archiveMismatch)
+      | row.status /= "active" -> pure (fmap (,False) (idempotentOr "archive" archiveMismatch row cmdData.memoryId))
+      | otherwise -> do
+          outcome <- runMemoryCommandChanged cmdData.memoryId (ArchiveMemory cmdData)
+          case outcome of
+            Left err@(MemoryCommandRejected CommandRejected) ->
+              fmap (fmap (,False)) (acceptRejectedIfMatches cmdData.memorySpaceId cmdData.memoryId (isNothing . archiveMismatch) (Left err))
+            result -> pure result
   where
     archiveMismatch = mismatchOf memoryArchiveFields cmdData
 
@@ -608,7 +639,12 @@ runMemoryCommand ::
   MemoryId ->
   MemoryCommand ->
   Eff es (Either MemoryWriteError MemoryId)
-runMemoryCommand mid cmd = do
+runMemoryCommand mid cmd = fmap (fmap fst) (runMemoryCommandChanged mid cmd)
+
+runMemoryCommandChanged ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryId -> MemoryCommand -> Eff es (Either MemoryWriteError (MemoryId, Bool))
+runMemoryCommandChanged mid cmd = do
   -- Keiro's catalog cannot declare the shared framework-owned timer table as
   -- a Kioku target. Derive Kioku's handler from the catalog, keep the timer
   -- callback explicit, and run both in the append transaction; see
@@ -623,4 +659,10 @@ runMemoryCommand mid cmd = do
   pure $
     case result of
       Left err -> Left (MemoryCommandRejected err)
-      Right _ -> Right mid
+      Right receipt -> Right (mid, receipt.eventsAppended > 0)
+
+getPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemorySelection -> PageRequest -> Eff es (Either ReadModelError (Either BoundedPageError (Connection MemoryRow)))
+getPageWithContext context selection page = runQueryWithFreshness Nothing Immediate memoriesPageReadModel MemoriesPageQuery {context, selection, page}
+
+getCountsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> MemorySelection -> Eff es (Either ReadModelError MemoryCounts)
+getCountsWithContext context selection = runQueryWithFreshness Nothing Immediate memoriesCountReadModel MemoriesCountQuery {context, selection}

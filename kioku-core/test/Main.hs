@@ -2,6 +2,7 @@ module Main where
 
 import Kioku.AIRuntimeSpec qualified as AIRuntimeSpec
 import Kioku.AwaitingSpec qualified as AwaitingSpec
+import Kioku.BoundedReadSpec qualified as BoundedReadSpec
 import Kioku.CodecCompatSpec qualified as CodecCompatSpec
 import Kioku.DistillSpec qualified as DistillSpec
 import Kioku.EmbeddingWorkerSpec qualified as EmbeddingWorkerSpec
@@ -28,7 +29,8 @@ main =
   defaultMain $
     testGroup
       "kioku"
-      [ AIRuntimeSpec.tests,
+      [ BoundedReadSpec.tests,
+        AIRuntimeSpec.tests,
         AwaitingSpec.tests,
         CodecCompatSpec.tests,
         IdempotencySpec.tests,

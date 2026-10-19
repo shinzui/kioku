@@ -448,10 +448,10 @@ testPartitionLeadingPlans =
     liftIO $
       mapM_
         assertPartitionLeading
-        [ ("memories by scope", "kioku_memories_space_", memoriesByScope, scopeRows),
-          ("memories by type", "kioku_memories_space_", memoriesByType, typeRows),
-          ("sessions by namespace", "kioku_sessions_space_", sessionsByNamespace, namespaceSessions),
-          ("sessions awaiting", "kioku_sessions_space_", sessionsAwaiting, awaitingSessions)
+        [ ("memories by scope", "memories_space_", memoriesByScope, scopeRows),
+          ("memories by type", "memories_space_", memoriesByType, typeRows),
+          ("sessions by namespace", "sessions_space_", sessionsByNamespace, namespaceSessions),
+          ("sessions awaiting", "sessions_space_", sessionsAwaiting, awaitingSessions)
         ]
   where
     rowCount = either (const (-1)) length

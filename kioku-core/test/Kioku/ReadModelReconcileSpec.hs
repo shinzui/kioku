@@ -119,8 +119,8 @@ testStaleThenReconcile =
       -- Every Kioku read model reads one of the three relocated projections, so the relocation
       -- leaves none of them current and reconciliation has to advance all of them.
       assertEqual
-        "every model was advanced"
-        []
+        "all historical models advanced; the new relation-count identity stays current"
+        ["kioku-session-relations-count"]
         [schema.readModelName | (schema, outcome) <- outcomes, outcome /= Reconciled]
 
     repaired <- Session.getById testSpace sid

@@ -18,15 +18,19 @@ import Keiro.Projection.Catalog
   ( CatalogDiagnostic (..),
     CatalogDiagnosticCode (..),
     CatalogInventory (..),
+    InventoryGroup (..),
     InventoryQueryCursor,
     InventoryQueryFreshness (..),
     InventoryQueryModel (..),
     ProjectionCatalog (..),
     ProjectionDefinition (..),
     ProjectionSet (..),
+    QueryModelBinding (..),
     SomeProjectionSet (..),
+    SomeQueryModelBinding (..),
     SourceDeclaration (..),
     Validation (..),
+    catalogFingerprint,
     catalogFingerprintText,
     catalogRegistrations,
     mkClaimSite,
@@ -37,10 +41,11 @@ import Keiro.Projection.Catalog
 import Keiro.ReadModel
   ( HeadScope (EntireVisibleLog),
     QueryFreshness (WaitForHead),
+    ReadModel (..),
     ReadModelDefinitionError (ReadModelDefinitionMissingCursor),
     headWaitingReadModel,
   )
-import Keiro.ReadModel.Rebuild (registerProjectionCatalog)
+import Keiro.ReadModel.Rebuild (CatalogAdoptionPlan (..), GroupAdoptionClass (..), adoptCatalogGroups, previewCatalogAdoption, registerProjectionCatalog)
 import Keiro.Stream qualified as Stream
 import Keiro.Timer (lookupTimer)
 import Kioku.Api.Scope (MemoryScope (..), Namespace (..))
@@ -77,6 +82,7 @@ tests =
   testGroup
     "ProjectionCatalog"
     [ testCase "the Kioku catalog has one stable complete inventory" testInventory,
+      testCase "bounded queries adopt from the exact released catalog through public lifecycle APIs" testCompatibleAdoption,
       testCase "typed projection sets select only application-owned handlers" testTypedHandlers,
       testCase "both hand-written event streams validate explicitly" testEventStreams,
       testCase "duplicate target ownership is rejected with a stable diagnostic" testDuplicateOwnership,
@@ -97,8 +103,8 @@ testInventory = do
   assertEqual "targets" 3 (length kiokuCatalogInventory.inventoryTargets)
   assertEqual "groups" 2 (length kiokuCatalogInventory.inventoryGroups)
   assertEqual "projection owners" 2 (length kiokuCatalogInventory.inventoryProjections)
-  assertEqual "query models" 19 (length kiokuCatalogInventory.inventoryQueryModels)
-  assertEqual "registrations" 19 (length (catalogRegistrations kiokuProjectionCatalog))
+  assertEqual "query models" 25 (length kiokuCatalogInventory.inventoryQueryModels)
+  assertEqual "registrations" 25 (length (catalogRegistrations kiokuProjectionCatalog))
   assertBool
     "every query is immediate and cursorless"
     ( all
@@ -107,7 +113,7 @@ testInventory = do
     )
   assertEqual
     "canonical fingerprint"
-    "catalog-v7:54f9ac55d73f40160d87b0ae49c2477a0de860c2e6e1e38df0591a2036d002e4"
+    "catalog-v7:8cce393084799278ee21a4aba3356e1f88d34c630e8c1b97aa8743e543616956"
     (catalogFingerprintText kiokuCatalogFingerprint)
   where
     noCursor :: Maybe InventoryQueryCursor -> Bool
@@ -351,3 +357,28 @@ isRight = either (const False) (const True)
 
 must :: (Show error) => Either error value -> value
 must = either (error . show) id
+
+testCompatibleAdoption :: Assertion
+testCompatibleAdoption = withKiokuMigratedDatabase \conn ->
+  withNoopAppEnv (defaultConnectionSettings conn) \env -> do
+    let added = ["kioku-memories-page", "kioku-memories-count", "kioku-sessions-page", "kioku-sessions-count", "kioku-turns-page", "kioku-session-relations-count"]
+        historical definition = definition {queryModels = filter (\(SomeQueryModelBinding binding) -> binding.readModel.name `notElem` added) definition.queryModels}
+    prior <- case validateKiokuProjectionCatalogWith historical of
+      Failure errors -> assertFailure (show errors)
+      Success catalog -> pure catalog
+    assertEqual "exact previous release catalog" "catalog-v7:54f9ac55d73f40160d87b0ae49c2477a0de860c2e6e1e38df0591a2036d002e4" (catalogFingerprintText (catalogFingerprint prior))
+    let groups = NonEmpty.fromList (map (.rebuildGroupId) kiokuCatalogInventory.inventoryGroups)
+    result <- runAppIO env do
+      reverted <- adoptCatalogGroups prior groups
+      liftIO (either (assertFailure . show) (const (pure ())) reverted)
+      oldRegistered <- registerProjectionCatalog prior
+      liftIO (either (assertFailure . show) (const (pure ())) oldRegistered)
+      drift <- registerProjectionCatalog kiokuProjectionCatalog
+      liftIO $ assertBool "ordinary startup refuses drift" (case drift of Left _ -> True; Right _ -> False)
+      preview <- previewCatalogAdoption kiokuProjectionCatalog
+      liftIO $ assertEqual "both live groups change" 2 (length [() | (_, AdoptionSliceChanged _ _) <- preview.groupStates])
+      adopted <- adoptCatalogGroups kiokuProjectionCatalog groups
+      liftIO (either (assertFailure . show) (const (pure ())) adopted)
+      registered <- registerProjectionCatalog kiokuProjectionCatalog
+      liftIO (either (assertFailure . show) (const (pure ())) registered)
+    either (assertFailure . show) pure result

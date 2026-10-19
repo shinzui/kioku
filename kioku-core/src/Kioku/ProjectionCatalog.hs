@@ -69,6 +69,8 @@ import Kioku.Memory.ReadModel
     memoriesBySessionRowsReadModel,
     memoriesByTypeReadModel,
     memoriesByTypeRowsReadModel,
+    memoriesCountReadModel,
+    memoriesPageReadModel,
     memoryByIdReadModel,
     memoryInlineProjection,
     memorySupersessionChainReadModel,
@@ -82,11 +84,15 @@ import Kioku.Session.ReadModel
     sessionChainReadModel,
     sessionDelegationChildrenReadModel,
     sessionInlineProjection,
+    sessionRelationsReadModel,
     sessionsByFocusReadModel,
     sessionsByNamespaceReadModel,
     sessionsByScopeReadModel,
     sessionsByStartedRangeReadModel,
+    sessionsCountReadModel,
+    sessionsPageReadModel,
     turnsBySessionReadModel,
+    turnsPageReadModel,
   )
 import Kiroku.Store.Types (CategoryName (..))
 
@@ -166,7 +172,9 @@ kiokuProjectionCatalogDefinition =
 
 memoryQueryBindings :: [SomeQueryModelBinding]
 memoryQueryBindings =
-  [ binding memoryByIdReadModel memoryGroupId memoriesTargetId,
+  [ binding memoriesPageReadModel memoryGroupId memoriesTargetId,
+    binding memoriesCountReadModel memoryGroupId memoriesTargetId,
+    binding memoryByIdReadModel memoryGroupId memoriesTargetId,
     binding memoriesByNamespaceReadModel memoryGroupId memoriesTargetId,
     binding memoriesByNamespaceRowsReadModel memoryGroupId memoriesTargetId,
     binding memoriesByScopeReadModel memoryGroupId memoriesTargetId,
@@ -180,7 +188,11 @@ memoryQueryBindings =
 
 sessionQueryBindings :: [SomeQueryModelBinding]
 sessionQueryBindings =
-  [ binding sessionByIdReadModel sessionGroupId sessionsTargetId,
+  [ binding sessionsPageReadModel sessionGroupId sessionsTargetId,
+    binding sessionsCountReadModel sessionGroupId sessionsTargetId,
+    binding turnsPageReadModel sessionGroupId turnsTargetId,
+    bindingMany sessionRelationsReadModel sessionGroupId [sessionsTargetId, turnsTargetId],
+    binding sessionByIdReadModel sessionGroupId sessionsTargetId,
     binding sessionsByNamespaceReadModel sessionGroupId sessionsTargetId,
     binding sessionsByScopeReadModel sessionGroupId sessionsTargetId,
     binding sessionsByFocusReadModel sessionGroupId sessionsTargetId,
@@ -192,13 +204,16 @@ sessionQueryBindings =
   ]
 
 binding :: ReadModel q r -> RebuildGroupId -> TargetId -> SomeQueryModelBinding
-binding readModel rebuildGroup observedTarget =
+binding readModel rebuildGroup observedTarget = bindingMany readModel rebuildGroup [observedTarget]
+
+bindingMany :: ReadModel q r -> RebuildGroupId -> [TargetId] -> SomeQueryModelBinding
+bindingMany readModel rebuildGroup observedTargets =
   SomeQueryModelBinding
     QueryModelBinding
       { queryModelId = must (mkQueryModelId readModel.name),
         readModel,
         rebuildGroup,
-        observedTargets = [observedTarget],
+        observedTargets,
         claimSite = site ("query model " <> readModel.name)
       }
 

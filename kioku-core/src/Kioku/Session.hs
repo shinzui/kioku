@@ -47,6 +47,15 @@ module Kioku.Session
     getDelegationChildren,
     getAwaitingByCorrelationKey,
     getTurns,
+    SessionFilter (..),
+    SessionSelection (..),
+    SessionCounts (..),
+    SessionRelations (..),
+    TurnRow (..),
+    getPageWithContext,
+    getCountsWithContext,
+    getTurnsPageWithContext,
+    getRelationsWithContext,
   )
 where
 
@@ -72,6 +81,7 @@ import Kioku.Api.Access
 import Kioku.Api.Scope (MemoryScope, Namespace (..), scopeKindText, scopeNamespaceText, scopeRefText)
 import Kioku.Distill.Timer (l1TimerScheduleProjection)
 import Kioku.Id (SessionId, idText)
+import Kioku.Pagination (BoundedPageError, Connection, PageRequest)
 import Kioku.Prelude
 import Kioku.ProjectionCatalog (kiokuProjectionCatalog, sessionProjectionSet)
 import Kioku.Session.Domain
@@ -80,23 +90,35 @@ import Kioku.Session.ReadModel
   ( AwaitingSessionsByCorrelationKeyQuery (..),
     SessionByIdQuery (..),
     SessionChainQuery (..),
+    SessionCounts (..),
     SessionDelegationChildrenQuery (..),
+    SessionFilter (..),
+    SessionRelations (..),
+    SessionRelationsQuery (..),
     SessionRow (..),
+    SessionSelection (..),
     SessionsByFocusQuery (..),
     SessionsByNamespaceQuery (..),
     SessionsByScopeQuery (..),
     SessionsByStartedRangeQuery (..),
+    SessionsCountQuery (..),
+    SessionsPageQuery (..),
     TurnRow (..),
     TurnsBySessionQuery (..),
+    TurnsPageQuery (..),
     awaitingSessionsByCorrelationKeyReadModel,
     sessionByIdReadModel,
     sessionChainReadModel,
     sessionDelegationChildrenReadModel,
+    sessionRelationsReadModel,
     sessionsByFocusReadModel,
     sessionsByNamespaceReadModel,
     sessionsByScopeReadModel,
     sessionsByStartedRangeReadModel,
+    sessionsCountReadModel,
+    sessionsPageReadModel,
     turnsBySessionReadModel,
+    turnsPageReadModel,
   )
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource)
@@ -821,3 +843,16 @@ runSessionCommand sid cmd = do
     case result of
       Left err -> Left (SessionCommandRejected err)
       Right _ -> Right sid
+
+-- | Filters and lineage selection are applied in SQL before the bounded page.
+getPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionSelection -> PageRequest -> Eff es (Either ReadModelError (Either BoundedPageError (Connection SessionRow)))
+getPageWithContext context selection page = runQueryWithFreshness Nothing Immediate sessionsPageReadModel SessionsPageQuery {context, selection, page}
+
+getCountsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionSelection -> Eff es (Either ReadModelError SessionCounts)
+getCountsWithContext context selection = runQueryWithFreshness Nothing Immediate sessionsCountReadModel SessionsCountQuery {context, selection}
+
+getTurnsPageWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionId -> PageRequest -> Eff es (Either ReadModelError (Either BoundedPageError (Connection TurnRow)))
+getTurnsPageWithContext context sid page = runQueryWithFreshness Nothing Immediate turnsPageReadModel TurnsPageQuery {context, sessionId = idText sid, page}
+
+getRelationsWithContext :: (IOE :> es, Store :> es) => MemoryAccessContext -> SessionId -> Eff es (Either ReadModelError SessionRelations)
+getRelationsWithContext context sid = runQueryWithFreshness Nothing Immediate sessionRelationsReadModel SessionRelationsQuery {context, sessionId = idText sid}
