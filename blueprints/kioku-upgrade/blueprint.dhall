@@ -101,7 +101,6 @@ in  S.Blueprint::{
         , to = "0.9.1.0"
         , prompt = ./migrations/0-9-0-2-to-0-9-1-0.md as Text
         }
-
       ]
     , tags =
       [ "haskell"

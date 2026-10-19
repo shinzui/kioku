@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## 0.9.1.0 — 2026-10-19 (release candidate)
+## 0.9.1.0 — 2026-10-19
 
 - Add context-first, SQL-bounded Session and Memory pages, scalar counts,
   complete relation counts and turns/lineage traversal. Existing facades remain.
@@ -12,7 +12,7 @@
   the 13 previously released Kioku payload hashes are unchanged.
 - Register six additional immediate query models. Existing persisted catalogs
   require the supported Keiro catalog preview/adoption before ordinary startup.
-- Align all five packages at 0.9.1.0. Nothing has been published yet.
+- Align all five packages at 0.9.1.0.
 
 ## 0.9.0.2 — 2026-10-16
 

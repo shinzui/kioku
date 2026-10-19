@@ -1,7 +1,7 @@
 # Bounded Session and Memory reads
 
 Kioku 0.9.1.0 adds compatible facades in `Kioku.Session` and `Kioku.Memory`.
-The candidate is not published yet. This closes the bounded-read portion of
+This closes the bounded-read portion of
 `mori://shinzui/kioku/okf/improvement-requests/concepts/IR-2`, required by
 `mori://shinzui/rei/masterplans/29-close-rei-cli-and-http-api-gaps-on-the-haskell-jitsurei-contract`.
 

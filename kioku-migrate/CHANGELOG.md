@@ -2,17 +2,9 @@
 
 ## [Unreleased]
 
-## 0.9.1.0 — 2026-10-19 (release candidate)
+## 0.9.1.0 — 2026-10-19
 
-- Add context-first, SQL-bounded Session and Memory pages, scalar counts,
-  complete relation counts and turns/lineage traversal. Existing facades remain.
-- Retain native Memory priority order and exact versus namespace-wide scope.
-- Expose an authoritative archive changed receipt, including duplicate races.
-- Add Kioku migration 0014 with keyset indexes. The composed plan has 61 entries;
-  the 13 previously released Kioku payload hashes are unchanged.
-- Register six additional immediate query models. Existing persisted catalogs
-  require the supported Keiro catalog preview/adoption before ordinary startup.
-- Align all five packages at 0.9.1.0. Nothing has been published yet.
+- Adopt migration 0014 and reconcile six added query identities. Existing persisted catalogs require supported Keiro preview/adoption after draining old hosts; no private registry SQL or projection rebuild is needed.
 
 ## 0.9.0.2 — 2026-10-16
 
