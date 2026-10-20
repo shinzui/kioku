@@ -7,8 +7,8 @@ status: in-progress
 origin: mori://shinzui/rei/masterplans/29-close-rei-cli-and-http-api-gaps-on-the-haskell-jitsurei-contract
 generated:
   by: openai/gpt-6.1-sol
-  at: "2026-10-20T00:16:39Z"
-timestamp: "2026-10-20T00:16:39Z"
+  at: "2026-10-20T00:18:15Z"
+timestamp: "2026-10-20T00:18:15Z"
 verified:
   - by: openai/gpt-6-astra
     at: "2026-10-19T23:30:39Z"
@@ -57,8 +57,8 @@ created in commit `77172de` and linked to intention
 `intention_01m5b7m4fze9qt6caq2cdy1axg`.
 
 In progress: implementation and local acceptance are verified in commits
-`2787394` and `8cdd9c5`. The 0.11.0.0 release candidate is prepared, but its
-release commit, tag and publication await approval. Acceptance criteria 1–6 are
+`2787394` and `8cdd9c5`. The user approved committing the prepared 0.11.0.0
+release changes; tagging and publication remain pending. Acceptance criteria 1–6 are
 verified; criterion 7 remains open. This request is not completed or ready for
 consumer adoption.
 

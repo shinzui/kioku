@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.11.0.0 — 2026-10-19
+
+### Changed
+
+- Align internal dependencies with the 0.11.0.0 Memory runtime and migration test support. CLI commands and arguments are unchanged.
+
 ## 0.10.0.0 — 2026-10-19
 
 ### Changed

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.11.0.0 — 2026-10-19
+
+### Changed
+
+- Align internal dependencies with 0.11.0.0, including additive migration 0015 and the 62-entry composed plan. Catalog adoption remains an explicit host administration step before normal runtime startup.
+
 ## 0.10.0.0 — 2026-10-19
 
 ### Changed

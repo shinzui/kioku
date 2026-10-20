@@ -11,6 +11,7 @@ edit. What to edit is in the edge prompt.
 
 | Kioku | `keiro` / `keiro-core` | `kiroku-store` | `keiki` | `shibuya-core` | `shibuya-kiroku-adapter` | `baikai` |
 |---|---|---|---|---|---|---|
+| 0.11.0.0 | `^>=0.21.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `>=0.7.0.0 && <0.9` |
 | 0.10.0.0 | `^>=0.21.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `>=0.7.0.0 && <0.9` |
 | 0.9.1.0 | `^>=0.21.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `>=0.7.0.0 && <0.9` |
 | 0.9.0.2 | `^>=0.21.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `>=0.7.0.0 && <0.9` |
@@ -35,6 +36,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `baikai` / `baikai-claude` | `baikai-openai` | `baikai-effectful` | `shikumi` | `shikumi-trace` |
 |---|---|---|---|---|---|
+| 0.11.0.0 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.10.0.0 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.9.1.0 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.9.0.2 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
@@ -53,6 +55,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `keiro-migrations` | `kiroku-store-migrations` | `pg-migrate` |
 |---|---|---|---|
+| 0.11.0.0 | `^>=0.21.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
 | 0.10.0.0 | `^>=0.21.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
 | 0.9.1.0 | `^>=0.21.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
 | 0.9.0.2 | `^>=0.21.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
@@ -86,6 +89,7 @@ asserts on migration counts or ids needs the right row for its release.
 
 | Kioku | Total | Kiroku | Keiro | Kioku |
 |---|---|---|---|---|
+| 0.11.0.0 | 62 | 15 | 32 | 15 |
 | 0.9.1.0–0.10.0.0 | 61 | 15 | 32 | 14 |
 | 0.9.0.0 | 60 | 15 | 32 | 13 |
 | 0.8.0.0–0.8.0.2 | 57 | 12 | 32 | 13 |
@@ -167,3 +171,10 @@ provides. Kiroku runs acceptance shells on **17 and 18**. A project deploying on
 PostgreSQL 17 should treat Kiroku's 17 coverage as the authority for anything in
 the `kiroku` schema, and should not assume Kioku's suites would have caught a
 17-specific defect in a lower layer.
+
+0.11.0.0 adds migration 0015 (active Memory recency index) with a transactional
+write pause and no ledger fixup. Four Memory query registrations require public
+catalog preview/adoption before startup. Consumers initialize the new
+`MemoryFilter.scopeKind` field explicitly; the 0.10.0.0-to-0.11.0.0 edge explains
+source migration, complete-host catalog selection and tag cursor mutation limits.
+The upstream runtime, AI and migration cohorts are unchanged.

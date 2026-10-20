@@ -4,7 +4,7 @@ let S =
 
 in  S.Blueprint::{
     , name = "kioku-upgrade"
-    , version = Some "0.4.2"
+    , version = Some "0.4.3"
     , description = Some
         "Upgrade guidance for projects consuming Kioku, the agent memory runtime. One edge per released version window that needs judgement work, with the Keiro cohort edge entailed so a project that depends only on Kioku still crosses it exactly once."
     , prompt = ./prompt.md as Text
@@ -105,6 +105,11 @@ in  S.Blueprint::{
         , from = "0.9.1.0"
         , to = "0.10.0.0"
         , prompt = ./migrations/0-9-1-0-to-0-10-0-0.md as Text
+        }
+      , S.BlueprintMigration::{
+        , from = "0.10.0.0"
+        , to = "0.11.0.0"
+        , prompt = ./migrations/0-10-0-0-to-0-11-0-0.md as Text
         }
       ]
     , tags =

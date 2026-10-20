@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.11.0.0 — 2026-10-19
+
+### Changed
+
+- Align the shared release version and test dependency at 0.11.0.0. The pure API types are unchanged; the breaking filter extension lives in `kioku-core`.
+
 ## 0.10.0.0 — 2026-10-19
 
 ### Changed

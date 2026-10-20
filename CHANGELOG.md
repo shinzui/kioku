@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## 0.11.0.0 — 2026-10-19
+
+### Breaking Changes
+
+- `MemoryFilter` gains a fifth field, `scopeKind :: Maybe ScopeKind`. Existing positional callers append `Nothing`; record callers set the field explicitly. Kind intersects the explicit target and other filters before pages/counts.
+
+### Added
+
+- Fixed-field Memory metadata point/page reads, separate ordinal tag pages, and dedicated newest-active metadata, all permission-checked before Store access. Complete content and tag values are retained; missing/foreign parents, empty collections, page failures and infrastructure failures stay distinct.
+- Four catalog query registrations with a public pre-startup preview/adoption recipe, exact 0.10.0.0 historical catalog rehearsal and repeat-adoption checks.
+- Migration 0015 adds an active-only partition/namespace/recency index, removing whole-population sorts in the measured fixture. It builds transactionally with a write pause; the composed plan grows from 61 to 62 entries. Previous SQL/checksums remain unchanged, with no ledger fixup.
+
+### Changed
+
+- Preserve priority-based ordinary lists, session recency and ascending supersession order. Newest-active ignores priority, resolves ties by ascending ID and intersects explicitly non-active status to absence.
+- Document tag cursor restart after updates, memory-space isolation, filter migration, locking and rollback; record the durable contract in ADR-15.
+- Add the 0.10.0.0-to-0.11.0.0 consumer upgrade edge. All five package versions and 16 internal bounds align at 0.11.0.0; upstream cohorts are unchanged.
+
 ## 0.10.0.0 — 2026-10-19
 
 ### Breaking Changes

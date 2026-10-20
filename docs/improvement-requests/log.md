@@ -2,6 +2,9 @@
 
 ## 2026-10-20
 
+* **Release preparation**: The user approved committing the prepared 0.11.0.0
+  version, changelog and upgrade changes. IR-6 remains in progress pending
+  tagging and publication.
 * **Status reconciliation**: IR-6 is in progress: implementation and local acceptance pass
   in `2787394` and `8cdd9c5`, with 0.11.0.0 publication pending approval. IR-2 is
   partially delivered by published 0.10.0.0 bounded reads; chronological retention

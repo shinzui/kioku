@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## 0.11.0.0 — 2026-10-19
+
+### Breaking Changes
+
+- Add `scopeKind :: Maybe ScopeKind` as the fifth `MemoryFilter` field. Append `Nothing` to positional calls and set it explicitly in records to preserve prior selection; kind intersects the explicit target, status, type and session filters.
+
+### Added
+
+- Permission-checked `getMetadataWithContext`, `getMetadataPageWithContext`, `getTagsPageWithContext` and `getNewestActiveMetadataWithContext`. Metadata selects complete scalar fields and a SQL tag count without decoding tag arrays; separate tag Connections retain full values with bounded ordinal cursors.
+- Deterministic newest-active selection ignores priority and intersects non-active status to absence. Existing list orders and complete status counts are preserved.
+- Four query registrations on the existing memories owner. Catalog adoption before normal startup is required; the exact 0.10.0.0 upgrade rehearsal proves retained data and idempotence. Projection shape identities are unchanged.
+
+### Changed
+
+- Document parent absence versus empty collections, archive visibility, restart after tag replacement, flat failures, outer Store failures, and the public pre-startup adoption recipe.
+- Test more than 100 tied Memories, 205 tags with large Unicode values, zero-Store permission denial, failure distinctions, recency/kind intersections and measured partition-first access paths.
+
 ## 0.10.0.0 — 2026-10-19
 
 ### Breaking Changes

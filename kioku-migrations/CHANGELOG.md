@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## 0.11.0.0 — 2026-10-19
+
+### Added
+
+- Migration `0015-active-memory-recency.sql` adds an active-only memory-space/namespace/creation-time/ID index. It builds inside the migration transaction with a SHARE lock: reads continue while writers wait for commit.
+- A previous fourteen-entry Kioku manifest-prefix upgrade test proves only 0015 applies and existing Memory values remain unchanged. The composed plan has 62 entries (15 Kiroku, 32 Keiro, 15 Kioku); all shipped SQL and checksums are preserved and no ledger fixup is needed.
+
 ## 0.10.0.0 — 2026-10-19
 
 ### Changed
