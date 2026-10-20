@@ -2,6 +2,11 @@
 
 ## 2026-10-20
 
+* **Completion**: IR-6 and IR-7 are completed by Kioku `v0.11.0.0` at release commit
+  `1375927d81eda88e3411758c62251f5117916b1f`. All five Hackage sources and four library
+  documentation archives are published; downloaded source hashes match the upload artifacts.
+  The immutable tag, GitHub release and migration guidance cover EP-49 and EP-50. Consumer
+  adoption remains downstream work.
 * **Implementation**: IR-7 is in progress: `archiveLegacyChanged` and seven public-facade
   PostgreSQL tests pass locally under ExecPlan 50, verifying attribution, races, partition/context
   gates and typed failure parity. All 496 regression tests, build and Nix/package checks pass.

@@ -3,12 +3,20 @@ type: Improvement Request
 title: Expose fixed Memory metadata, tag pages and recency queries
 description: Provide permission-checked fixed Memory metadata, separately paged tags, newest-active lookup and scope-kind filtering so Rei can expose bounded resources without private Kioku SQL or collection preloading.
 requestId: IR-6
-status: in-progress
+status: completed
+completedAt: "2026-10-20T00:34:38Z"
+resolution: >-
+  Published Kioku v0.11.0.0 from release commit 1375927d81eda88e3411758c62251f5117916b1f with all five
+  Hackage packages, four library documentation archives and the combined migration guidance.
+  The immutable tag and GitHub release are at https://github.com/shinzui/kioku/releases/tag/v0.11.0.0.
+  Downloaded sources match the upload digests and expose the supported public APIs.
+  All 496 tests and build, Nix, package and source-distribution checks pass.
+  Consumer adoption remains downstream work.
 origin: mori://shinzui/rei/masterplans/29-close-rei-cli-and-http-api-gaps-on-the-haskell-jitsurei-contract
 generated:
   by: openai/gpt-6.1-sol
-  at: "2026-10-20T00:18:15Z"
-timestamp: "2026-10-20T00:18:15Z"
+  at: "2026-10-20T00:34:38Z"
+timestamp: "2026-10-20T00:34:38Z"
 verified:
   - by: openai/gpt-6-astra
     at: "2026-10-19T23:30:39Z"
@@ -43,6 +51,22 @@ reviews:
       against Hackage and upstream tags. ExecPlan 49 records the implementation
       design and acceptance proof. This review accepts project fit and the
       clarified request; implementation tests and publication remain pending.
+  - kind: model
+    reviewer: "codex (release verification and status self-review)"
+    reviewed_at: "2026-10-20T00:34:38Z"
+    document_timestamp: "2026-10-20T00:34:38Z"
+    scope: content-and-metadata
+    outcome: approved
+    provider: openai
+    model: gpt-6.1-sol
+    effort: unspecified
+    context: >-
+      Verified the combined 0.11.0.0 tag and GitHub release, all five published
+      source archives against upload SHA-256 digests, and all four library documentation
+      pages. Published core source and Haddock expose both plans' APIs and the
+      legacy bridge's deprecation/shared-worker contract. All 496 regression tests,
+      build, Nix and package checks passed. This self-review records completion;
+      it does not claim downstream consumer adoption.
 
 ---
 
@@ -56,11 +80,10 @@ decisions. Implementation is tracked by
 created in commit `77172de` and linked to intention
 `intention_01m5b7m4fze9qt6caq2cdy1axg`.
 
-In progress: implementation and local acceptance are verified in commits
-`2787394` and `8cdd9c5`. The user approved committing the prepared 0.11.0.0
-release changes; tagging and publication remain pending. Acceptance criteria 1–6 are
-verified; criterion 7 remains open. This request is not completed or ready for
-consumer adoption.
+Completed in [Kioku v0.11.0.0](https://github.com/shinzui/kioku/releases/tag/v0.11.0.0) from release commit
+`1375927d81eda88e3411758c62251f5117916b1f`. Implementation commits `2787394` and
+`8cdd9c5` are included. All seven acceptance criteria are verified, including
+published sources and migration notes. Consumer adoption remains downstream work.
 
 The validation confirmed that these are reusable Kioku read capabilities.
 Kioku owns memory selection, SQL, projection registration and consumption of the
@@ -77,8 +100,8 @@ The plan records these implementation clarifications:
   across replacements is not required.
 - Scope-kind filtering intersects the explicit target and existing predicates;
   it never widens an exact global or entity scope. Adding the field to the
-  exported `MemoryFilter` constructor requires a PVP major release, provisionally
-  0.11.0.0 subject to release-time version checks.
+  exported `MemoryFilter` constructor requires a PVP major release, published as
+  0.11.0.0 after release-time package/tag checks.
 - New query declarations require a supported catalog preview/adoption path
   before normal startup, which rejects catalog drift. Acceptance includes an
   upgrade rehearsal from the exact 0.10.0.0 catalog. Query-registry reconciliation
@@ -159,7 +182,7 @@ nested error protocol or weaken the new authorization checks.
    notes before Rei adopts it. An unpublished prototype or local dependency
    override is not completion evidence.
 
-## Implementation evidence and remaining release work
+## Implementation and completion evidence
 
 The subsequently authorized implementation provides `getMetadataWithContext`,
 `getMetadataPageWithContext`, `getTagsPageWithContext` and
@@ -169,12 +192,13 @@ Migration 0015 adds the measured active-recency index and documents its locking.
 The exact 0.10.0.0 catalog upgrade is rehearsed through public preview/adoption,
 including refusal before adoption and repeated adoption afterward.
 
-All 489 tests pass across the four suites, including real PostgreSQL tag traversal,
+All 496 tests pass across the four suites, including real PostgreSQL tag traversal,
 ordering, isolation, permission gates, typed failures and the exact schema upgrade.
 The build, conventions, migration checks, flake checks, source distributions and
 Haddock preparation also pass. ExecPlan 49 records the detailed evidence.
 
-Publish the coherent five-package release and migration notes, verify its immutable
-source/tag evidence, and record the actual release here before closing criterion 7.
-The prepared 0.11.0.0 candidate is not a published dependency. Rei must not copy
-Kioku tables or projections.
+Published on 2026-10-20 UTC: [Kioku v0.11.0.0](https://github.com/shinzui/kioku/releases/tag/v0.11.0.0), release commit `1375927d81eda88e3411758c62251f5117916b1f`, annotated tag object `5b5f4d3ae99d623e760c96375303a6a732beb5f1`. All five packages are published: [kioku-api](https://hackage.haskell.org/package/kioku-api-0.11.0.0), [kioku-migrations](https://hackage.haskell.org/package/kioku-migrations-0.11.0.0), [kioku-core](https://hackage.haskell.org/package/kioku-core-0.11.0.0), [kioku-cli](https://hackage.haskell.org/package/kioku-cli-0.11.0.0), [kioku-migrate](https://hackage.haskell.org/package/kioku-migrate-0.11.0.0). All four library documentation archives are published and their module pages are reachable; `kioku-migrate` has no library documentation.
+
+Downloaded all five Hackage source archives and matched their SHA-256 digests to the verified upload artifacts. The published core archive has SHA-256 `0f63e1fdbf59511631ab52e849b1b2209a8da5945f4779bdc18135a680c337ac`; its facade exports all four fixed Memory inspection operations and `archiveLegacyChanged`, including the deprecation/Haddock contract and the unchanged guarded `archiveInChanged` call. Published Haddock exposes these APIs too. The source archives match the tagged package files, and the migrations archive includes all fifteen SQL files and the manifest. The release notes and 0.10.0.0-to-0.11.0.0 upgrade edge cover both plans. Consumer adoption remains downstream work and can now use the published API.
+
+Rei must not copy Kioku tables or projections.

@@ -3,12 +3,20 @@ type: Improvement Request
 title: Expose archive change receipts without inventing legacy principals
 description: Provide a supported authoritative archive changed receipt for hosts whose existing legacy-space commands truthfully carry UnattributedPrincipal, without weakening context-first authorization or fabricating identity.
 requestId: IR-7
-status: in-progress
+status: completed
+completedAt: "2026-10-20T00:34:38Z"
+resolution: >-
+  Published Kioku v0.11.0.0 from release commit 1375927d81eda88e3411758c62251f5117916b1f with all five
+  Hackage packages, four library documentation archives and the combined migration guidance.
+  The immutable tag and GitHub release are at https://github.com/shinzui/kioku/releases/tag/v0.11.0.0.
+  Downloaded sources match the upload digests and expose the supported public APIs.
+  All 496 tests and build, Nix, package and source-distribution checks pass.
+  Consumer adoption remains downstream work.
 origin: mori://shinzui/rei/plans/255-expose-agent-execution-sessions-memory-schedules-and-review-workflows
 generated:
   by: openai/gpt-6.1-sol
-  at: "2026-10-20T00:25:41Z"
-timestamp: "2026-10-20T00:25:41Z"
+  at: "2026-10-20T00:34:38Z"
+timestamp: "2026-10-20T00:34:38Z"
 verified:
   - by: openai/gpt-6-astra
     at: "2026-10-19T23:37:23Z"
@@ -43,6 +51,22 @@ reviews:
       support receipt parity only as an explicitly deprecated legacy bridge,
       not a permanent historical-marker context. ExecPlan 50 records this scope,
       acceptance tests and publication prerequisite. Implementation remains pending.
+  - kind: model
+    reviewer: "codex (release verification and status self-review)"
+    reviewed_at: "2026-10-20T00:34:38Z"
+    document_timestamp: "2026-10-20T00:34:38Z"
+    scope: content-and-metadata
+    outcome: approved
+    provider: openai
+    model: gpt-6.1-sol
+    effort: unspecified
+    context: >-
+      Verified the combined 0.11.0.0 tag and GitHub release, all five published
+      source archives against upload SHA-256 digests, and all four library documentation
+      pages. Published core source and Haddock expose both plans' APIs and the
+      legacy bridge's deprecation/shared-worker contract. All 496 regression tests,
+      build, Nix and package checks passed. This self-review records completion;
+      it does not claim downstream consumer adoption.
 
 ---
 
@@ -60,8 +84,8 @@ first/repeat receipts, synchronized legacy and mixed races, exact unattributed p
 foreign active/archived IDs, context gates, missing and terminal errors, and compatibility
 attribution/ID parity. All 496 regression tests, the build, Nix checks and five package checks pass;
 ExecPlan 50 records the evidence.
-Publication remains pending, so criterion 5 and consumer adoption remain open.
-Release notes stay under Unreleased while the separate 0.11.0.0 release is in flight.
+Publication is complete in the combined 0.11.0.0 release, satisfying criterion 5.
+All acceptance criteria are complete; consumer adoption remains downstream work.
 
 The owner-side design exposes `Kioku.Memory.archiveLegacyChanged` over the
 existing legacy-space guard and authoritative archive worker. It preserves the
@@ -135,7 +159,13 @@ and idempotent-repeat behavior.
    An unpublished local wrapper is not an accepted dependency.
 
 Owner validation and implementation planning are now recorded in ExecPlan 50.
-Local implementation does not complete acceptance or authorize publication;
-the published API and migration guidance are still required. This remains separate from
+The user authorized the combined release; the published API and migration guidance
+now complete acceptance. This remains separate from
 [IR-6](expose-fixed-memory-metadata-tag-pages-and-recency-queries.md), which
 concerns read resources; the plans coordinate releases if shipped together.
+
+## Completion evidence
+
+Published on 2026-10-20 UTC: [Kioku v0.11.0.0](https://github.com/shinzui/kioku/releases/tag/v0.11.0.0), release commit `1375927d81eda88e3411758c62251f5117916b1f`, annotated tag object `5b5f4d3ae99d623e760c96375303a6a732beb5f1`. All five packages are published: [kioku-api](https://hackage.haskell.org/package/kioku-api-0.11.0.0), [kioku-migrations](https://hackage.haskell.org/package/kioku-migrations-0.11.0.0), [kioku-core](https://hackage.haskell.org/package/kioku-core-0.11.0.0), [kioku-cli](https://hackage.haskell.org/package/kioku-cli-0.11.0.0), [kioku-migrate](https://hackage.haskell.org/package/kioku-migrate-0.11.0.0). All four library documentation archives are published and their module pages are reachable; `kioku-migrate` has no library documentation.
+
+Downloaded all five Hackage source archives and matched their SHA-256 digests to the verified upload artifacts. The published core archive has SHA-256 `0f63e1fdbf59511631ab52e849b1b2209a8da5945f4779bdc18135a680c337ac`; its facade exports all four fixed Memory inspection operations and `archiveLegacyChanged`, including the deprecation/Haddock contract and the unchanged guarded `archiveInChanged` call. Published Haddock exposes these APIs too. The source archives match the tagged package files, and the migrations archive includes all fifteen SQL files and the manifest. The release notes and 0.10.0.0-to-0.11.0.0 upgrade edge cover both plans. Consumer adoption remains downstream work and can now use the published API.
