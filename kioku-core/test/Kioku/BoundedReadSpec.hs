@@ -280,15 +280,24 @@ supersessionPages = do
             supersededBy = c,
             supersededAt = now
           }
+  merged <- record testContext entity now
+  _ <- right =<< M.mergeWithContext testContext merged c
+  -- A corrupt self-link cannot make the shared recursive walk loop forever.
+  runTransaction (Tx.statement (idText c) (preparable "UPDATE kioku.memories SET superseded_by=memory_id WHERE memory_id=$1" (E.param (E.nonNullable E.text)) D.noResult))
+  forM_ [(a, "superseded"), (b, "superseded"), (merged, "merged")] \(identity, expectedStatus) -> do
+    retained <- right =<< M.getMetadataWithContext testContext identity
+    check "retired metadata point remains inspectable" (Just expectedStatus) ((.status) <$> retained)
+    tags <- right =<< M.getTagsPageWithContext testContext identity (page 1)
+    check "retired tag parent remains visible" (Just 0) (length . (.edges) <$> tags)
   let selection = M.SupersessionChain (idText b)
       get req = right =<< M.getPageWithContext testContext selection req
   first <- get (page 1)
   rest <- get (PageRequest 100 Forward first.pageInfo.endCursor)
-  check "both directions" (sort (map idText [a, b, c])) (sort (map (.memoryId) (nodes first <> nodes rest)))
+  check "both directions" (sort (map idText [a, b, c, merged])) (sort (map (.memoryId) (nodes first <> nodes rest)))
   metadata <- walkForward (\req -> right =<< M.getMetadataPageWithContext testContext selection req)
-  check "metadata shares cycle-safe chain semantics and order" (sort (map idText [a, b, c])) (map (.memoryId) metadata)
+  check "metadata shares cycle-safe chain semantics and order" (sort (map idText [a, b, c, merged])) (map (.memoryId) metadata)
   counts <- right =<< M.getCountsWithContext testContext selection
-  check "complete chain counts" (3, 1, 2) (counts.total, counts.active, counts.superseded)
+  check "complete chain counts" (4, 1, 2, 1) (counts.total, counts.active, counts.superseded, counts.merged)
   foreignPage <- right =<< M.getPageWithContext otherContext selection (page 100)
   check "foreign chain invisible" [] (map (.memoryId) (nodes foreignPage))
 

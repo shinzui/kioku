@@ -1211,7 +1211,7 @@ testKirokuOnlyAdoption =
     adoption <- runMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let MigrationReport {results = adoptionResults} = adoption
     length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 15
-    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 46
+    length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 47
 
     -- Verified and skipped, never re-executed: the stored rows keep their checksums and their
     -- original application timestamps.
@@ -1627,7 +1627,7 @@ withSupportedCoddUpgrade use =
     use connStr
 
 expectedKiokuSchemaChecksum :: Text
-expectedKiokuSchemaChecksum = "54fa912ca9f6332cb30ed604eaca9e4fdf25d38c09efc74bd1a5b5760273a112"
+expectedKiokuSchemaChecksum = "793da81763342806e2e29ea71b4fe17b5d620052dca23be355b8602bc61d6fbc"
 
 kiokuSchemaSnapshotStatement :: Statement () Text
 kiokuSchemaSnapshotStatement =
@@ -1877,9 +1877,19 @@ testRecencyUpgrade = withBareDatabase $ \connStr -> do
       )
   let snapshot = preparable "SELECT row_to_json(m)::text FROM kioku.memories m WHERE memory_id='upgrade-memory'" E.noParams (D.singleRow (D.column (D.nonNullable D.text)))
   before <- query connStr snapshot
+  oldSchema <- query connStr kiokuSchemaSnapshotStatement
+  checksumHex (Text.Encoding.encodeUtf8 oldSchema) @?= "54fa912ca9f6332cb30ed604eaca9e4fdf25d38c09efc74bd1a5b5760273a112"
   migrated <- runMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
   appliedNow migrated @?= [expectRight (migrationId "kioku" "0015-active-memory-recency")]
   query connStr snapshot >>= (@?= before)
+  newSchema <- query connStr kiokuSchemaSnapshotStatement
+  let oldFacts = Text.lines oldSchema
+      newFacts = Text.lines newSchema
+      addedFacts = filter (`notElem` oldFacts) newFacts
+  length addedFacts @?= 1
+  assertBool "only the recency index is added" (all (Text.isPrefixOf "index|memories|memories_space_active_recency_idx|") addedFacts)
+  filter (`notElem` addedFacts) newFacts @?= oldFacts
+  checksumHex (Text.Encoding.encodeUtf8 newSchema) @?= expectedKiokuSchemaChecksum
   indexExists <- query connStr (preparable "SELECT to_regclass('kioku.memories_space_active_recency_idx') IS NOT NULL" E.noParams (D.singleRow (D.column (D.nonNullable D.bool))))
   indexExists @?= True
   repeated <- runMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure

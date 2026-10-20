@@ -122,8 +122,10 @@ case previewResult of
 For 0.10.0.0 to 0.11.0.0, only the `kioku-memory` group changes. Preview and
 review that group selection; do not select unrelated host groups. This example
 uses a Kioku-only catalog for a Kioku-only runtime. A host composing catalogs
-must substitute its complete validated catalog and inventory throughout the
-recipe. Adoption preserves Memory rows and events and is safe to repeat.
+must use its complete validated catalog for preview/adoption and derive the
+corresponding inventory from it. Restrict the reviewed group selection to the
+affected Kioku-owned groups; do not automatically adopt every changed host group.
+Adoption preserves Memory rows and events and is safe to repeat.
 On rollback drain new hosts and adopt using the old compiled catalog before
 starting the old binary. Never edit registry/catalog rows to bypass drift.
 
