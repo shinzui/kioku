@@ -1,5 +1,13 @@
 # Bundle Update Log
 
+## 2026-10-20
+
+* **Status reconciliation**: IR-6 is in progress: implementation and local acceptance pass
+  in `2787394` and `8cdd9c5`, with 0.11.0.0 publication pending approval. IR-2 is
+  partially delivered by published 0.10.0.0 bounded reads; chronological retention
+  and full recall acceptance remain open. Rechecked IR-7: its accepted status is
+  correct, with implementation still pending under ExecPlan 50.
+
 ## 2026-10-19
 
 * **Status change**: Accept IR-7 after source and ADR validation; link ExecPlan 50 and its intention. Scope the change to a deprecated legacy-only archive receipt bridge with unchanged attribution, authorization boundaries and typed outcomes. Implementation and publication remain pending.

@@ -4,12 +4,12 @@ title: Add indexed session and bounded memory read models
 description: >-
   Provide subject-reference session lookup plus SQL-bounded recall and retention-candidate queries
   so long-lived consumers do not scan unbounded Kioku histories in application memory.
-timestamp: "2026-07-30T14:36:35Z"
+timestamp: "2026-10-20T00:16:39Z"
 generated:
-  by: human:nadeem
-  at: "2026-07-30T14:36:35Z"
+  by: openai/gpt-6.1-sol
+  at: "2026-10-20T00:16:39Z"
 requestId: IR-2
-status: proposed
+status: in-progress
 origin: mori://shinzui/shikigami
 ---
 
@@ -17,16 +17,37 @@ origin: mori://shinzui/shikigami
 
 ## Status
 
-Proposed. The session seam blocks
-`mori://shinzui/shikigami/plans/26-conversation-workflow-lifecycle-idle-timeout-journal-rotation-session-completion`;
-the bounded memory seams block milestones 2 and 3 of
+In progress; partially delivered. The published
+[0.10.0.0 release](https://github.com/shinzui/kioku/releases/tag/v0.10.0.0)
+(commit `5f4afc872b09d615d1bb8c78369d6912161c550f`) delivers permission-checked,
+partitioned Session and Memory pages/counts, indexed `SessionFilter.subjectRef`
+selection and documented bounded zero/one/many lookup. See
+[bounded reads](../user/bounded-reads.md). The package is available on
+[Hackage](https://hackage.haskell.org/package/kioku-core-0.10.0.0).
+
+[ExecPlan 49](../plans/49-expose-fixed-memory-metadata-tag-pages-and-recency-queries.md)
+and [IR-6](expose-fixed-memory-metadata-tag-pages-and-recency-queries.md) add locally
+verified newest-active metadata lookup and scope-kind filtering; their publication
+is still pending. A newest-active point lookup does not provide the requested
+newest-first recall collection or chronological retention-candidate pages.
+
+Do not mark this request completed: ordinary Memory pages remain priority-first
+(and session-filtered pages use recency). The dedicated retention ordering
+`(created_at, memory_id)`, stability under concurrent inserts and the full
+query-plan/acceptance evidence still need to be delivered or explicitly resolved.
+The older unbounded `Kioku.Recall.getActiveByScope` list is not a bounded substitute.
+
+The original consumers are
+`mori://shinzui/shikigami/plans/26-conversation-workflow-lifecycle-idle-timeout-journal-rotation-session-completion`
+and
 `mori://shinzui/shikigami/plans/34-memory-lifecycle-distillation-retention-and-shared-scope`.
+Their current adoption status is not established by this owner-side update.
 
 ## Context
 
-Conversation resumption needs to resolve a Kioku session from its stable `subjectRef`, but the
-released session read model exposes scope-oriented queries only. Memory lifecycle work also needs a
-hard operational bound. Fetching all active rows and applying `take`, sorting, or grouping in
+At request time, conversation resumption needed to resolve a Kioku session from its stable
+`subjectRef`, but the released session read model exposed scope-oriented queries only.
+Memory lifecycle work also needs a hard operational bound. Fetching all active rows and applying `take`, sorting, or grouping in
 Haskell does not bound database, transfer, or heap cost.
 
 ## Requested Change
@@ -72,3 +93,6 @@ inside one memory space.
 - 2026-08-06: Made the proposed queries consume the new memory-space and explicit recall-target
   contracts so the bounded-read work does not introduce unpartitioned APIs before those
   MasterPlans land.
+- 2026-10-20: Record the published 0.10.0.0 bounded-read delivery and the locally verified
+  IR-6 extension; retain in-progress status because the full retention/recall acceptance
+  and release evidence are not yet satisfied.

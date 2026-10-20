@@ -3,12 +3,12 @@ type: Improvement Request
 title: Expose fixed Memory metadata, tag pages and recency queries
 description: Provide permission-checked fixed Memory metadata, separately paged tags, newest-active lookup and scope-kind filtering so Rei can expose bounded resources without private Kioku SQL or collection preloading.
 requestId: IR-6
-status: accepted
+status: in-progress
 origin: mori://shinzui/rei/masterplans/29-close-rei-cli-and-http-api-gaps-on-the-haskell-jitsurei-contract
 generated:
-  by: openai/gpt-6-astra
-  at: "2026-10-19T23:30:39Z"
-timestamp: "2026-10-19T23:30:39Z"
+  by: openai/gpt-6.1-sol
+  at: "2026-10-20T00:16:39Z"
+timestamp: "2026-10-20T00:16:39Z"
 verified:
   - by: openai/gpt-6-astra
     at: "2026-10-19T23:30:39Z"
@@ -54,8 +54,13 @@ Accepted on 2026-10-19 after validation against Kioku's source and architectural
 decisions. Implementation is tracked by
 [ExecPlan 49](../plans/49-expose-fixed-memory-metadata-tag-pages-and-recency-queries.md),
 created in commit `77172de` and linked to intention
-`intention_01m5b7m4fze9qt6caq2cdy1axg`. Implementation and release acceptance are
-pending; the request is not yet in progress or completed.
+`intention_01m5b7m4fze9qt6caq2cdy1axg`.
+
+In progress: implementation and local acceptance are verified in commits
+`2787394` and `8cdd9c5`. The 0.11.0.0 release candidate is prepared, but its
+release commit, tag and publication await approval. Acceptance criteria 1–6 are
+verified; criterion 7 remains open. This request is not completed or ready for
+consumer adoption.
 
 The validation confirmed that these are reusable Kioku read capabilities.
 Kioku owns memory selection, SQL, projection registration and consumption of the
@@ -95,7 +100,9 @@ It supplements [IR-2](add-indexed-session-and-bounded-memory-read-models.md)
 with specific Memory resource gaps; it does not reopen the bounded Session
 facades delivered by that release.
 
-## Remaining gaps
+## Gaps in the 0.10.0.0 baseline
+
+The following gaps motivated the request and are addressed by the local implementation.
 
 - `MemoryRow` contains a growing `Set Text` of tags. Bounding the number of
   Memories does not bound the embedded tag collection. Existing rich point
@@ -152,7 +159,22 @@ nested error protocol or weaken the new authorization checks.
    notes before Rei adopts it. An unpublished prototype or local dependency
    override is not completion evidence.
 
-The original request authorized documentation only. Validation and implementation
-planning are now recorded in ExecPlan 49; this acceptance does not claim completed
-implementation or publication. Implementation and release work remain separate
-from the current documentation task. Rei must not copy Kioku tables or projections.
+## Implementation evidence and remaining release work
+
+The subsequently authorized implementation provides `getMetadataWithContext`,
+`getMetadataPageWithContext`, `getTagsPageWithContext` and
+`getNewestActiveMetadataWithContext`, plus SQL-intersected `MemoryFilter.scopeKind`.
+Metadata uses a direct scalar decoder rather than loading rich rows and removing tags.
+Migration 0015 adds the measured active-recency index and documents its locking.
+The exact 0.10.0.0 catalog upgrade is rehearsed through public preview/adoption,
+including refusal before adoption and repeated adoption afterward.
+
+All 489 tests pass across the four suites, including real PostgreSQL tag traversal,
+ordering, isolation, permission gates, typed failures and the exact schema upgrade.
+The build, conventions, migration checks, flake checks, source distributions and
+Haddock preparation also pass. ExecPlan 49 records the detailed evidence.
+
+Publish the coherent five-package release and migration notes, verify its immutable
+source/tag evidence, and record the actual release here before closing criterion 7.
+The prepared 0.11.0.0 candidate is not a published dependency. Rei must not copy
+Kioku tables or projections.
