@@ -1,6 +1,7 @@
 module Main where
 
 import Kioku.AIRuntimeSpec qualified as AIRuntimeSpec
+import Kioku.ArchiveReceiptSpec qualified as ArchiveReceiptSpec
 import Kioku.AwaitingSpec qualified as AwaitingSpec
 import Kioku.BoundedReadSpec qualified as BoundedReadSpec
 import Kioku.CodecCompatSpec qualified as CodecCompatSpec
@@ -30,6 +31,7 @@ main =
     testGroup
       "kioku"
       [ BoundedReadSpec.tests,
+        ArchiveReceiptSpec.tests,
         AIRuntimeSpec.tests,
         AwaitingSpec.tests,
         CodecCompatSpec.tests,

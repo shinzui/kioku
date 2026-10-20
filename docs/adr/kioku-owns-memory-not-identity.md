@@ -4,7 +4,7 @@ title: Kioku owns memory data, never identity or authorization
 description: >-
   Kioku stores memory and carries an authorization decision made elsewhere; it holds no roster,
   credentials, memberships, or policy, and takes no dependency on any identity service.
-timestamp: 2026-08-21T18:01:14Z
+timestamp: 2026-10-20T00:24:21Z
 docId: ADR-1
 status: accepted
 date: 2026-08-06
@@ -61,7 +61,11 @@ permission first, then agreement between the requested and authorized space, the
 between the claimed and authorized actor. The function is parameterized by error constructors so
 Memory and Session retain separate public error vocabularies without retaining separate policy
 implementations. `inLegacyMemorySpaceOnly` similarly centralizes the one-space boundary of their
-deprecated wrappers. Neither function constructs or widens a context.
+deprecated wrappers, including the `archiveLegacyChanged` receipt bridge. That bridge exposes
+only whether the already-admitted archive appended a fact, preserves the supplied attribution,
+and performs no authentication or authorization. It is deprecated from introduction and removed
+with `archive` after an announced context-based migration. Neither gate constructs or widens a
+context; the host retains its trusted boundary and must vouch for a real actor when migrating.
 
 The identity seams are two records of plain functions, `PrincipalDirectory` and
 `PermissionChecker`. Kioku names no vendor and imposes no wire protocol.

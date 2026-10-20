@@ -1,5 +1,12 @@
 # Bundle Update Log
 
+## 2026-10-20
+
+- Clarified [ADR-5](historical-attribution-is-marked-never-invented.md) and
+  [ADR-1](kioku-owns-memory-not-identity.md): the deprecated legacy archive receipt bridge
+  preserves attribution and existing host boundaries, with removal coupled to `archive`;
+  historical markers remain unavailable to context-first writes.
+
 ## 2026-10-19
 
 - Added [ADR-15](fixed-memory-fields-and-ordinal-tag-pages.md): direct scalar metadata, ordinal

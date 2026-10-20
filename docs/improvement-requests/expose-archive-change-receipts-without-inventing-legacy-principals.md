@@ -3,12 +3,12 @@ type: Improvement Request
 title: Expose archive change receipts without inventing legacy principals
 description: Provide a supported authoritative archive changed receipt for hosts whose existing legacy-space commands truthfully carry UnattributedPrincipal, without weakening context-first authorization or fabricating identity.
 requestId: IR-7
-status: accepted
+status: in-progress
 origin: mori://shinzui/rei/plans/255-expose-agent-execution-sessions-memory-schedules-and-review-workflows
 generated:
-  by: openai/gpt-6-astra
-  at: "2026-10-19T23:37:23Z"
-timestamp: "2026-10-19T23:37:23Z"
+  by: openai/gpt-6.1-sol
+  at: "2026-10-20T00:25:41Z"
+timestamp: "2026-10-20T00:25:41Z"
 verified:
   - by: openai/gpt-6-astra
     at: "2026-10-19T23:37:23Z"
@@ -55,7 +55,13 @@ the request against Kioku's source, its consumer adapter and architectural
 decisions. Implementation is tracked by
 [ExecPlan 50](../plans/50-expose-legacy-archive-change-receipts-without-inventing-principals.md),
 linked to intention `intention_01m5b89rmzey4vy07z7ypf4az4`.
-Implementation tests and publication remain pending.
+Implementation and the seven new public-facade PostgreSQL tests are locally verified:
+first/repeat receipts, synchronized legacy and mixed races, exact unattributed payloads,
+foreign active/archived IDs, context gates, missing and terminal errors, and compatibility
+attribution/ID parity. All 496 regression tests, the build, Nix checks and five package checks pass;
+ExecPlan 50 records the evidence.
+Publication remains pending, so criterion 5 and consumer adoption remain open.
+Release notes stay under Unreleased while the separate 0.11.0.0 release is in flight.
 
 The owner-side design exposes `Kioku.Memory.archiveLegacyChanged` over the
 existing legacy-space guard and authoritative archive worker. It preserves the
@@ -65,8 +71,8 @@ migration bridge; it does not establish a permanent API for new unattributed wri
 
 [ADR-5](../adr/historical-attribution-is-marked-never-invented.md) explicitly
 rejects historical-marker actors in new authorization contexts and acknowledges
-the temporary exception in the existing deprecated wrappers. The plan requires
-clarifying that exception for receipt parity while retaining the permanent
+the temporary exception in the existing deprecated wrappers. ADRs 1 and 5 now
+clarify that exception for receipt parity while retaining the permanent
 context-first contract. A host with no directory may vouch for a real stable
 principal under [ADR-1](../adr/kioku-owns-memory-not-identity.md); inventing one
 solely to obtain a receipt is not an attribution-preserving migration. Hosts
@@ -129,7 +135,7 @@ and idempotent-repeat behavior.
    An unpublished local wrapper is not an accepted dependency.
 
 Owner validation and implementation planning are now recorded in ExecPlan 50.
-Acceptance does not claim completed implementation or authorize publication as
-part of the current documentation task. This remains separate from
+Local implementation does not complete acceptance or authorize publication;
+the published API and migration guidance are still required. This remains separate from
 [IR-6](expose-fixed-memory-metadata-tag-pages-and-recency-queries.md), which
 concerns read resources; the plans coordinate releases if shipped together.

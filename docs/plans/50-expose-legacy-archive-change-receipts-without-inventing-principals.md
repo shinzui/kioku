@@ -10,6 +10,12 @@ provenance:
     model: "gpt-6-astra"
     harness: "codex-cli"
     at: 2026-10-19T23:33:45Z
+  revisions:
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-20T00:20:10Z
+      mode: "implement"
+      note: "Implement the legacy archive receipt bridge, database acceptance tests and migration contract."
 ---
 
 # Expose legacy archive change receipts without inventing principals
@@ -24,24 +30,30 @@ If durable project context changes, update or create ADRs in docs/adr/ in the sa
 
 Let an existing legacy-space host learn whether its archive command appended a fact without inventing an actor to obtain an authorization context. Expose `Kioku.Memory.archiveLegacyChanged`, a deprecated, explicitly legacy-only compatibility bridge returning the same `(MemoryId, Bool)` receipt as `archiveWithContextChanged`. A receipt describes this command's append: the first archive returns `True`, an accepted repeat returns `False`, and two competing successful archives produce exactly one `True`.
 
-This implements the validated scope of [IR-7](../improvement-requests/expose-archive-change-receipts-without-inventing-legacy-principals.md). It preserves the existing attribution, partition, error and command execution rules. The long-term API remains context-first and requires a genuinely vouched-for actor. Creating this plan authorizes documentation only; implementation and publication are future work. Full IR acceptance includes publication before consumer adoption.
+This implements the validated scope of [IR-7](../improvement-requests/expose-archive-change-receipts-without-inventing-legacy-principals.md). It preserves the existing attribution, partition, error and command execution rules. The long-term API remains context-first and requires a genuinely vouched-for actor. The user authorized implementation on 2026-10-19; publication follows the repository release workflow after the local candidate is reviewable. Full IR acceptance includes publication before consumer adoption.
 
 
 ## Progress
 
 
-- [ ] Milestone 1: The public legacy bridge returns authoritative first/repeat receipts and preserves unattributed event payloads in a real PostgreSQL consumer test.
-- [ ] Milestone 2: Public-facade tests prove concurrent receipt ownership, partition isolation, context gates and typed failure parity.
-- [ ] Milestone 3: Migration documentation, ADR clarification and release notes explain the supported temporary bridge; the full affected build and tests pass.
+- [x] Milestone 1 (2026-10-20): The public legacy bridge returns authoritative first/repeat receipts and preserves unattributed event payloads. The real PostgreSQL first/repeat test passed, checking exactly one archive, its original timestamp and serialized `kioku:unattributed` actor marker.
+- [x] Milestone 2 (2026-10-20): All seven `Archive receipts` PostgreSQL tests passed. Synchronized legacy/legacy and legacy/context races each returned exactly one `True`, whose actor and timestamp matched the sole durable archive. Foreign active/archived IDs, context gates on active/archived rows, missing/terminal errors and compatibility attribution/ID parity passed without rejected writes changing streams or rows. Full regression acceptance is recorded with Milestone 3.
+- [x] Milestone 3 (2026-10-20): Migration examples in all three user guides, ADR-1/ADR-5 clarifications and Unreleased notes are complete. `nix develop -c cabal build all` and `nix develop -c cabal test all --test-show-details=direct` passed: API 125, migrations 32, core 275, CLI 64 (496 total). `nix flake check`, all five `cabal check` invocations, the formatter, Haskell conventions and whitespace checks passed. Source distributions were checked for the public bridge contract and all migration SQL/manifest files. Final release version and publication remain Milestone 4 work.
 - [ ] Milestone 4: A correctly versioned release publishes the API and migration guidance, with immutable tag and Hackage source evidence recorded before consumer adoption.
 
 
 ## Surprises & Discoveries
 
 
+2026-10-20: Cabal splits the original unquoted multiword Tasty patterns, causing a pattern-parse failure before tests run. Quote the pattern inside `--test-options`; the corrected unchanged baseline passed all 15 bounded-facade tests. The concrete commands below now use that quoting.
+
+2026-10-20: The workspace initially contained staged 0.11.0.0 release preparation from ExecPlan 49, and another session committed it as `3c1c9d0` during implementation. Preserve that release and recheck upstream tags/Hackage before selecting this additive bridge's release version; do not amend a release tag or its source archive.
+
 
 ## Decision Log
 
+
+2026-10-20: Keep this implementation's notes under Unreleased while ExecPlan 49's 0.11.0.0 release is in flight. Do not alter its version preparation or reserve a competing release. Finish all local implementation checks first; select the published bridge version with the release owner once that release state is settled. This moves final cohort version selection to Milestone 4 while retaining Milestone 3's tested source candidate and migration documentation.
 
 2026-10-19: Accept IR-7 as receipt parity for the existing legacy compatibility contract. Name the entry point `archiveLegacyChanged` and deprecate it from introduction, with removal coupled to `archive`. A permanent unattributed context constructor would contradict ADR-5; a bridge over the already-admitted write exposes information without broadening who or which space the operation accepts. Support means a documented, tested, published migration bridge, not an indefinite compatibility promise.
 
@@ -52,6 +64,12 @@ This implements the validated scope of [IR-7](../improvement-requests/expose-arc
 
 ## Outcomes & Retrospective
 
+
+2026-10-20: Local implementation is complete. `archiveLegacyChanged` is one guarded call to the existing receipt worker, so it preserves the old wrapper's attribution and refusal semantics without introducing a context, actor, schema, codec or dependency change. Seven new database tests establish first/repeat behavior, serialized unattributed payloads, append ownership in synchronized legacy/legacy and mixed races, partition/context gates, terminal errors and compatibility parity. The unchanged context-first race and all regression suites pass. ADRs 1 and 5 retain the durable boundary and finite lifecycle.
+
+The complete local checks passed on GHC 9.12.4: 496 tests across all four suites, build, Nix flake checks, five package checks, formatting, Haskell conventions and whitespace. `cabal sdist all --output-directory=/tmp/kioku-plan50-sdist` generated isolated validation archives at the working tree's existing 0.11.0.0 version; inspection confirmed the core export/deprecation/Haddock/shared-worker call/test module and the migrations archive's 15 SQL files plus manifest. These are unpublished test artifacts, not evidence that the separate 0.11.0.0 release contains this bridge.
+
+Strict IR validation still fails only on the same five older requests' missing recommended `reviews` fields listed in Concrete Steps. IR-7 has no diagnostics and its bundle log is current. IR-7 remains `in-progress`; release version selection, approval, immutable tag and published-source evidence remain open. The release workflow requires confirmation of the version/changelogs before the release commit and tag. No Hackage upload, tag, push or consumer edit was performed by this implementation.
 
 
 ## Context and Orientation
@@ -108,7 +126,7 @@ Update `docs/user/library-api.md`, `docs/user/bounded-reads.md` and `docs/user/u
 
 Document the lifecycle explicitly: the bridge is deprecated from introduction, lives only with `archive`, and its eventual removal is a separately announced breaking change after affected consumers have a real context-based migration. Do not promise an unverified calendar date or claim this work retires legacy attribution. A permanent forward-unattributed API remains out of scope. Amend `docs/adr/historical-attribution-is-marked-never-invented.md` and, where necessary, `docs/adr/kioku-owns-memory-not-identity.md` to name this narrow receipt-parity exception and retain the rejection of historical-marker contexts. Update the comment on the local legacy gate if it needs to describe both deprecated paths. Distill only this durable boundary, not execution notes.
 
-Add release notes to `CHANGELOG.md` and `kioku-core/CHANGELOG.md`, with any cohort changelogs required by the repository release workflow. The added export alone is an additive API change; select the actual Package Versioning Policy version against released packages and all changes being shipped. Coordinate with [ExecPlan 49](49-expose-fixed-memory-metadata-tag-pages-and-recency-queries.md), which also edits `Kioku.Memory` and may require a major release. This plan has no implementation dependency on its read APIs and must not reserve or overwrite its release version. Run the build, regression and convention commands below. Acceptance is a locally verified release candidate and accurate public migration documentation, with publication still pending.
+Add release notes to `CHANGELOG.md` and `kioku-core/CHANGELOG.md`, with any cohort changelogs required by the repository release workflow. The added export alone is an additive API change. Keep notes under Unreleased while the separate 0.11.0.0 release is in flight; select the actual Package Versioning Policy version in Milestone 4 against released packages and all changes being shipped. Coordinate with [ExecPlan 49](49-expose-fixed-memory-metadata-tag-pages-and-recency-queries.md), which also edits `Kioku.Memory` and may require a major release. This plan has no implementation dependency on its read APIs and must not reserve or overwrite its release version. Run the build, regression and convention commands below. Acceptance is a locally verified source candidate and accurate public migration documentation, with final cohort version selection and publication still pending under Milestone 4.
 
 
 ### Milestone 4: Publish and record consumer-ready evidence
@@ -127,13 +145,13 @@ Run from the repository root (the directory containing `cabal.project` and `flak
 ```bash
 git status --short
 rg -n 'archiveWithContextChanged|archiveInChanged|runMemoryCommandChanged' kioku-core/src/Kioku/Memory.hs
-nix develop -c cabal test kioku-core:kioku-test --test-show-details=direct --test-options='-p /Bounded facade/'
+nix develop -c cabal test kioku-core:kioku-test --test-show-details=direct --test-options='-p "/Bounded facade/"'
 ```
 
 The baseline group must pass. After Milestone 1, the new export must compile and the first/repeat test must pass; before the implementation the new test fails to compile because that export is absent. After Milestone 2 run:
 
 ```bash
-nix develop -c cabal test kioku-core:kioku-test --test-show-details=direct --test-options='-p /Archive receipts/'
+nix develop -c cabal test kioku-core:kioku-test --test-show-details=direct --test-options='-p "/Archive receipts/"'
 nix develop -c cabal test kioku-core:kioku-test kioku-api:kioku-api-test --test-show-details=direct
 ```
 

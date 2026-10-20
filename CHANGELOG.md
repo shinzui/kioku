@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Deprecated `Kioku.Memory.archiveLegacyChanged` returns the authoritative `(MemoryId, Bool)`
+  append receipt for existing legacy-space archives, preserving all supplied attribution,
+  including `UnattributedPrincipal`. First/repeat and mixed concurrent calls share the
+  context-first worker; partition gates and typed failures remain unchanged.
+- Migration guidance explains receipt adoption without inventing principals, the host's
+  existing authorization boundary and removal with `archive` after an announced migration.
+  No schema, catalog or dependency-cohort change is required.
+
 ## 0.11.0.0 — 2026-10-19
 
 ### Breaking Changes

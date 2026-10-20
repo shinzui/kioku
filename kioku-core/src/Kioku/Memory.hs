@@ -18,9 +18,10 @@
 -- rejected rather than quietly rewritten. That keeps the stored event and the decision that
 -- allowed it the same fact.
 --
--- The unsuffixed functions ('record', 'archive', …) remain for one release as deprecated
+-- The unsuffixed functions ('record', 'archive', …) remain as deprecated
 -- compatibility wrappers. They take no context and refuse any payload naming a space other than
 -- 'legacyMemorySpaceId', so they cannot reach data belonging to anybody else.
+-- 'archiveLegacyChanged' exposes the same temporary legacy contract with an append receipt.
 --
 -- Every read takes a 'MemorySpaceId' first and returns nothing outside it. Pass
 -- 'Kioku.Api.Access.memoryContextSpace' of the context that authorized the read: the context is
@@ -49,6 +50,7 @@ module Kioku.Memory
     record,
     supersede,
     archive,
+    archiveLegacyChanged,
     updateTags,
     updateConfidence,
     merge,
@@ -279,6 +281,24 @@ archive ::
   ArchiveMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
 archive cmdData = inLegacySpaceOnly cmdData.memorySpaceId (archiveIn cmdData)
+
+{-# DEPRECATED archiveLegacyChanged "Use archiveWithContextChanged with a host-vouched-for actor. This legacy-only bridge will be removed with archive." #-}
+
+-- | Deprecated legacy-only bridge returning whether this command appended an archive fact.
+-- A first archive returns @True@; an accepted repeat (including a losing concurrent
+-- archive) returns @False@. Refusals remain errors, never successful no-ops.
+--
+-- This performs no authentication or authorization. It accepts only 'legacyMemorySpaceId'
+-- and preserves the supplied attribution, including 'UnattributedPrincipal'. Existing hosts
+-- must retain their trusted boundary. New hosts and hosts with a real vouched-for actor use
+-- 'archiveWithContextChanged'. This bridge is deprecated from introduction and will be removed
+-- with 'archive' in a separately announced breaking change after affected consumers can migrate
+-- to contexts; it is not a permanent unattributed-write API.
+archiveLegacyChanged ::
+  (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  ArchiveMemoryData ->
+  Eff es (Either MemoryWriteError (MemoryId, Bool))
+archiveLegacyChanged cmdData = inLegacySpaceOnly cmdData.memorySpaceId (archiveInChanged cmdData)
 
 archiveIn ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>

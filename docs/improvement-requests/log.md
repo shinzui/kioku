@@ -2,6 +2,12 @@
 
 ## 2026-10-20
 
+* **Implementation**: IR-7 is in progress: `archiveLegacyChanged` and seven public-facade
+  PostgreSQL tests pass locally under ExecPlan 50, verifying attribution, races, partition/context
+  gates and typed failure parity. All 496 regression tests, build and Nix/package checks pass.
+  ADRs 1/5 and migration guidance document the finite bridge.
+  Publication and consumer adoption remain pending; notes stay Unreleased while the separate
+  0.11.0.0 release is in flight.
 * **Release preparation**: The user approved committing the prepared 0.11.0.0
   version, changelog and upgrade changes. IR-6 remains in progress pending
   tagging and publication.

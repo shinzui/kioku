@@ -112,7 +112,7 @@ about the owner.
 
 ## If you cannot migrate in one go
 
-The old names survive for one release as **deprecated** wrappers:
+The old names survive as **deprecated** wrappers:
 
 ```haskell
 {-# DEPRECATED record "Use recordWithContext. This wrapper accepts only legacyMemorySpaceId and will be removed." #-}
@@ -122,6 +122,39 @@ They take no context and refuse any payload naming a space other than `legacyMem
 they cannot reach anybody else's data — including through a memory id belonging to another space,
 which they cannot even see. You still have to add the payload fields; what you can defer is
 threading a context through your call sites.
+
+For a host already archiving in the legacy space, receipt adoption can precede its
+identity migration. Replace the call and consume the pair:
+
+```haskell
+-- Before: result <- archive payload
+result <- archiveLegacyChanged payload
+case result of
+  Left err -> handleArchiveError err
+  Right (memoryId, changed) -> handleArchiveReceipt memoryId changed
+```
+
+These handlers are host code. Keep `payload.actorPrincipal` unchanged, including
+`UnattributedPrincipal`; no `MemoryActor` is needed for this compatibility call.
+`True` means this command appended the archive fact. `False` means an accepted repeat,
+including a losing concurrent command, and never hides a refusal. A repeat with a
+later `archivedAt` cannot rewrite the original timestamp or actor. Missing IDs and
+superseded/merged memories retain the old typed failures, and foreign IDs remain
+absent even when archived.
+
+`archiveLegacyChanged` performs no authentication or authorization. Keep the host's
+existing trusted boundary; it accepts only `legacyMemorySpaceId` and grants no access
+to other spaces. The bridge requires no schema or catalog migration. It is deprecated
+from introduction and lives only with `archive`; removal is a separately announced
+breaking change after affected consumers have a real context-based migration, with
+no calendar deadline promised here. It does not retire historical attribution or
+establish a permanent API for new unattributed writes.
+
+New hosts and identity-migrated hosts use `archiveWithContextChanged context payload`,
+which checks `MemoryForget`, space and actor before work, even for an archived memory.
+A directory-less host can still vouch for a real stable principal. A process label
+invented solely to satisfy a type signature is not that assurance and changes the
+recorded attribution claim.
 
 ## New failure modes
 

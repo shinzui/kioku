@@ -45,8 +45,24 @@ subject resolution without claiming that a subject is globally unique.
 
 `archiveWithContextChanged` retains existing permission, partition and input checks.
 Its `(MemoryId, Bool)` receipt reports whether this command appended. A matching
-repeat or concurrent winner reports False; conflicting input retains `MemoryConflict`.
+repeat or losing concurrent command reports `False`; conflicting input retains `MemoryConflict`.
 The old archive entry point continues returning `MemoryId`.
+
+For an existing legacy-space host, replace `archive payload` with
+`archiveLegacyChanged payload` and consume `Right (memoryId, changed)` while retaining
+the payload's attribution unchanged, including `UnattributedPrincipal`. The bridge
+uses the same committed append receipt: `False` means this command appended no fact
+and was accepted as a repeat; typed refusals and storage failures remain failures.
+It accepts only `legacyMemorySpaceId` and performs no authentication or authorization,
+so hosts keep their existing trusted boundary. No schema, catalog or dependency
+migration is required for this bridge.
+
+`archiveLegacyChanged` is deprecated from introduction, lives only with `archive`,
+and will be removed in a separately announced breaking change after affected consumers
+have a real context-based migration. New and identity-migrated hosts use
+`archiveWithContextChanged` with a host-vouched-for actor. Having no directory does
+not prevent that, but inventing a process principal solely to obtain a receipt changes
+the attribution claim. See [the migration example](library-api.md#writing-memories-kiokumemory).
 
 Apply additive migration 0014 before starting this reader cohort. It builds eight
 indexes on `kioku.sessions`, `kioku.turns` and `kioku.memories` inside the migration

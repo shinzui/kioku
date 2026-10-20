@@ -139,7 +139,8 @@ unrelated data.
 
 All writers are idempotent for *matching* duplicates and return a conflict for
 non-matching ones; the rules are enforced by the aggregate, not by a read-model precheck, so
-they hold under concurrent writers. They return `Either MemoryWriteError MemoryId`.
+they hold under concurrent writers. ID-only writers return `Either MemoryWriteError MemoryId`;
+archive receipt variants return `Either MemoryWriteError (MemoryId, Bool)`.
 
 `record` on an existing id succeeds only if the request carries the same **agent id, session id**,
 content, scope, type, priority, confidence, tags, and `supersedes`; otherwise it returns
@@ -168,6 +169,7 @@ data MemoryWriteError
 recordWithContext           :: MemoryAccessContext -> RecordMemoryData           -> Eff es (Either MemoryWriteError MemoryId)
 supersedeWithContext        :: MemoryAccessContext -> SupersedeMemoryData        -> Eff es (Either MemoryWriteError MemoryId)
 archiveWithContext          :: MemoryAccessContext -> ArchiveMemoryData          -> Eff es (Either MemoryWriteError MemoryId)
+archiveWithContextChanged   :: MemoryAccessContext -> ArchiveMemoryData          -> Eff es (Either MemoryWriteError (MemoryId, Bool))
 updateTagsWithContext       :: MemoryAccessContext -> UpdateMemoryTagsData       -> Eff es (Either MemoryWriteError MemoryId)
 updateConfidenceWithContext :: MemoryAccessContext -> UpdateMemoryConfidenceData -> Eff es (Either MemoryWriteError MemoryId)
 mergeWithContext            :: MemoryAccessContext -> MemoryId -> MemoryId       -> Eff es (Either MemoryWriteError MemoryId)
@@ -191,9 +193,39 @@ retire one.
   generates its own `mergedAt`, so idempotency matches on the merge target alone.
 
 The unsuffixed `record`, `supersede`, `archive`, `updateTags`, `updateConfidence`, and `merge`
-still exist for one release as **deprecated** wrappers. They take no context and refuse any
+still exist as **deprecated** wrappers. They take no context and refuse any
 payload naming a space other than `legacyMemorySpaceId`, so they cannot reach anybody else's
 data. See [Upgrading to memory spaces](upgrading-to-memory-spaces.md).
+
+`archiveWithContextChanged` reports whether this command appended the archive fact:
+`True` for the first archive, `False` for an accepted repeat, including the losing
+command in a successful concurrent pair. Missing memories and incompatible terminal
+states remain errors. A repeat never rewrites the original actor or timestamp.
+
+Existing legacy-space hosts can replace the ID-only call while keeping their payload:
+
+```haskell
+-- Before: archive payload
+result <- archiveLegacyChanged payload
+case result of
+  Left err -> handleArchiveError err
+  Right (memoryId, changed) -> handleArchiveReceipt memoryId changed
+```
+
+The handlers above belong to the host. `archiveLegacyChanged :: ArchiveMemoryData ->
+Eff es (Either MemoryWriteError (MemoryId, Bool))` preserves the payload's attribution,
+including `UnattributedPrincipal`, and accepts only `legacyMemorySpaceId`. It performs
+no authentication or authorization: the host must retain its existing trusted boundary.
+`False` is an accepted repeat with no append by this command, never a swallowed refusal.
+
+This temporary bridge is deprecated from introduction and lives only with `archive`.
+Their removal will be a separately announced breaking change after affected consumers
+have a real context-based migration. New hosts and identity-migrated hosts use
+`archiveWithContextChanged` with a genuinely host-vouched-for actor and the existing
+permission, space and actor checks. A directory-less host can vouch for a stable
+principal; substituting a process label solely to make the call type-check does not
+establish identity. This bridge does not retire legacy attribution or introduce a
+permanent forward-unattributed API. See [the upgrade guide](upgrading-to-memory-spaces.md#if-you-cannot-migrate-in-one-go).
 
 `RecordMemoryData` (the main input):
 

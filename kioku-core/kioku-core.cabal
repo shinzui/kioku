@@ -159,6 +159,7 @@ test-suite kioku-test
   main-is: Main.hs
   other-modules:
     Kioku.AIRuntimeSpec
+    Kioku.ArchiveReceiptSpec
     Kioku.AwaitingSpec
     Kioku.BoundedReadSpec
     Kioku.CodecCompatSpec

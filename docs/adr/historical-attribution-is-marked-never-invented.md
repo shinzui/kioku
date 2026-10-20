@@ -4,7 +4,7 @@ title: Historical attribution is marked, never invented
 description: >-
   A pre-memory-space agentId is recorded as a legacy-marked label and an event that named no
   actor stays unattributed; Kioku never manufactures a principal for a fact that lacked one.
-timestamp: 2026-08-06T22:40:00Z
+timestamp: 2026-10-20T00:24:21Z
 docId: ADR-5
 status: accepted
 date: 2026-08-06
@@ -74,13 +74,20 @@ write (`memoryContextRecordedActor`), and a payload naming anybody else is refus
 type-level care above would be undone by a caller who simply writes a different name into the
 field.
 
-`LegacyPrincipal` and `UnattributedPrincipal` are therefore decode-side only. Both describe events
-written before memory spaces existed, and neither is reachable through the memory-space write API:
+`LegacyPrincipal` and `UnattributedPrincipal` are unavailable to context-first writes:
 `memoryContextRecordedActor` returns `KnownPrincipal` unconditionally, and a context can only be
-minted from a `MemoryActor`, which wraps a `PrincipalRef`. The deprecated pre-context wrappers can
-still write either, because they bypass the context gate — that is an artifact of their being
-wrappers, not a capability being preserved. When they are removed, every new write names a
-principal, which is what this record has said all along.
+minted from a `MemoryActor`, which wraps a `PrincipalRef`.
+
+The deprecated pre-context wrappers are a finite compatibility exception: they still accept
+these markers in the explicit legacy space. `archiveLegacyChanged` exposes the authoritative
+append receipt for exactly the write already admitted by `archive`, preserving the supplied
+`RecordedPrincipal` verbatim. It adds no authentication, authorization, context constructor or
+new access to other spaces. Existing hosts retain their trusted boundary. It is deprecated from
+introduction and removed with `archive` in a separately announced breaking change after affected
+consumers have a real context-based migration. This receipt-parity exception is not a permanent
+forward-unattributed API. Once the wrappers are removed, every new write names a vouched-for
+principal. Inventing a process label just to obtain a context and a receipt would change the
+attribution claim and is not an identity migration.
 
 **What `KnownPrincipal` asserts is that a principal was vouched for, not that a directory did the
 vouching.** Two contexts produce it and they differ in who stands behind the claim.
