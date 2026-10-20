@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.11.0.0 — 2026-10-19
+
+### Breaking Changes
+
+- Add `scopeKind :: Maybe ScopeKind` as the fifth `MemoryFilter` field. Append `Nothing` to positional calls and set it explicitly in records to preserve prior selection; kind intersects the explicit target, status, type and session filters.
+
 ### Added
 
 - Deprecated `Kioku.Memory.archiveLegacyChanged` returns the authoritative `(MemoryId, Bool)`
@@ -11,14 +17,6 @@
 - Migration guidance explains receipt adoption without inventing principals, the host's
   existing authorization boundary and removal with `archive` after an announced migration.
   No schema, catalog or dependency-cohort change is required.
-
-## 0.11.0.0 — 2026-10-19
-
-### Breaking Changes
-
-- Add `scopeKind :: Maybe ScopeKind` as the fifth `MemoryFilter` field. Append `Nothing` to positional calls and set it explicitly in records to preserve prior selection; kind intersects the explicit target, status, type and session filters.
-
-### Added
 
 - Permission-checked `getMetadataWithContext`, `getMetadataPageWithContext`, `getTagsPageWithContext` and `getNewestActiveMetadataWithContext`. Metadata selects complete scalar fields and a SQL tag count without decoding tag arrays; separate tag Connections retain full values with bounded ordinal cursors.
 - Deterministic newest-active selection ignores priority and intersects non-active status to absence. Existing list orders and complete status counts are preserved.

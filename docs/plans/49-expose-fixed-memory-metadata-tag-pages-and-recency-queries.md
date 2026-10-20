@@ -16,6 +16,11 @@ provenance:
       at: 2026-10-19T23:41:08Z
       mode: "implement"
       note: "Implement fixed metadata, tag pagination and recency reads with upgrade and release evidence"
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-20T00:28:54Z
+      mode: "implement"
+      note: "Publish the combined 0.11.0.0 release for ExecPlans 49 and 50 and record registry and tag evidence."
 ---
 
 # Expose fixed Memory metadata, tag pages and recency queries
@@ -58,6 +63,8 @@ Publication is the remaining acceptance obligation. On 2026-10-20 UTC, the user 
 
 ## Decision Log
 
+
+2026-10-20: The user authorized publishing both plans together. Registry/tag preflight confirms 0.11.0.0 is unclaimed; resume that prepared version, retaining `3c1c9d0` and including the receipt bridge from `f39fe76`. Merge its Unreleased notes into the existing release notes and extend the unpublished upgrade edge. Regenerate source and documentation archives before publication. The major PVP bump is required by EP-49's exported `MemoryFilter` change and also admits EP-50's additive export.
 
 2026-10-19: Accept IR-6 as a Kioku-owned library extension. Rei-specific HTTP routes, Habit vocabulary, transport cursor envelopes and dashboard composition stay with the host. A scope kind remains the existing opaque `ScopeKind`, not an enumeration of Rei entities.
 

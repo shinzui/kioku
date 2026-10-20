@@ -53,6 +53,8 @@ This implements the validated scope of [IR-7](../improvement-requests/expose-arc
 ## Decision Log
 
 
+2026-10-20: The user authorized publishing both plans together. Registry/tag preflight confirms 0.11.0.0 is unclaimed; resume that prepared version, retaining `3c1c9d0` and including the receipt bridge from `f39fe76`. Merge its Unreleased notes into the existing release notes and extend the unpublished upgrade edge. Regenerate source and documentation archives before publication. The major PVP bump is required by EP-49's exported `MemoryFilter` change and also admits EP-50's additive export.
+
 2026-10-20: Keep this implementation's notes under Unreleased while ExecPlan 49's 0.11.0.0 release is in flight. Do not alter its version preparation or reserve a competing release. Finish all local implementation checks first; select the published bridge version with the release owner once that release state is settled. This moves final cohort version selection to Milestone 4 while retaining Milestone 3's tested source candidate and migration documentation.
 
 2026-10-19: Accept IR-7 as receipt parity for the existing legacy compatibility contract. Name the entry point `archiveLegacyChanged` and deprecate it from introduction, with removal coupled to `archive`. A permanent unattributed context constructor would contradict ADR-5; a bridge over the already-admitted write exposes information without broadening who or which space the operation accepts. Support means a documented, tested, published migration bridge, not an indefinite compatibility promise.

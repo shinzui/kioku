@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.11.0.0 — 2026-10-19
+
+### Breaking Changes
+
+- `MemoryFilter` gains a fifth field, `scopeKind :: Maybe ScopeKind`. Existing positional callers append `Nothing`; record callers set the field explicitly. Kind intersects the explicit target and other filters before pages/counts.
+
 ### Added
 
 - Deprecated `Kioku.Memory.archiveLegacyChanged` returns the authoritative `(MemoryId, Bool)`
@@ -11,14 +17,6 @@
 - Migration guidance explains receipt adoption without inventing principals, the host's
   existing authorization boundary and removal with `archive` after an announced migration.
   No schema, catalog or dependency-cohort change is required.
-
-## 0.11.0.0 — 2026-10-19
-
-### Breaking Changes
-
-- `MemoryFilter` gains a fifth field, `scopeKind :: Maybe ScopeKind`. Existing positional callers append `Nothing`; record callers set the field explicitly. Kind intersects the explicit target and other filters before pages/counts.
-
-### Added
 
 - Fixed-field Memory metadata point/page reads, separate ordinal tag pages, and dedicated newest-active metadata, all permission-checked before Store access. Complete content and tag values are retained; missing/foreign parents, empty collections, page failures and infrastructure failures stay distinct.
 - Four catalog query registrations with a public pre-startup preview/adoption recipe, exact 0.10.0.0 historical catalog rehearsal and repeat-adoption checks.
