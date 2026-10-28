@@ -2,7 +2,8 @@
 
 This record qualifies Kioku 0.12.0.0 against fixed baseline
 `9cd613d5087a08d6625cb266ff09845197b1d3d4`. It does not authorize deployment.
-M1 and M2 pass. M3's clean-candidate gate is pending the implementation commit.
+M1–M3 pass. The clean-candidate gate ran against commit
+`a9ad985d752e60a3e883622b96f61a83ad1fe15d` with no generated tracked changes after the second build.
 M4's actual restored-history acceptance is pending an operator archive, provenance,
 deployment PostgreSQL major, scratch identities and installation inventory.
 
@@ -39,7 +40,12 @@ compiler ID and exact boot unit IDs qualify the ABI comparison.
 Keiki/codecs remain 0.9.1.0; pg-migrate family remains 1.2.0.0;
 Effectful/Core remain 2.7.1.0/2.7.1.2; Shikumi/trace remain 0.4.1.1/0.3.0.2;
 Baikai remains 0.8.0.0 with Claude/OpenAI 0.7.1.1 and Effectful adapter 0.4.0.3.
-The fresh solve selects Hasql 1.10.3.7 and ephemeral-pg 0.3.1.0. No PGMQ package
+The fresh solve selects Hasql 1.10.3.7 and ephemeral-pg 0.3.1.0.
+A source/hash/flags comparison against the rebuilt fixed baseline changes only
+the eight intended upstream package families. The original cached plan predates
+the baseline (its local Kioku packages were 0.9.0.1); unrelated patch movement
+from that cache also occurs in the rebuilt baseline at the refreshed index and
+is not caused by this upgrade. No PGMQ package
 is in the closure. The existing TLS override, Blake3 flags, pkg-config libpq and
 profiling coercion workaround are preserved; no solver exception was added.
 
@@ -102,7 +108,10 @@ smoke check, not evidence about actual operator history. Reports are retained
 under `.dev/keiro-0.22/twin-1/`. A separate synthetic delivery rehearsal
 under `.dev/keiro-0.22/delivery-1/` observes exactly two provider effects,
 two stored vectors across adapter restart, a category checkpoint at position 2,
-and a due timer with final status `fired`.
+and a due timer with final status `fired`. A second delivery/rebuild rehearsal
+under `.dev/keiro-0.22/delivery-2/` proves both non-null 1536-dimensional vectors
+and all four enrichment fields survive two catalog rebuilds. The migration
+comparator also rejects an injected unexpected protected-row mutation.
 
 Released catalog registration runs `upsertGroupCursorAuthorityStmt` in
 mori://shinzui/keiro plus project-relative
@@ -125,3 +134,37 @@ verification, deployment-major/grants checks, stopped writers/workers, migration
 post-restart observation and recovery boundaries. Actual archive hash/time,
 restored identities, actual native-stream denominator, installation supervisors,
 production delivery and cutover approval are unsupplied. M4 remains unaccepted.
+
+## Final clean-candidate artifact record
+
+The clean-candidate build and all 498 tests pass in the isolated fresh store.
+The second build produces no tracked changes; the final five source archives
+build all seven exported library/executable components through an external
+archive-only project, with the same 227-component runtime source identity digest.
+Native Nix checks pass from the clean candidate. Synthetic PostgreSQL coverage
+uses the development shell's PostgreSQL 18; the deployment major is still unknown.
+
+Immutable qualified artifacts, exact build/test logs, source identities, Cabal
+plan/freeze, archive consumer and `qualification.json` are retained under
+`.dev/keiro-0.22/qualified-a9ad985/`. Binary and source-archive SHA256s are:
+
+| Artifact | SHA256 |
+| --- | --- |
+| `shipping/kioku` | `b3aad749046d10a24e8ea642944d279fa911c540e97312004093ad87896498a0` |
+| `migration-runner/kioku-migrate` | `9ab874858288351e7d67e5c1045e571b34dc743f5e60aa3641c03c829893d51e` |
+| `sdist/kioku-api-0.12.0.0.tar.gz` | `7a94bcb409d7b4e3b7a7e04c0ab4823f6cc66beddee700c13ca99c90caa28f7b` |
+| `sdist/kioku-cli-0.12.0.0.tar.gz` | `cc2d5032b212908383795bf6b724e92cf2e1d21d484a7c2147cc2b87c2e2bbf9` |
+| `sdist/kioku-core-0.12.0.0.tar.gz` | `fb2991b19634b2a86f56a5337a8a3f2809bf9dde9cf94a6985561bb2fd539d66` |
+| `sdist/kioku-migrate-0.12.0.0.tar.gz` | `bbf70b10bbec56cd309dc9e52509892888fb99b60445e70814087bfb860f265e` |
+| `sdist/kioku-migrations-0.12.0.0.tar.gz` | `0037cff5a84c4ebf68439e87cbeba9b96e8e1c77ab43f45eeaa3b154ed0ec45e` |
+
+Old shipping artifacts are retained separately under `.dev/keiro-0.22/baseline/`,
+with the detached source worktree and original build plan. Their SHA256s are:
+
+- `kioku`: `acc7b17f67e984f45e809c61d566f4bbfd83bd896c4271e523aeefcdd11fbc43`
+- `kioku-migrate`: `3e157da660c28b1668a1a82071ebc878a1e4b17db9b11ec79c7c0e8c189ed7e2`
+
+Old and candidate final probes use identical source SHA256
+`e933d9e235d7650b448093b2f094ab5360734494a2a1e0daaf13709bf48e2855`,
+with separate linked-unit, plan and binary provenance. These artifacts are reviewable
+candidates; package publication and persistent installation activation remain operator work.
