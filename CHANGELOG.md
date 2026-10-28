@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## 0.12.0.0 — 2026-10-27
+
+### Breaking Changes
+
+- Move all five packages to the released `mori://shinzui/keiro` 0.22.0.0,
+  `mori://shinzui/kiroku/packages/kiroku-store` 0.12.0.0 and
+  `mori://shinzui/shibuya` Core 0.12.0.0/adapter 0.7.0.0 cohort.
+  Public upstream types require embedded hosts, CLI and workers to be rebuilt
+  together. Kioku wire types and application API behavior are unchanged.
+
+### Added
+
+- Frozen previous-cohort migration fixtures prove the exact 62-to-63-entry
+  upgrade and idempotent repeat. The composed plan contains 16 Kiroku, 32 Keiro
+  and 15 Kioku migrations; only `kiroku/0016` applies from a complete 0.11 host.
+- Add the 0.11.0.0-to-0.12.0.0 upgrade edge, entailing the Keiro 0.21-to-0.22
+  edge, plus source-aware qualification and isolated operator rehearsal tools.
+
+### Changed
+
+- Preserve historical Kioku SQL/checksums, native event encodings, catalog bindings,
+  exact-category subscriptions and host AI capabilities. No ledger fixup or new
+  catalog adoption is required for a valid 0.11 host; namespaces remain opt-in.
+- Document worker quiescence, backup rehearsal, migration verification, repeat
+  no-op and coordinated restart in `docs/user/upgrading-to-keiro-0-22.md`.
+  Candidate qualification passes 498 tests; actual restored-history acceptance
+  and production activation remain operator prerequisites. Installing packages
+  or recording an upgrade receipt does not migrate a database.
+- Align all five versions and 16 internal dependency bounds at 0.12.0.0.
+
 ## 0.11.0.0 — 2026-10-19
 
 ### Breaking Changes

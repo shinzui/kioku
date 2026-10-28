@@ -1,16 +1,23 @@
 # Changelog
 
-## 0.12.0.0 — 2026-10-28
-
-- Align all Kioku packages with released Keiro 0.22, Kiroku Store 0.12 and
-  Shibuya 0.12/adapter 0.7. Public upstream types require the new cohort.
-- Compose Kiroku migration 0016 through the existing runner (63 total); preserve
-  all historical Kioku SQL, event encodings and catalog bindings.
-- See the repository's `docs/user/upgrading-to-keiro-0-22.md` for operator cutover
-  and restored-history rehearsal requirements. Package installation does not migrate data.
-
-
 ## [Unreleased]
+
+## 0.12.0.0 — 2026-10-27
+
+### Breaking Changes
+
+- Require the released `mori://shinzui/keiro` 0.22.0.0,
+  `mori://shinzui/kiroku/packages/kiroku-store` 0.12.0.0 and
+  `mori://shinzui/shibuya` Core 0.12.0.0/adapter 0.7.0.0 cohort.
+  Rebuild embedded hosts together because public upstream types have changed.
+
+### Changed
+
+- Preserve native event encodings, exact-category subscriptions, catalog bindings,
+  host AI capabilities and application API behavior. Adapt the embedding worker
+  test envelope to the upstream delivery-status field.
+- Document worker quiescence, the 63-entry migration plan, isolated rehearsal and
+  cutover requirements in `docs/user/upgrading-to-keiro-0-22.md` in this repository.
 
 ## 0.11.0.0 — 2026-10-19
 

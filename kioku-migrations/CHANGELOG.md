@@ -1,16 +1,22 @@
 # Changelog
 
-## 0.12.0.0 — 2026-10-28
-
-- Align all Kioku packages with released Keiro 0.22, Kiroku Store 0.12 and
-  Shibuya 0.12/adapter 0.7. Public upstream types require the new cohort.
-- Compose Kiroku migration 0016 through the existing runner (63 total); preserve
-  all historical Kioku SQL, event encodings and catalog bindings.
-- See the repository's `docs/user/upgrading-to-keiro-0-22.md` for operator cutover
-  and restored-history rehearsal requirements. Package installation does not migrate data.
-
-
 ## [Unreleased]
+
+## 0.12.0.0 — 2026-10-27
+
+### Added
+
+- Test the complete previous 62-entry cohort using frozen Kiroku migrations
+  0.7.1.0 fixtures, proving that only `kiroku/0016` applies and repeat runs
+  are no-ops.
+
+### Changed
+
+- Require `mori://shinzui/keiro` migrations and test support 0.22.0.0 and
+  `mori://shinzui/kiroku/packages/kiroku-store-migrations` 0.7.2.0.
+- Compose 63 migrations (16 Kiroku, 32 Keiro, 15 Kioku). The additive upstream
+  migration changes subscription constraints and the Kiroku schema comment;
+  all historical Kioku SQL and checksums are preserved. No ledger fixup is needed.
 
 ## 0.11.0.0 — 2026-10-19
 

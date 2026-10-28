@@ -92,7 +92,7 @@ asserts on migration counts or ids needs the right row for its release.
 
 | Kioku | Total | Kiroku | Keiro | Kioku |
 |---|---|---|---|---|
-| 0.12.0.0 | 62 | 15 | 32 | 15 |
+| 0.12.0.0 | 63 | 16 | 32 | 15 |
 | 0.11.0.0 | 62 | 15 | 32 | 15 |
 | 0.9.1.0–0.10.0.0 | 61 | 15 | 32 | 14 |
 | 0.9.0.0 | 60 | 15 | 32 | 13 |
