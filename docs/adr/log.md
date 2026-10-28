@@ -1,5 +1,11 @@
 # Bundle Update Log
 
+## 2026-10-28
+
+- Clarified [ADR-13](catalog-application-projections-not-framework-timers.md):
+  offline replay does not reconstruct provider enrichment, and released catalog
+  registration cursor clocks are separate from migration and semantic identity.
+
 ## 2026-10-20
 
 - Clarified [ADR-5](historical-attribution-is-marked-never-invented.md) and

@@ -1,5 +1,8 @@
 # kioku (記憶) — User Guide
 
+For Kioku 0.12.0.0 and its 63-entry migration cohort, follow the
+[Keiro 0.22 upgrade runbook](upgrading-to-keiro-0-22.md).
+
 **kioku** ("memory") is a reusable, event-sourced **agent memory** and **agent session**
 library for the kikan ecosystem. It gives any agent platform one shared engine for:
 

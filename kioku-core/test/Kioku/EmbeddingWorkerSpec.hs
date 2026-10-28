@@ -69,7 +69,7 @@ import Kiroku.Store.Types (EventId (..), ExpectedVersion (..), RecordedEvent (..
 import Shibuya.App qualified as App
 import Shibuya.Core.Ack (AckDecision (..), DeadLetterReason (..), HaltReason (..), RetryDelay (..))
 import Shibuya.Core.AckHandle (AckHandle (..))
-import Shibuya.Core.Ingested (Ingested (..))
+import Shibuya.Core.Ingested (DeliveryStatus (DeliveryCurrent), Ingested (..))
 import Shibuya.Core.Types (Attempt (..), Envelope (..), MessageId (..))
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
@@ -600,7 +600,8 @@ mkIngested recorded attemptN =
             payload = recorded
           },
       ack = AckHandle {finalize = \_ -> pure ()},
-      lease = Nothing
+      lease = Nothing,
+      deliveryStatus = pure DeliveryCurrent
     }
 
 -- | Run a database-backed case, skipping it when the ephemeral PostgreSQL has

@@ -5,7 +5,7 @@ description: >-
   Kioku's validated Keiro projection catalog owns the memories, sessions, and turns tables,
   while timer scheduling remains an explicit framework-owned side effect in the same append
   transaction.
-timestamp: 2026-09-18T22:06:13Z
+timestamp: 2026-10-28T03:59:31Z
 docId: ADR-13
 status: accepted
 date: 2026-09-18
@@ -68,6 +68,21 @@ catalog-fenced command runner. Moving to the catalog-fenced runner requires Keir
 framework-owned callbacks in the same transaction without treating their tables as
 application-owned targets. Until that capability exists, inventing ownership would be worse than
 keeping the boundary explicit.
+
+Offline rebuilds replay only the declared application projections. Memory event
+replay cannot recreate provider-owned enrichment (`embedding`, `embedding_model`,
+`dimensions`, `content_hash`), so a disposable upgrade rehearsal saves those fields
+and restores them only after memory ID, memory space and content match. A failed
+match is a failed rehearsal. This is developer instrumentation, not an automatic
+production rebuild facility. Session projection `created_at`/`updated_at` are
+database clocks; event-derived timestamps remain part of semantic comparison.
+
+Catalog registration through the released Keiro 0.22 public API upserts cursor
+authority even when unchanged. The `kioku-memory` and `kioku-session` append cursor
+rows may therefore advance `updated_at` during CLI/migration-runner startup.
+Operational comparison records that narrow clock effect separately from schema
+migration, and never treats it as permission to change cursor authority, reset
+subscriptions, repair registry drift, or alter query/catalog identities.
 
 ## Alternatives rejected
 

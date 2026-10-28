@@ -1,5 +1,8 @@
 # Library API
 
+For Kioku 0.12.0.0 and its 63-entry migration cohort, follow the
+[Keiro 0.22 upgrade runbook](upgrading-to-keiro-0-22.md).
+
 This page is for **host developers** embedding kioku in a Haskell application. It covers the
 write API (`Kioku.Memory`, `Kioku.Session`), the read/recall API (`Kioku.Recall`), the shared
 types (`Kioku.Api.*`), and how to run them.

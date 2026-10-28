@@ -10,6 +10,12 @@ provenance:
     model: "gpt-6.1-sol"
     harness: "codex-cli"
     at: 2026-10-28T03:21:40Z
+  revisions:
+    - model: "gpt-6.1-sol"
+      harness: "codex-cli"
+      at: 2026-10-28T03:38:14Z
+      mode: "implement"
+      note: "Implement the released runtime cohort, migration compatibility, artifact qualification and operator rehearsal."
 ---
 
 # Upgrade Kioku to Keiro 0.22 and compatible released runtime dependencies
@@ -28,20 +34,32 @@ This document authorizes no implementation by its creation. Implementation produ
 ## Progress
 
 
-- [ ] M1: The released 0.22 cohort solves from identified Hackage sources under the existing bare GHC development shell; the real embedding adapter roundtrip passes after minimal API adaptation.
-- [ ] M2: Fresh and previous-cohort databases converge on the exact 63-entry migration plan, preserve historical data/checkpoints, and repeat without changes.
+- [x] M1 (2026-10-28 UTC): Fresh empty-store GHC 9.12.4 solve selects the exact released cohort with source/Cabal hashes; all three real adapter tests pass with pgvector and no skipped delivery lane. Seihou reports module 0.37.0 current.
+- [x] M2 (2026-10-28 UTC): All 34 migration tests pass, including the frozen 62-entry cohort adding only `kiroku/0016`, earlier 59-entry/Codd fixtures, preserved rows/checkpoints/checksums, refusal before writes and 63-entry idempotent repeat. Historical Kioku SQL/lock/schema checksum are unchanged.
 - [ ] M3: Focused and full application validation, source-aware artifact parity, codec/catalog compatibility, and the clean-candidate generation-equivalent gate pass.
 - [ ] M4: Restored-history migration, live replay, rebuild and command parity, and observed delivery pass; identified artifacts and cutover/recovery instructions are handed to operators.
 
-Planning only. No milestone is accepted yet. Prerequisites that need operator data are explicitly identified below; synthetic migration fixtures do not substitute for restored-history evidence.
+Candidate implementation and reusable rehearsal tooling are complete; M3 awaits the post-commit clean-candidate gate. Full suites pass (125 API, 275 core, 64 CLI, 34 migration), archive-only consumer builds and 227-component runtime source parity passes. Synthetic twins prove migration/commands/CLI, two-stream full replay and two catalog rebuilds; a separate delivery fixture proves two effects across restart and a fired timer. Evidence is under `.dev/keiro-0.22/`; the report and operator runbook are checked in. Operator archive/provenance, deployment major and scratch identities are absent, so M4 actual-history acceptance remains pending.
 
 
 ## Surprises & Discoveries
 
 
+2026-10-28 UTC: The baseline build must run with the detached worktree as its working directory. Passing its relative project file from the active checkout resolved local source paths into the active checkout; that attempt was discarded before retention. The restarted baseline plan names only the detached sources (FRIC-1 in `docs/friction-log/`).
+
+2026-10-28 UTC: pg-migrate 1.2.0.0 hides `Database.PostgreSQL.Migrate.Types`; the proposed accessor import fails compilation. The migration fixture now uses the public embedded-SQL constructor and published 0.7.1.0 archive bytes, with all fifteen hashes frozen. Those bytes were independently checked against the current release source prefix (FRIC-2 in `docs/friction-log/`).
+
+
+2026-10-28 UTC: Released catalog registration unconditionally updates the `updated_at` fields of the two Kioku rows in `keiro.keiro_projection_group_cursors` (`upsertGroupCursorAuthorityStmt` in mori://shinzui/keiro plus project-relative `keiro/src/Keiro/ReadModel/Rebuild/Group.hs`; artifact URI pending). Synthetic reports exposed this source-confirmed effect. The exact startup allowance is those two timestamps only, with append authority and empty subscription lists unchanged. It is separate from migration 0016 and permits no registry repair.
+
+2026-10-28 UTC: Default full-suite concurrency caused PostgreSQL startup timeouts. Bounded `TASTY_NUM_THREADS=4` and sequential Cabal suites pass every test (FRIC-3). Archive packages require explicit component targets; Cabal `all` excludes them despite a valid solve (FRIC-4). Both workarounds are reflected in the validated commands below.
 
 ## Decision Log
 
+
+2026-10-28 UTC: Record the released registration cursor-clock effect as an exact source-reviewed startup allowance; preserve all semantic catalog/query identities. Reconciliation is semantically unchanged but is not byte-for-byte clock-idempotent. ADR-13 and the operator comparator document the boundary.
+
+2026-10-28 UTC: Use a published SQL fixture instead of the hidden component-accessor API for previous-cohort tests. This changes the test implementation only and preserves every migration acceptance obligation.
 
 2026-10-28 UTC: Keep the requested Keiro target at 0.22.0.0. Hackage lists no newer release at research time. Later publication is to be reported separately, without silently advancing this plan.
 
@@ -52,6 +70,10 @@ Planning only. No milestone is accepted yet. Prerequisites that need operator da
 
 ## Outcomes & Retrospective
 
+
+The candidate aligns the five 0.12.0.0 packages with released upstream sources without changing production domain/codec/catalog/worker implementations. Published archive fixtures strengthen the migration proof. Clean-candidate artifact qualification remains to be recorded after committing; actual operator history remains unqualified until M4 prerequisites arrive.
+
+FRIC-1 in `docs/friction-log/` is accepted with isolated project working directories and exact source-path checks. FRIC-2 is accepted with immutable released SQL fixtures through the supported constructor. FRIC-3 is accepted with bounded PostgreSQL test concurrency. FRIC-4 is accepted with explicit archive component targets. ADR-13 distills rebuild enrichment and registration-clock ownership; transient CLI/build limitations remain in this plan and the friction log.
 
 
 ## Context and Orientation
@@ -137,7 +159,7 @@ Retain module 0.37.0 and the existing bare shell. Recheck latest publication bef
 
 Migration 0016 from Store migrations 0.7.2.0 changes only the two subscription target constraints and the Kiroku schema comment. It adds `category_namespace` as a permitted target kind and requires a category for either category kind. It does not change events, stream indexes, append behavior, or existing subscription values. Keep all existing bindings unchanged and stop affected workers around its application.
 
-Extend `kioku-migrations/test/Main.hs` with a **62-entry previous-0.21 fixture**. Build the old component by filtering Kiroku 0016 from `componentMigrationsOf` in `Database.PostgreSQL.Migrate.Types` and using the public `migrationComponent` constructor; verify every retained SQL payload/checksum against the 0.7.1.0 Hackage archive/tag before using it. The test already uses pg-migrate internals for checksum evidence; `migrationSqlBytes` supplies the payload when needed. Do not import Kiroku's private embedding module. Keep the existing 0.6 fixture and its SHA256SUMS unchanged. Seed existing exact-category, all, and unbound subscriptions, event/junction rows and checkpoints, then apply the current composed plan. Require exactly `kiroku/0016` applied, all original ledger rows/checksums unchanged, and every seeded row/checkpoint preserved. Re-run and require 63 AlreadyApplied entries and no writes.
+Extend `kioku-migrations/test/Main.hs` with a **62-entry previous-0.21 fixture**. Build the old component from the frozen 0.7.1.0 Hackage archive fixture in `kioku-migrations/test/fixtures/kiroku-0.7.1.0` using the public `migrationComponentFromEmbeddedSql` constructor. Freeze every retained SQL checksum and require current-plan verification of all 62 installed rows before migration. The released pg-migrate hides `Types` and its component accessors; a source-visible accessor cannot be imported by this consumer. Do not import Kiroku's private embedding module. Keep the existing 0.6 fixture and its SHA256SUMS unchanged. Seed existing exact-category, all, and unbound subscriptions, event/junction rows and checkpoints, then apply the current composed plan. Require exactly `kiroku/0016` applied, all original ledger rows/checksums unchanged, and every seeded row/checkpoint preserved. Re-run and require 63 AlreadyApplied entries and no writes.
 
 Update genuine whole-plan totals from 62 to 63 and the older 0.6 upgrade delta from 0013–0015 to 0013–0016; keep its 59-entry starting state and its frozen 12-entry historical Kiroku fixture. Do not mechanically replace unrelated literals, Codd's 30 imported rows, or Kioku's 15-entry manifest. The old `kioku` schema checksum must stay unchanged. Add a refusal case for an unexpected ledger checksum and verify failure before new migration or reconciliation writes. Use `withBareDatabase`/existing seed and snapshot helpers; no new database harness.
 
@@ -163,7 +185,7 @@ After reviewing and committing the candidate on the current branch, require a cl
 ### M4 — Rehearse actual history and prepare operator cutover
 
 
-Keep the rehearsal small and out of the product CLI. Add `scripts/kioku-upgrade-probe.hs` as a developer-only probe run through `cabal exec -- runghc`, reusing public Kioku APIs and existing fixture conventions. Its modes are `read`, `write`, `replay`, `rebuild`, and `delivery`; require an explicit database connection argument and report directory. It must refuse any mutating mode unless `KIOKU_UPGRADE_DISPOSABLE=1` and the database identity matches the separately recorded scratch identity. It must not create/drop databases, migrate implicitly, enable AI providers, or reset shared checkpoints. Keep domain behavior in Kioku modules, not a second implementation inside the probe.
+Keep the rehearsal small and out of the product CLI. Add `scripts/kioku-upgrade-probe.hs` as a developer-only probe run through `cabal exec -- runghc`, reusing public Kioku APIs and existing fixture conventions. Its modes are `read`, `write`, `replay`, `rebuild`, and `delivery`; require an explicit database connection argument and empty report directory. `scripts/build-kioku-upgrade-probe.py` retains a threaded probe with exact plan unit IDs and adjacent source/binary/plan identity JSON; `scripts/compare-kioku-upgrade.py` verifies migration, command and repeat-rebuild reports. It must refuse any mutating mode unless `KIOKU_UPGRADE_DISPOSABLE=1` and the database identity matches `KIOKU_UPGRADE_IDENTITY`, a prior report’s identity file containing database name/OID, user, server/socket, port and PostgreSQL major. It must not create/drop databases, migrate implicitly, enable AI providers, or reset shared checkpoints. Keep domain behavior in Kioku modules, not a second implementation inside the probe.
 
 `read` captures deterministic, sorted application rows and selected public recall/session reads, plus the full migration ledger, schema/constraint definitions, event/junction facts, timers, subscriptions/checkpoints and catalog/query metadata needed for the exact migration comparison. It must not register/reconcile the catalog or repair stale metadata; construct the existing `AppEnv` for `runAppIO` without calling the startup-registration wrapper. Write `read.json`, `ledger.json`, `schema.sql`, and `protected.json` under its report directory. Use ordered row JSON from PostgreSQL (including explicit primary keys), not aggregate row counts as preservation evidence. `write` uses fixed fixture IDs/times/space/principal and runs record/start/turn/await/resume/archive plus an idempotent retry and cross-space refusal through the public library, then compares event tags/payloads, final rows, timers and command outcomes in `commands.json`. Invoke the actual retained `kioku` executable supplied by `KIOKU_UPGRADE_CLI` for read/help parity using the process pattern in `kioku-cli/test/Kioku/Cli/RecallEndToEndSpec.hs`; treat any CLI startup metadata writes as a separate measured phase. Normalize only documented volatile fields (generated event UUIDs, wall-clock timestamps, timer lease tokens); do not normalize content, space, principal, event types, tags, relative ordering, results or refusal classes.
 
@@ -196,7 +218,7 @@ cp dist-newstyle/cache/plan.json "$KIOKU_EVIDENCE/baseline/cached-plan.json"
 git worktree add --detach "$KIOKU_EVIDENCE/baseline/source" "$KIOKU_BASELINE"
 ```
 
-No feature branch is needed. Build/retain old CLI and migration runner from that detached worktree before changing bounds, using its shell and task-specific build directory. Copy the `cabal list-bin` results to stable evidence paths; do not retain only mutable `dist-newstyle` symlinks. Record SHA256 hashes and the build plan. Do not replace old artifacts with candidate files on a rerun.
+No feature branch is needed. Build/retain old CLI and migration runner while running Cabal from inside that detached worktree, using its shell and an absolute task-specific build directory. Freeze the baseline solution before later exec/list-bin operations can re-solve it. Copy the `cabal list-bin` results to stable evidence paths; do not retain only mutable `dist-newstyle` symlinks. Record SHA256 hashes and the build plan. Do not replace old artifacts with candidate files on a rerun.
 
 Refresh publication evidence without changing the target:
 
@@ -247,7 +269,7 @@ Build and run the early integration check before broad tests:
 ```bash
 nix develop -c cabal build all --enable-tests --ghc-options=-Werror
 nix develop -c cabal test kioku-test \
-  --test-options='-p /real adapter/' --test-show-details=direct
+  --test-option=--pattern=adapter --test-show-details=direct
 nix develop -c cabal test kioku-migrations-test --test-show-details=direct
 nix develop -c cabal run kioku-migrate -- plan --json
 ```
@@ -260,7 +282,7 @@ Run focused and full checks, archive the packages, and verify the source-distrib
 nix develop -c cabal test kioku-test \
   --test-options='-p /pre-upgrade event payloads still decode/||/ProjectionCatalog/||/Timer worker/' \
   --test-show-details=direct
-nix develop -c cabal test all --enable-tests --test-show-details=direct
+nix develop -c env TASTY_NUM_THREADS=4 cabal test all -j1 --enable-tests --ghc-options=-Werror --test-show-details=direct
 nix develop -c bash scripts/check-haskell-conventions.sh
 nix develop -c bash -c 'for package_dir in kioku-api kioku-core kioku-cli kioku-migrations kioku-migrate; do (cd "$package_dir" && cabal check) || exit; done'
 nix develop -c cabal sdist all --output-directory=.dev/keiro-0.22/sdist
@@ -275,8 +297,11 @@ Confirm Tasty's actual group names with `cabal test kioku-test --test-options=--
 For the archive-only consumer, create `.dev/keiro-0.22/archive-consumer/cabal.project` by copying the candidate's `cabal.project`, replacing just its initial `packages:` block with the absolute paths of the five `.dev/keiro-0.22/sdist/*.tar.gz` archives. Copy the candidate's exact evidence freeze as that project's freeze file; adjust only the five local package entries if Cabal encodes their source locations. Retain all constraints, flags and compiler choice. Then run:
 
 ```bash
-nix develop -c cabal build all --enable-tests \
-  --project-file=.dev/keiro-0.22/archive-consumer/cabal.project \
+nix develop -c cabal build kioku-api:lib:kioku-api kioku-core:lib:kioku-core \
+  kioku-cli:lib:kioku-cli kioku-cli:exe:kioku \
+  kioku-migrations:lib:kioku-migrations kioku-migrations:lib:test-support \
+  kioku-migrate:exe:kioku-migrate --enable-tests --ghc-options=-Werror \
+  --project-dir=.dev/keiro-0.22/archive-consumer \
   --builddir=.dev/keiro-0.22/archive-consumer/build
 ```
 
@@ -322,38 +347,38 @@ Use empty operator-designated scratch databases; do not use `pg_restore --clean`
 
 Before `up`, save the source ledger, full schema-only dump, all protected table snapshots, subscriptions/checkpoint values, catalog/query metadata, read results, and schema comment/constraint definitions. The **exact allowance** for an already-current 0.21 source is one ledger addition `kiroku/0016`, replacement definitions of `kiroku.subscriptions.subscriptions_target_kind_check` and `kiroku.subscriptions.subscriptions_check`, and the Kiroku schema comment through 0016. New tables, event data, subscription target values/positions, existing ledger checksums, Kioku schema and catalog/query identities are not allowed to change. If the archive is behind 62 entries, classify it and enumerate the full reviewed missing migration IDs/effects before proceeding; do not reuse this one-migration allowance. Do not automatically learn allowances from a failed diff.
 
-The existing runner has no `ALLOW_*` environment switches or clone wrapper. Implement these comparisons in the small probe/report workflow; do not pretend Rei's allowance variables apply. An unexpected change must exit nonzero and retain the evidence. Reconciliation from `up` should be a no-op for a valid 0.21 database; any registry repair needs a separately explained, exact allowance.
+The existing runner has no `ALLOW_*` environment switches or clone wrapper. Implement these comparisons in the small probe/report workflow; do not pretend Rei's allowance variables apply. An unexpected change must exit nonzero and retain the evidence. Reconciliation from `up` preserves semantic identities for a valid 0.21 database, but the released registration API advances the two Kioku cursor `updated_at` clocks as described above. No other metadata change or registry repair is allowed.
+
+Compile retained probes with exact unit identities, from each project’s own working directory:
 
 ```bash
-KIOKU_UPGRADE_CLI="$KIOKU_OLD_BIN" nix develop "$KIOKU_EVIDENCE/baseline/source" -c cabal exec \
-  --project-file="$KIOKU_EVIDENCE/baseline/source/cabal.project" -- \
-  runghc "$PWD/scripts/kioku-upgrade-probe.hs" read "$KIOKU_OLD_URL" "$KIOKU_EVIDENCE/old-read"
-nix develop -c cabal exec -- runghc scripts/kioku-upgrade-probe.hs \
-  read "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/candidate-before"
+python3 /absolute/candidate/scripts/build-kioku-upgrade-probe.py \
+  /absolute/baseline/build /absolute/evidence/old-probe
+python3 scripts/build-kioku-upgrade-probe.py \
+  /absolute/candidate/build /absolute/evidence/new-probe --store-dir /absolute/evidence/fresh-store
+```
+
+Set `KIOKU_OLD_PROBE` and `KIOKU_NEW_PROBE` to those retained binaries. Use this actual interface, with distinct empty directories:
+
+```bash
+KIOKU_UPGRADE_CLI="$KIOKU_OLD_BIN" "$KIOKU_OLD_PROBE" read "$KIOKU_OLD_URL" "$KIOKU_EVIDENCE/old-read"
+KIOKU_UPGRADE_CLI="$KIOKU_NEW_BIN" "$KIOKU_NEW_PROBE" read "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/before"
 DATABASE_URL="$KIOKU_NEW_URL" "$KIOKU_MIGRATE_BIN" up
 DATABASE_URL="$KIOKU_NEW_URL" "$KIOKU_MIGRATE_BIN" verify --json
 DATABASE_URL="$KIOKU_NEW_URL" "$KIOKU_MIGRATE_BIN" up
-nix develop -c cabal exec -- runghc scripts/kioku-upgrade-probe.hs \
-  read "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/candidate-after"
-nix develop -c cabal exec -- runghc scripts/kioku-upgrade-probe.hs \
-  replay "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/replay"
-```
-
-Expected: first `up` applies only 0016, verification has no issues/pending/unknown entries, second `up` changes nothing, replay accounts for every native stream, and delivery proves effects/checkpoints after restart. Compare the old/before/after reports using exactly the reviewed migration allowance. Set `KIOKU_UPGRADE_CLI` for each read invocation that exercises CLI parity. The old-linked invocation must select only the baseline project; inspect its plan rather than relying on the shell's working directory. Compile and retain the probe executables for the final run so each report names the exact linked library solution.
-
-Run paired `write` modes before `delivery`, so unrelated delivery fixture events do not enter the command comparison, and use the same old-linked invocation above for the old database:
-
-```bash
+KIOKU_UPGRADE_CLI="$KIOKU_NEW_BIN" "$KIOKU_NEW_PROBE" read "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/after"
+python3 scripts/compare-kioku-upgrade.py migration "$KIOKU_EVIDENCE/before" "$KIOKU_EVIDENCE/after"
+"$KIOKU_NEW_PROBE" replay "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/replay"
+KIOKU_UPGRADE_DISPOSABLE=1 KIOKU_UPGRADE_CLI="$KIOKU_OLD_BIN" \
+  KIOKU_UPGRADE_IDENTITY="$KIOKU_EVIDENCE/old-read/identity.json" \
+  "$KIOKU_OLD_PROBE" write "$KIOKU_OLD_URL" "$KIOKU_EVIDENCE/old-write"
 KIOKU_UPGRADE_DISPOSABLE=1 KIOKU_UPGRADE_CLI="$KIOKU_NEW_BIN" \
-  nix develop -c cabal exec -- runghc scripts/kioku-upgrade-probe.hs \
-  write "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/new-write"
-KIOKU_UPGRADE_DISPOSABLE=1 nix develop -c cabal exec -- runghc scripts/kioku-upgrade-probe.hs \
-  delivery "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/delivery"
-KIOKU_UPGRADE_DISPOSABLE=1 nix develop -c cabal exec -- runghc scripts/kioku-upgrade-probe.hs \
-  rebuild "$KIOKU_REBUILD_URL" "$KIOKU_EVIDENCE/rebuild-1"
-KIOKU_UPGRADE_DISPOSABLE=1 nix develop -c cabal exec -- runghc scripts/kioku-upgrade-probe.hs \
-  rebuild "$KIOKU_REBUILD_URL" "$KIOKU_EVIDENCE/rebuild-2"
+  KIOKU_UPGRADE_IDENTITY="$KIOKU_EVIDENCE/after/identity.json" \
+  "$KIOKU_NEW_PROBE" write "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/new-write"
+python3 scripts/compare-kioku-upgrade.py commands "$KIOKU_EVIDENCE/old-write" "$KIOKU_EVIDENCE/new-write"
 ```
+
+Capture a separate migrated rebuild clone's read identity, then run two `rebuild` modes with `KIOKU_UPGRADE_DISPOSABLE=1` and `KIOKU_UPGRADE_IDENTITY` naming that prior file. Compare reports with `scripts/compare-kioku-upgrade.py rebuild FIRST SECOND`. Run `delivery` with the same gates on a separately designated pgvector clone without existing due timers; it refuses that lane otherwise. It uses an isolated subscription at the captured head, never resetting/opening production checkpoints. The complete operator sequence is in `docs/user/upgrading-to-keiro-0-22.md`.
 
 The rebuild URL must first receive a fresh restore and the same identified migration runner. Require `commands.json` equality after the declared normalization, two successful rebuild reports with distinct run IDs, and the preservation results defined in M4. Probe modes exit nonzero on any failed invariant and print counts plus report paths on success. Pin final invocations to retained binaries/libraries rather than mutable `cabal run` output.
 

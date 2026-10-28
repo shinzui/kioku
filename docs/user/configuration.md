@@ -1,5 +1,8 @@
 # Configuration
 
+For Kioku 0.12.0.0 and its 63-entry migration cohort, follow the
+[Keiro 0.22 upgrade runbook](upgrading-to-keiro-0-22.md).
+
 AI execution requires an explicit versioned JSON file or a host-supplied `AIRuntime`.
 Without either, AI is disabled. Memory storage, keyword recall, and stored scene/persona readers
 remain usable. Credentials alone never authorize execution.

@@ -1,8 +1,11 @@
 # Upgrading an existing Codd database to pg-migrate
 
+For Kioku 0.12.0.0 and its 63-entry migration cohort, follow the
+[Keiro 0.22 upgrade runbook](upgrading-to-keiro-0-22.md).
+
 ## Current 0.9 cohort maintenance
 
-The current Kioku plan contains 60 entries (15 Kiroku, 32 Keiro, 13 Kioku).
+The Kioku 0.9 cohort described below contains 60 entries (15 Kiroku, 32 Keiro, 13 Kioku).
 Upgrading from 0.8 appends upstream 0013–0015; Kioku's own SQL and historical
 checksums are unchanged, and this release needs no new ledger fixup. The older
 cutover and checksum remedies below retain their original preconditions.

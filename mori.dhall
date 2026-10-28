@@ -384,6 +384,13 @@ in  Schema.Project::{
       ]
     , okfBundles =
       [ Schema.OkfBundle::{
+        , name = "friction-log"
+        , path = "docs/friction-log"
+        , okfVersion = "0.2"
+        , profile = Some "docs/friction-log/profile.dhall"
+        , description = Some "Friction met while implementing plans, before triage"
+        }
+      , Schema.OkfBundle::{
         , name = "capabilities"
         , path = "docs/capabilities"
         , profile = Some "docs/capabilities/profile.dhall"
