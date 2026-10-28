@@ -2,7 +2,6 @@
 .agents/
 .seihou/manifest.json.tmp
 CLAUDE.local.md
-.envrc
 dist
 dist-*
 cabal-dev
