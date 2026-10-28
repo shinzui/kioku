@@ -4,8 +4,9 @@ This record qualifies Kioku 0.12.0.0 against fixed baseline
 `9cd613d5087a08d6625cb266ff09845197b1d3d4`. It does not authorize deployment.
 M1–M3 pass. The clean-candidate gate ran against commit
 `a9ad985d752e60a3e883622b96f61a83ad1fe15d` with no generated tracked changes after the second build.
-M4's actual restored-history acceptance is pending an operator archive, provenance,
-deployment PostgreSQL major, scratch identities and installation inventory.
+M4's pre-upgrade historical acceptance remains pending a suitable archive with native
+history. The user-authorized dev database was archived and rehearsed successfully,
+but it already has all 63 migrations and contains no original native events.
 
 ## Sources and artifacts
 
@@ -131,9 +132,63 @@ is checked for preservation. No production rebuild is prescribed.
 
 The [operator runbook](../user/upgrading-to-keiro-0-22.md) specifies archive
 verification, deployment-major/grants checks, stopped writers/workers, migration,
-post-restart observation and recovery boundaries. Actual archive hash/time,
-restored identities, actual native-stream denominator, installation supervisors,
-production delivery and cutover approval are unsupplied. M4 remains unaccepted.
+post-restart observation and recovery boundaries. The development rehearsal below
+records its archive, restored identities, PostgreSQL major and zero original native
+streams. A pre-upgrade archive containing actual history, production installation
+supervisors, production delivery and cutover approval remain unsupplied. M4 remains
+unaccepted for those original historical obligations.
+
+
+## Development database archive and clone rehearsal
+
+On 2026-10-28 the user authorized the stopped development database as the rehearsal
+source. It was started temporarily with `default_transaction_read_only=on`, captured
+without runtime registration, and stopped again. Full protected-row snapshots before
+and after capture agree. Source configuration and source migration history were not
+changed. The source is `kioku`, PostgreSQL 18.6, with pgvector 0.8.6 in `kiroku`,
+`btree_gin` 1.3 in `public`, and the local `shinzui` superuser role. No other source
+connections or namespace subscription bindings were present. The archive retains
+owner/grant metadata; source schema and role inventories are saved separately.
+
+The 176,686-byte archive was captured at `2026-10-28T04:21:08.046621Z` and has SHA256
+`d4627a2b962b5ab63d7479838f1c1d0d528d8c4437a7f4d1d7f02561f4698562`.
+Its ledger already contains 63 applied migrations including `kiroku/0016`; it has
+zero events, memories, sessions, turns, subscriptions and timers. This is an
+already-current empty development installation, not pre-upgrade history.
+
+The verified archive was restored into four explicitly designated disposable
+databases in an isolated PostgreSQL 18.6 cluster with a private Unix socket and no
+TCP listener: `kioku_p51_dev_old`, `kioku_p51_dev_candidate`,
+`kioku_p51_dev_rebuild`, and `kioku_p51_dev_delivery`. Every restored protected row
+matches the archive source before CLI registration. Database/socket/OID/user/major
+identities are recorded in `scratch-designation.json` and each probe report; the
+same local superuser role was used. These checks qualify local developer-role
+behavior, without claiming application-role or production grant equivalence.
+
+Both retained candidate migration-runner invocations report 63 `alreadyApplied`
+entries and zero applied migrations. Both verification reports have zero issues,
+pending or unknown entries. The `current` comparison mode checks unchanged full
+schema, full ledger, public reads and CLI output, allowing only the previously
+reviewed two cursor-registration clocks. Its checks reject injected protected-row
+and schema changes. The original `migration` mode still requires a 62-entry source
+and rejects this already-current archive, preserving the transition requirement.
+
+Old/candidate public write and CLI parity passes on the restored twins. Replay of
+the untouched restored source accounts for **zero** native streams; replay after
+the paired fixture commands accounts for two fixture streams. Two rebuilds of the
+empty restored projections pass. The delivery clone then observes exactly two
+provider effects and stored embeddings across adapter restart, a durable exact-
+category checkpoint at position 2, and a timer reaching `fired`. Two subsequent
+catalog rebuilds preserve both non-null 1536-dimensional embeddings and all four
+enrichment fields. These are new fixture effects on restored development state.
+
+Private archive/provenance, full reports, scratch designations, exact artifact
+hashes, source snapshots, role/schema inventories and orchestration are retained
+under `.dev/keiro-0.22/dev-history-1/`; `rehearsal-summary.json` records the limits
+explicitly. Both the source server and the isolated scratch cluster were returned
+to stopped state. The qualified shipping binaries and their linked library solution
+are unchanged. A source with pre-upgrade native history is still needed to accept
+M4's original transition and historical replay criteria.
 
 ## Final clean-candidate artifact record
 
@@ -142,7 +197,8 @@ The second build produces no tracked changes; the final five source archives
 build all seven exported library/executable components through an external
 archive-only project, with the same 227-component runtime source identity digest.
 Native Nix checks pass from the clean candidate. Synthetic PostgreSQL coverage
-uses the development shell's PostgreSQL 18; the deployment major is still unknown.
+uses the development shell's PostgreSQL 18. The dev database is verified as 18.6;
+a separate production deployment major remains unknown.
 
 Immutable qualified artifacts, exact build/test logs, source identities, Cabal
 plan/freeze, archive consumer and `qualification.json` are retained under

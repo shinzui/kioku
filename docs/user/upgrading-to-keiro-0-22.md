@@ -102,6 +102,16 @@ constraint definitions and the remaining full schema, and fails on other changes
 Older archives need an enumerated, separately reviewed allowance for every missing
 migration; the one-entry comparator deliberately refuses them.
 
+If the source already contains all 63 migrations including `kiroku/0016`, classify
+it as current before running any comparisons. Use
+`python3 scripts/compare-kioku-upgrade.py current BEFORE_REPORT AFTER_REPORT`
+for repeated `up` verification. This mode requires the entire schema, ledger and
+protected rows to remain unchanged, with only the documented registration-clock
+allowance. It proves current-state restore/repeatability; it does not prove the
+62-to-63 migration transition. Record zero original native streams explicitly
+when the source is empty, and label later fixture writes/replay as fixture evidence.
+
+
 ```bash
 DATABASE_URL="$KIOKU_NEW_URL" "$KIOKU_MIGRATE_BIN" up
 DATABASE_URL="$KIOKU_NEW_URL" "$KIOKU_MIGRATE_BIN" verify --json

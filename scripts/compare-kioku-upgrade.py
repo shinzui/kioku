@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed when a probe report differs outside the reviewed 0.21 allowance."""
+"""Compare probe reports against explicit transition or current-state allowances."""
 import argparse
 import json
 from pathlib import Path
@@ -79,13 +79,43 @@ def migration(before, after):
     print('63-entry migration accepted: only kiroku/0016 and its two constraints/schema comment changed')
 
 
+def current(before, after):
+    """An already-current restore proves repeatability, not a migration transition."""
+    old = load(before, 'protected.json')
+    new = load(after, 'protected.json')
+    for snapshot in [old, new]:
+        ledger = snapshot['pgmigrate.migrations']
+        require(len(ledger) == 63, 'current-state comparison requires 63 ledger entries')
+        require(all(row['status'] == 'applied' for row in ledger),
+                'current-state comparison requires every ledger entry applied')
+        require(sum(row['component'] == 'kiroku' and row['migration'] == '0016'
+                    and row['status'] == 'applied' for row in ledger) == 1,
+                'current-state comparison requires applied kiroku/0016')
+    same(registration_clocks(old), registration_clocks(new), 'current protected rows and full ledger')
+    same(load(before, 'subscription-schema.json'), load(after, 'subscription-schema.json'),
+         'current subscription schema')
+    def unchanged_schema(directory):
+        return re.sub(r'^\\(?:un)?restrict .*\n', '',
+                      (directory / 'schema.sql').read_text(), flags=re.M)
+    same(unchanged_schema(before), unchanged_schema(after), 'full current schema')
+    same(load(before, 'read.json'), load(after, 'read.json'), 'current public library reads')
+    same(load(before, 'cli.json'), load(after, 'cli.json'), 'current CLI output')
+    for report in [before, after]:
+        phase = load(report, 'cli-metadata-phase.json')
+        same(registration_clocks(phase['before']), registration_clocks(phase['after']),
+             'current CLI startup metadata')
+    print('already-current restore preserved: no schema or ledger changes; no migration transition proved')
+
+
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('mode', choices=['migration', 'commands', 'rebuild'])
+parser.add_argument('mode', choices=['migration', 'current', 'commands', 'rebuild'])
 parser.add_argument('before', type=Path)
 parser.add_argument('after', type=Path)
 args = parser.parse_args()
 if args.mode == 'migration':
     migration(args.before, args.after)
+elif args.mode == 'current':
+    current(args.before, args.after)
 elif args.mode == 'commands':
     same(load(args.before, 'commands.json'), load(args.after, 'commands.json'), 'paired command results')
     same(load(args.before, 'cli.json'), load(args.after, 'cli.json'), 'paired CLI output')
