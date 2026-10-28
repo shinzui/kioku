@@ -11,6 +11,7 @@ edit. What to edit is in the edge prompt.
 
 | Kioku | `keiro` / `keiro-core` | `kiroku-store` | `keiki` | `shibuya-core` | `shibuya-kiroku-adapter` | `baikai` |
 |---|---|---|---|---|---|---|
+| 0.12.0.1 | `^>=0.22.0.0` | `^>=0.12.0.0` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.0` | `^>=0.10.0.0` |
 | 0.12.0.0 | `^>=0.22.0.0` | `^>=0.12.0.0` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.0` | `>=0.7.0.0 && <0.9` |
 | 0.11.0.0 | `^>=0.21.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `>=0.7.0.0 && <0.9` |
 | 0.10.0.0 | `^>=0.21.0.0` | `^>=0.11.0.0` | `^>=0.9.1.0` | `^>=0.10.0.1` | `^>=0.6.0.1` | `>=0.7.0.0 && <0.9` |
@@ -37,6 +38,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `baikai` / `baikai-claude` | `baikai-openai` | `baikai-effectful` | `shikumi` | `shikumi-trace` |
 |---|---|---|---|---|---|
+| 0.12.0.1 | `baikai ^>=0.10.0.0`; `baikai-claude ^>=0.7.3.0` | `^>=0.7.3.0` | `^>=0.4.0.5` | `^>=0.4.1.1` | `^>=0.3.0.2` |
 | 0.12.0.0 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.11.0.0 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
 | 0.10.0.0 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
@@ -57,6 +59,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `keiro-migrations` | `kiroku-store-migrations` | `pg-migrate` |
 |---|---|---|---|
+| 0.12.0.1 | `^>=0.22.0.0` | `^>=0.7.2.0` (project constraint `==0.7.2.0`) | `^>=1.2.0.0` |
 | 0.12.0.0 | `^>=0.22.0.0` | `^>=0.7.2.0` | `^>=1.2.0.0` |
 | 0.11.0.0 | `^>=0.21.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
 | 0.10.0.0 | `^>=0.21.0.0` | `^>=0.7.1.0` | `^>=1.2.0.0` |
@@ -84,6 +87,14 @@ its own build plan:
 jq -r '."install-plan"[] | select(."pkg-name"=="keiro") | ."pkg-version"' \
   dist-newstyle/cache/plan.json | sort -u
 ```
+
+For 0.12.0.1, consuming projects also need scoped `allow-newer` entries for
+`shikumi:baikai`, `shikumi-cache:baikai` and `shikumi-trace:baikai`. The latest
+released packages at mori://shinzui/shikumi still cap Baikai below 0.9.
+Keep mori://shinzui/kiroku/packages/kiroku-store-migrations constrained to
+`==0.7.2.0` to retain the qualified 63-entry plan. Repository project settings
+are not inherited through Hackage packages. Follow the 0.12.0.0-to-0.12.0.1 edge
+for direct Baikai API adaptations and consumer validation.
 
 ## Composed migration plan
 

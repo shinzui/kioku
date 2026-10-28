@@ -10,6 +10,12 @@ allowed-tools: Read, Bash, Edit, Glob, Grep, Write, AskUserQuestion
 
 Release every kioku package to Hackage under a single shared version.
 
+Invoking this skill authorizes the routine release workflow: select the version,
+update release files, verify, commit, tag, push, publish packages and documentation,
+and create the GitHub release. Report the version reasoning and changes without
+pausing for separate version, changelog, or pre-publication approval. All
+verification gates and failure stopping conditions remain mandatory.
+
 ## Versioning Strategy
 
 All five packages share the **same version number** and are released together. A single annotated git tag `v<version>` marks each release, and one GitHub release is cut per tag.
@@ -56,7 +62,7 @@ curl -s -o /dev/null -w '%{http_code}\n' \
   https://hackage.haskell.org/package/kioku-api-<staged-version>
 ```
 
-If the staged version is untagged **and** 404s on Hackage, that version is unclaimed and the correct move is to **resume it** — keep the existing release commit, finish the gates, then tag, push, and publish. Do not bump again; bumping strands a version number and leaves a gap in the Hackage history. Confirm the resume with the user, then jump to step 5.
+If the staged version is untagged **and** 404s on Hackage, that version is unclaimed and the correct move is to **resume it** — keep the existing release commit, finish the gates, then tag, push, and publish. Do not bump again; bumping strands a version number and leaves a gap in the Hackage history. Report the resume, then jump to step 5.
 
 If it is tagged or already on Hackage, that release is done — proceed normally from step 1 and bump on top of it.
 
@@ -90,13 +96,13 @@ The `subdir` is per-package and required, because this is a multi-package repo.
 
 **d. Changelogs.** All five packages have a `CHANGELOG.md` plus `extra-doc-files: CHANGELOG.md`, and a root `CHANGELOG.md` exists for the GitHub release notes.
 
-If anything did regress, report what you fixed and confirm with the user before continuing.
+If anything did regress, fix it within the release scope, report the changes, and continue through the verification gates.
 
 ### 2. Determine what changed since the last release
 
 - Read the current version from any cabal file (all five share it).
 - Find the latest tag matching `v*`: `git tag --list 'v*' --sort=-v:refname | head -1`.
-- If there is **no tag**, this is the first release. Treat all of `git log --oneline` as the change set and default the release version to the current cabal version (`0.1.0.0`) rather than bumping — confirm this with the user.
+- If there is **no tag**, this is the first release. Treat all of `git log --oneline` as the change set and default the release version to the current cabal version (`0.1.0.0`) rather than bumping. Report that this is the first release.
 - Otherwise run `git log --oneline <last-tag>..HEAD`. If there are no commits since the tag, tell the user there is nothing to release and stop.
 
 Present a summary:
@@ -124,7 +130,7 @@ Increment:
 - **minor**: increment `C`, reset `D` to 0 (`0.2.0.1` → `0.2.1.0`)
 - **patch**: increment `D` (`0.2.0.1` → `0.2.0.2`)
 
-Present the proposed bump **and the reasoning** to the user, and get explicit confirmation before proceeding.
+Report the selected bump **and the reasoning** to the user, then proceed.
 
 ### 4. Update versions, bounds, and changelogs
 
@@ -229,7 +235,7 @@ Every upstream library that moved is a candidate. Declare the edge in *that* lib
 
 Also update `blueprints/kioku-upgrade/files/kioku-cohort-versions.md`: add a row to both bound tables, a row to the composed-plan table if the count moved, and an entry under "Releases requiring a ledger fixup" if this release corrected a payload.
 
-Show the user **all** changes — version bumps, dependency bounds, changelog entries, and any blueprint edge — for review before committing.
+Summarize the version bumps, dependency bounds, changelog entries, and any blueprint edge, and make the complete diff available for inspection. Continue through verification and publication without a separate approval pause.
 
 ### 5. Verify
 
@@ -307,7 +313,7 @@ Notes:
 - Create one annotated tag: `git tag -a v<version> -m "Release <version>"`
 - Push: `git push && git push --tags`
 
-The commit and tag are created **only after** the user approves the changes from step 4.
+Create the commit and tag after all required verification gates pass.
 
 ### 7. Publish to Hackage (in dependency order)
 
@@ -416,7 +422,7 @@ Report the GitHub release URL when done.
 ## Important
 
 - **Check step 0 first.** A staged-but-unpublished release commit means resume that version, not bump past it.
-- Always ask the user to confirm the version bump and the changelogs before committing.
+- Report the version bump and changelogs, then continue without a separate approval pause.
 - Always publish in dependency order: `kioku-api` → `kioku-migrations` → `kioku-core` → `kioku-cli` → `kioku-migrate`.
 - Never skip `cabal check`, the test suites, or `nix flake check`. Run `cabal check` **before** tagging.
 - A test suite that fails to reach Postgres is a **failure**, not a skip. Start Postgres and re-run — over a unix socket (`-U -u "$PC_SOCK"`), never a TCP port. Tear the stack down with `process-compose down -U -u "$PC_SOCK"` when the release is finished.
@@ -428,4 +434,4 @@ Report the GitHub release URL when done.
 - Because all packages share a version, a breaking change anywhere majors everything. That is also why a major bump does **not** by itself mean the `kioku-upgrade` blueprint needs an edge — decide from consumer-visible judgement work (step 4d), not from the version digit.
 - A blueprint edge, when one is needed, is authored **in the release commit** and is append-only. Never edit or delete a published edge: consumer receipts are keyed to it.
 - Run `nix fmt` before committing, and `git add` new files before `nix flake check`.
-- The commit and tag are created only after the user approves all changes.
+- Create the commit and tag only after all required verification gates pass.

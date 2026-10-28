@@ -2,8 +2,15 @@
 
 ## [Unreleased]
 
+## 0.12.0.1 — 2026-10-28
+
 ### Changed
 
+- Align all five package versions and 16 internal dependency bounds at 0.12.0.1.
+- Run the release skill through verified publication from its explicit invocation, with progress reports and no separate routine approval pauses.
+- Add the 0.12.0.0-to-0.12.0.1 consumer upgrade edge with scoped AI dependency exceptions, direct Baikai API checks and the qualified migration constraint.
+- Refresh the README and user guides for the current CLI, AI configuration, bounded reads and upgrade operations.
+- Record successful rehearsals on disposable restores of the current development database, with strict state comparisons; acceptance against historical pre-upgrade data remains pending.
 - Require `mori://shinzui/baikai/packages/baikai` 0.10.0.0,
   Claude/OpenAI providers 0.7.3.0 and Effectful 0.4.0.5 in Core and CLI.
   Require the latest released Shikumi 0.4.1.1 and Trace 0.3.0.2, with scoped

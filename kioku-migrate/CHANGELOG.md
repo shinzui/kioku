@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.12.0.1 — 2026-10-28
+
+### Changed
+
+- Align Core and migration dependencies at 0.12.0.1. Consumer build projects need the scoped Shikumi compatibility exceptions and the 0.7.2.0 Store migration constraint documented in the 0.12.0.0-to-0.12.0.1 upgrade edge. The qualified composed plan remains at 63 entries.
+
 ## 0.12.0.0 — 2026-10-27
 
 ### Changed

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.12.0.1 — 2026-10-28
+
+### Changed
+
+- Align the shared release version and internal test dependencies at 0.12.0.1. Keep the qualified 63-entry cohort by constraining `mori://shinzui/kiroku/packages/kiroku-store-migrations` to 0.7.2.0 in consumer projects, matching this repository's `cabal.project`. Historical Kioku SQL and checksums are preserved.
+
 ## 0.12.0.0 — 2026-10-27
 
 ### Added

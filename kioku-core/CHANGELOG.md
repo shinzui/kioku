@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.12.0.1 — 2026-10-28
+
 ### Changed
 
 - Require `mori://shinzui/baikai/packages/baikai` 0.10.0.0,

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.12.0.1 — 2026-10-28
+
+### Changed
+
+- Align the shared release version and test dependency at 0.12.0.1. Wire types and identifiers retain their existing API.
+
 ## 0.12.0.0 — 2026-10-27
 
 ### Changed
