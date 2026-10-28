@@ -2,11 +2,11 @@
 
 This guide takes you from an empty checkout to writing and recalling your first memory.
 
-The current 0.9 release cohort uses Keiro 0.20 and Kiroku Store 0.11. Its plan has
-60 entries. For an existing database, follow the [upgrade maintenance guidance](upgrading-to-pg-migrate.md)
-before starting workers: upstream 0013/0014 require all subscription workers stopped
-and confirmed legacy targets, and 0015 requires an index-build write pause.
-Fresh disposable databases use the normal setup below.
+Kioku 0.12.0.0 uses Keiro 0.22 and Kiroku Store 0.12. Its plan has **63 entries**
+(16 Kiroku, 32 Keiro, 15 Kioku). For an existing database, follow the
+[0.12 upgrade runbook](upgrading-to-keiro-0-22.md) before starting hosts or workers.
+Older installations also need the intervening [migration maintenance](upgrading-to-pg-migrate.md)
+and [catalog adoption](bounded-reads.md) steps. Fresh disposable databases use the setup below.
 
 ## Prerequisites
 
@@ -32,6 +32,16 @@ nix develop      # or `direnv allow` if you use direnv
 The dev shell exports `PGHOST`, `PGDATABASE`, `PGDATA`, and `PGLOG`, which the `Justfile` and
 `process-compose.yaml` rely on.
 
+Build the packages in this shell:
+
+```bash
+cabal build all
+```
+
+The examples below use `cabal run kioku --` from the checkout. If you installed the executable
+on `PATH`, use `kioku` instead. For the full test gate, use
+`TASTY_NUM_THREADS=4 cabal test all -j1` to bound concurrent ephemeral PostgreSQL startup.
+
 ## 2. Start Postgres and create the schema
 
 kioku ships a `process-compose.yaml` that launches a local Postgres and applies all migrations:
@@ -54,7 +64,7 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 The migration ledger records the stable `component/name` identity and SHA-256 checksum of all
-60 migrations (Kiroku 15, Keiro 32, Kioku 13). `verify` is read-only and fails if applied SQL no
+63 migrations (Kiroku 16, Keiro 32, Kioku 15). `verify` is read-only and fails if applied SQL no
 longer matches the bytes compiled into the executable.
 
 When authoring a Kioku migration, start with `just new-migration <slug>`, qualify every persistent
@@ -118,7 +128,7 @@ requires an explicit `--yes-write-events`, and prints what it is about to write,
 writing it:
 
 ```bash
-kioku demo --yes-write-events
+cabal run kioku -- demo --yes-write-events
 ```
 
 ```text
@@ -132,7 +142,7 @@ Recorded memory kioku_memory_01... in scope kioku_demo/demo/demo
 Recall it immediately with full-text search (the demo command does not create an embedding):
 
 ```bash
-kioku recall "concise answers" --scope kioku_demo:demo:demo --strategy keyword
+cabal run kioku -- recall "concise answers" --scope kioku_demo:demo:demo --strategy keyword
 ```
 
 ```text
@@ -142,7 +152,7 @@ kioku recall "concise answers" --scope kioku_demo:demo:demo --strategy keyword
 Add `--show-scores` to see the score and component ranks:
 
 ```bash
-kioku recall "concise answers" --scope kioku_demo:demo:demo \
+cabal run kioku -- recall "concise answers" --scope kioku_demo:demo:demo \
   --strategy keyword --show-scores
 ```
 
@@ -154,12 +164,14 @@ kioku recall "concise answers" --scope kioku_demo:demo:demo \
 RRF score with recency/priority/confidence signals applied. The exact score changes as the memory
 ages. A `-` means that component did not contribute; here vector search was deliberately disabled.
 
-For semantic recall, configure the embedding endpoint, backfill the new row, then use the default
-hybrid strategy:
+For semantic recall, select a file enabling compatible `memory-embedding` and `query-embedding`
+API settings, supply the credentials named in that file, and backfill the new row. Start from
+[the API example](../examples/ai-api.json), then use the default hybrid strategy:
 
 ```bash
-kioku worker --backfill
-kioku recall "what writing style is preferred" --scope kioku_demo:demo:demo
+export KIOKU_AI_CONFIG=/path/to/ai-api.json
+cabal run kioku -- worker --backfill
+cabal run kioku -- recall "what writing style is preferred" --scope kioku_demo:demo:demo
 ```
 
 See [Recall](recall.md) for the ranking and fallback behavior.
@@ -168,17 +180,17 @@ See [Recall](recall.md) for the ranking and fallback behavior.
 
 The session demo records a session aggregate. Like `kioku demo` it writes permanent events, and
 completing the session also schedules a distillation timer that a running worker will process
-(an LLM call), so it too requires the explicit opt-in:
+(a model call when an execution capability is enabled), so it too requires the explicit opt-in:
 
 ```bash
-kioku demo-session --yes-write-events
+cabal run kioku -- demo-session --yes-write-events
 ```
 
 To turn a session's evidence into memory atoms (L1 distillation), run:
 
 ```bash
 export KIOKU_AI_CONFIG=/path/to/ai-api.json  # explicit API authorization; supply its named credentials
-kioku distill session <SESSION_ID>
+cabal run kioku -- distill session <SESSION_ID>
 ```
 
 The session id must carry the `kioku_session` prefix; any other prefix is rejected. Re-running a
@@ -189,12 +201,20 @@ To run the background workers that compute embeddings and fire distillation time
 continuously:
 
 ```bash
-kioku worker
+cabal run kioku -- worker
 ```
 
 The worker is built to be **supervised**: it exits non-zero if either pipeline stops, rather than
 lingering half-dead. Run it from the workspace you want scene/persona files mirrored into — they
 land in the worker's working directory.
+
+A continuous worker starts embeddings only when API embedding capability and pgvector are both
+available. Interactive-only distillation is parked for authorized foreground recovery:
+
+```bash
+cabal run kioku -- worker deferred list
+cabal run kioku -- worker deferred resume <TIMER_UUID> --ai-config /path/to/ai-interactive.json
+```
 
 See [The Distillation Pyramid](distillation.md) for the full flow, and the
 [CLI Reference](cli-reference.md) for every flag.

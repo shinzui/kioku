@@ -1,5 +1,9 @@
 # Bounded Session and Memory reads
 
+This guide applies to Kioku 0.12.0.0. It retains the 0.10 and 0.11 source and catalog migration
+steps for hosts crossing those releases. A fully migrated 0.11 host keeps the same reader API
+and catalog at 0.12; only the [Keiro 0.22 cohort upgrade](upgrading-to-keiro-0-22.md) is needed.
+
 Kioku 0.9.1.0 added compatible facades in `Kioku.Session` and `Kioku.Memory`;
 0.10.0.0 gates them on `MemoryRead` and flattens their errors, which changes their
 0.9.1.0 result types. 0.9.1.0 was never published to Hackage.
@@ -76,8 +80,10 @@ drain new hosts and adopt the old compiled catalog through the same supported
 protocol. Leave additive indexes and historical migration ledger entries intact.
 
 The 0.10.0.0 composed plan had 61 entries: 15 Kiroku, 32 Keiro and 14 Kioku.
-The 0.11.0.0 plan has 62 entries: 15 Kiroku, 32 Keiro and 15 Kioku.
-No new upstream migration or dependency-cohort adoption is required.
+The 0.11.0.0 plan had 62 entries: 15 Kiroku, 32 Keiro and 15 Kioku.
+The current 0.12.0.0 plan has 63: 16 Kiroku, 32 Keiro and 15 Kioku.
+The 0.11 reader additions themselves require no upstream migration; the 0.12 dependency upgrade
+appends `kiroku/0016` without changing this catalog.
 
 ## Fixed Memory metadata (0.11.0.0)
 

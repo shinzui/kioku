@@ -69,10 +69,17 @@ mirror files are deleted**. The event log keeps the history; the derived artifac
 > concurrent writers. A duplicate that loses a concurrent race still gets the same success the
 > winner got.
 
+## Memory space
+
+A **memory space** is the isolation partition. Every command and query names one `MemorySpaceId`;
+an authorized `MemoryAccessContext` binds that space to a principal and allowed actions.
+Existing data belongs to `kioku_legacy`. Hosts decide who may access a space; namespaces do not
+grant access. See [Scopes & Integrations](integrations.md#who-decides-access).
+
 ## Scope
 
-A **scope** is how kioku partitions memory so multiple hosts share one database. It is the key
-host-agnostic idea. A `MemoryScope` is one of:
+A **scope** organizes memory inside a space. Multiple spaces can use the same namespace and
+entity reference without sharing data. A `MemoryScope` is one of:
 
 - **Global** — `namespace` only. Memory shared across the whole host: `ScopeGlobal "mori"`.
 - **Entity** — `namespace` + `kind` + `ref`. Memory anchored to a specific thing:
@@ -93,7 +100,7 @@ NAMESPACE:KIND:REF         →  entity scope        e.g.  rei:intention:intentio
   on the first two colons only, so `ops:host:db.internal:5432` is the entity scope `ops` / `host` /
   `db.internal:5432`. Host-specific integrations may impose a narrower format on their refs.
 
-### Recall says how wide it is searching; reads are always exact
+### Recall targets and scoped reads
 
 An **entity** scope is exact everywhere: it matches only that exact `namespace`/`kind`/`ref`, and
 never sees the namespace's global memories.
@@ -118,6 +125,15 @@ ambiguity lived in `--scope mori`, which is now a parse error naming the two fla
 
 Full detail: [Recall](recall.md#recall-targets-vs-scoped-reads). See
 [Scopes & Integrations](integrations.md) for per-host conventions.
+
+### Bounded inspection
+
+Resource readers can page Memory metadata and tags separately, page Sessions and turns, and
+request complete counts without loading a collection. These facades check `MemoryRead` on the
+context before touching Store and cap pages at 100 rows. Metadata keeps complete content and
+scalar fields plus a tag count; it bounds rows, not text bytes. Newest-active selection ignores
+priority and orders by creation time descending, then ID ascending. See
+[Bounded reads](bounded-reads.md) for filters, missing-data behavior and cursor limits.
 
 ## Session
 

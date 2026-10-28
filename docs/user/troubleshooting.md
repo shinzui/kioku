@@ -72,12 +72,19 @@ Two variants of this are worth telling apart, because only one of them is fixed 
 
 ### Projection-catalog startup failure
 
-Kioku 0.7 validates both event streams and one Keiro 0.17 projection catalog before user effects
+Kioku validates both event streams and its projection catalog before user effects
 run. A message naming catalog diagnostics, a fingerprint conflict, or a stale query identity is a
 startup refusal, not a warning to bypass. Run the matching migrations first. If the database was
 migrated through a host-owned composed plan, call
 `Kioku.ReadModel.reconcileReadModelRegistry` after it succeeds. Do not delete registry or catalog
 rows: the persisted fingerprint is what prevents a target or owner from disappearing silently.
+
+The bounded readers added in 0.10 and 0.11 change query registrations without reshaping existing
+projection rows. They need [catalog preview/adoption](bounded-reads.md#fixed-memory-metadata-01100)
+before ordinary `withNoopAppEnv` startup. Reconciliation alone cannot adopt the fingerprint, and
+`kioku-migrate up` enters registration after SQL, so it can apply migrations and then refuse the
+catalog. Use an administrative `AppEnv` as shown in that recipe. A complete 0.11-to-0.12 upgrade
+does not change Kioku's catalog; use the [0.12 runbook](upgrading-to-keiro-0-22.md).
 
 The catalog owns Kioku's application projections only. `keiro.keiro_timers` is shared framework
 state and intentionally remains an explicit same-transaction handler; its absence from the Kioku
@@ -105,12 +112,14 @@ successful pass is skipped **before any LLM call**. Re-run with `--force` if you
 
 ### How do I know if pgvector is active?
 
-Run the worker; it reports the detected capability. Three unhealthy answers:
+With an AI file enabling `memory-embedding`, run the worker; it reports detected capability.
+Without that capability it reports `Memory embeddings disabled by AI policy` and runs timers
+only, so that message alone does not diagnose pgvector. Three unhealthy capability answers:
 
 ```text
 pgvector is not available; recall will run FTS-only; running kioku timer worker only.
 pgvector columns are missing (embedding, embedding_model, dimensions, content_hash); running kioku timer worker only.
-kioku worker: embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=512 but kioku.memories.embedding is vector(1536); fix the env var or migrate the column; running kioku timer worker only.
+kioku worker: embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=1536 but kioku.memories.embedding is vector(512); fix the env var or migrate the column; running kioku timer worker only.
 ```
 
 A healthy start prints, in order:
@@ -185,20 +194,22 @@ index and constraint name alone, so nothing that referred to them by name had to
 ### Embedding dimension mismatch
 
 ```text
-embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=512 but kioku.memories.embedding is vector(1536)
+embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=1536 but kioku.memories.embedding is vector(512)
 ```
 
-The embedding column is `vector(1536)` — the shipped migrations hard-code it. kioku checks your
-configured dimension against the column's declared width **at startup**, rather than discovering
+The shipped embedding column is `vector(1536)`. AI files must select 1536; another dimension
+fails configuration validation. The capability probe compares that supported width against the
+column **at startup**, rather than discovering
 it one failed event at a time:
 
 - `kioku worker --backfill` **refuses and exits non-zero** before embedding anything.
 - `kioku worker` prints the message to stderr and runs the **distillation timers only**.
 - `kioku recall` degrades to **keyword-only, silently**.
 
-Fix the environment variable (unset it, or set `1536`). If you genuinely need another dimension you
-must write a migration that re-types the column and rebuilds the HNSW index, then re-embed
-everything with `kioku worker --backfill`.
+The diagnostic retains the old environment-variable label; changing `KIOKU_EMBEDDING_DIMENSIONS`
+has no effect. Check the selected AI file and database schema. Supporting another width requires
+changes to Kioku's runtime validation and SQL as well as a migration and re-embedding; changing
+only the column is insufficient. See [Configuration](configuration.md#embeddings).
 
 ### Recall ignores the semantic channel
 
@@ -206,12 +217,18 @@ If `--show-scores` shows `vec=-` on **every** hit, the vector channel did not ru
 of likelihood:
 
 1. `--strategy keyword`.
-2. pgvector is unavailable, its columns are missing, or `KIOKU_EMBEDDING_DIMENSIONS` disagrees with
-   the column — all three make recall **silently** keyword-only, with no error on the recall
-   itself. Run `kioku worker` once and read its capability line (above).
-3. The embedding endpoint failed or has no key: recall falls back to keyword for that request,
+2. Query embeddings are disabled. Select a file with an API `query-embedding` entry using
+   `--ai-config FILE` or `KIOKU_AI_CONFIG`. Hybrid reports keyword fallback; explicit embedding
+   strategy is refused. Credentials alone do not enable AI.
+3. pgvector is unavailable, its columns are missing, or its width differs from 1536. With query
+   embeddings enabled these make recall keyword-only. Check worker capability as above.
+4. The embedding endpoint failed or has no key: recall falls back to keyword for that request,
    silently.
-4. The memories have no embeddings yet: `kioku worker --backfill`.
+5. The memories have no embeddings yet: enable `memory-embedding`, then run
+   `kioku worker --backfill`.
+
+A stored/configured model mismatch is an explicit `RecallAIUnavailable` error. Re-embed the
+space with a compatible model; renaming the setting does not migrate stored vectors.
 
 A `vec=-` on *some* hits is normal — that hit was found by the keyword channel and was not in the
 vector channel's 50-candidate pool.
@@ -307,8 +324,9 @@ No. Turns are opt-in L0 evidence. Without them, distillation can still work from
 memories. With them, the pyramid has richer raw material.
 
 **Do different hosts interfere with each other?**
-No. Memory is partitioned by `namespace`, and recall/distillation always run within a scope. One
-shared database and one `kioku worker` can serve every namespace. See
+Memory spaces isolate data; namespaces and scopes organize it within each space. Hosts must
+authorize access to the requested space. One shared database and worker can serve multiple spaces
+and namespaces; a namespace alone grants no isolation from another caller. See
 [Scopes & Integrations](integrations.md).
 
 **Why does a high `--limit` sometimes return fewer hits?**
@@ -319,7 +337,9 @@ parse error, not a big result set.
 
 **Where do the mirrored scene/persona files live?**
 In the working directory of the process that regenerates them — in practice, wherever you started
-`kioku worker` — under `.kioku/scenes/<slug>.md` and `.kioku/persona/<slug>.md`. The slug is a
+`kioku worker` — under `.kioku/spaces/<space-dir>/scenes/<slug>.md` and
+`.kioku/spaces/<space-dir>/persona/<slug>.md`. The space directory is a sanitized prefix plus a
+digest, so derive it with Kioku's workspace helpers. The slug is a
 readable rendering of the scope plus a short hash of its exact identity, so
 `rei:intention:abc` becomes `rei-intention-abc-1f4a9c7e2b.md`. The hash is what keeps two different
 scopes from colliding on one filename; don't construct these names by hand, derive them or list the

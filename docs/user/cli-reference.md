@@ -24,15 +24,29 @@ Available commands:
 ```
 
 Run `kioku <command> --help` for the flags of any subcommand.
+From a source checkout, use `cabal run kioku -- <command>` and
+`cabal run kioku-migrate -- <command>`.
+
+Shell completion generation needs no database:
+
+```bash
+kioku --bash-completion-script kioku > kioku.bash
+kioku --zsh-completion-script kioku > _kioku
+kioku --fish-completion-script kioku > kioku.fish
+```
 
 ## Runtime configuration
 
 | Variable                | Used by                | Purpose                                    |
 |-------------------------|------------------------|--------------------------------------------|
 | `PG_CONNECTION_STRING`  | every `kioku` database operation | libpq connection string to the database. |
-| `KIOKU_EMBEDDING_*`     | vector recall, recall-based merge candidates, and embedding worker modes | embedding endpoint config (see [Configuration](configuration.md)); defaults exist, and recall degrades to keyword if embedding fails. |
-| `ANTHROPIC_API_KEY`     | commands that run distillation | the distillation LLM. **Separate from the embeddings key** — configuring `KIOKU_EMBEDDING_*` does not configure this. |
+| `KIOKU_AI_CONFIG`       | `recall`, `distill session`, and worker modes | Explicit version 1 AI file; `--ai-config FILE` overrides it. Absent configuration disables AI. |
+| `KIOKU_MEMORY_SPACE`    | runtime reads and writes | Memory space, default `kioku_legacy`. Workers discover work across spaces. |
+| `KIOKU_ACTOR`           | runtime writes and workers | Attributed principal, default `kioku_cli`. |
 | `DATABASE_URL`          | `kioku-migrate` database operations | migration target connection string; an explicit `--database-url` overrides it. |
+
+Credentials are resolved from the selected AI file. Legacy `KIOKU_EMBEDDING_*` variables and
+provider keys alone do not enable AI. See [Configuration](configuration.md).
 
 The scope string format used by several commands is:
 
@@ -95,7 +109,8 @@ Demonstrates the **session** aggregate end to end (start → record → complete
 the session read model and projections are wired up.
 
 > **This writes permanent events**, and completing the demo session also schedules a real
-> distillation timer — a running `kioku worker` will process it, which costs an LLM call. Like
+> distillation timer — a running `kioku worker` processes it using its configured AI capabilities.
+> Enabled generation can incur a model call. Like
 > `kioku demo`, it requires `--yes-write-events` and prints a preflight notice first.
 
 ```bash
@@ -128,6 +143,7 @@ one spelling:
 | `--strategy`       | `hybrid` | `keyword`, `embedding`, or `hybrid`.                          |
 | `--limit N`        | `8`      | Maximum hits to return. Must be between **1 and 100**; anything else is a parse error stating the range. |
 | `--show-scores`    | off      | Print the fused score and the FTS/vector component ranks.     |
+| `--ai-config FILE` | `KIOKU_AI_CONFIG` | Explicit AI file for query embeddings. |
 
 Examples:
 
@@ -176,7 +192,10 @@ When nothing matches, `kioku recall` prints `(no matches)`.
 > in how many rows come back, and a script would otherwise keep exiting zero while returning a
 > fraction of them. See [Recall](recall.md#recall-targets-vs-scoped-reads).
 
-If pgvector is unavailable, `embedding` and `hybrid` fall back to keyword search automatically.
+With query embeddings enabled, missing pgvector makes `embedding` and `hybrid` fall back to
+keyword search. Disabled query embeddings produce a keyword-fallback notice for `hybrid`, while
+explicit `embedding` requests fail with unavailable AI. A stored/configured model mismatch is
+also a refusal; changing a model name does not re-embed existing vectors.
 See **[Recall](recall.md)** for the full scoring model.
 
 ---
@@ -201,11 +220,15 @@ kioku distill session SESSION_ID [options]
 | `--candidates`       | `scan`  | How merge candidates are found: `scan` (scope SQL scan) or `recall` (hybrid recall). |
 | `--limit N`          | `5`     | Maximum merge candidates considered per extracted atom. Must be between **1 and 50**; anything else is a parse error stating the range. |
 | `--force`            | off     | Re-run even when the session has no turns newer than the last successful pass. |
+| `--ai-config FILE`   | `KIOKU_AI_CONFIG` | Explicit API, batch, or foreground interactive configuration. |
 
-- `--candidates scan` does a recency/scope SQL scan and needs **no** embedding endpoint.
-- `--candidates recall` uses hybrid recall to find merge candidates. A valid embedding endpoint
-  gives semantic candidates; if query embedding fails, recall falls back to FTS for that request.
-- Either way the pass calls the distillation LLM, so `ANTHROPIC_API_KEY` must be set.
+- `--candidates scan` uses the exact scope's priority-ordered active-memory scan and needs no
+  embedding capability.
+- `--candidates recall` uses the separately configured `candidate-embedding` capability for
+  semantic candidates. With it disabled, it uses the scoped scan; a transport failure after
+  enabling it falls back to FTS. A stored model mismatch is refused.
+- Generation requires an explicitly authorized API, batch, or foreground interactive capability.
+  Supply the credentials required by the selected transport; no provider is implicit.
 
 These flags govern **the CLI only**. The `kioku worker` timer path — the one that actually runs in
 production — always uses recall-based candidates with a fixed limit of 8.
@@ -285,14 +308,17 @@ one-shot modes.
 
 ```bash
 kioku worker [--backfill [--space MEMORY_SPACE_ID] | --timers-once]
+kioku worker deferred list
+kioku worker deferred resume TIMER_ID --ai-config FILE
 ```
 
 | Flag             | Description                                                                            |
 |------------------|----------------------------------------------------------------------------------------|
-| *(none)*         | Run continuously. When pgvector is available it first runs an idempotent **startup backfill** across every space, then runs the embedding worker and the distillation timer loop under supervision. |
+| *(none)*         | Run continuously. When API memory embeddings and pgvector are available it first runs an idempotent **startup backfill** across every space, then runs the embedding worker and timer loop under supervision. Otherwise it runs timers only. |
 | `--backfill`     | Compute embeddings for any memories missing them, then exit, printing `Backfilled N memory embeddings across every memory space.` Refuses (exit 1) if the configured embedding dimension does not match the column. |
 | `--space ID`     | With `--backfill` only: bound the pass to one memory space. Default is every space in the database. |
 | `--timers-once`  | Claim and fire at most one due distillation timer, then exit.                           |
+| `--ai-config FILE` | Override `KIOKU_AI_CONFIG` in any worker mode. Background modes cannot launch interactive sessions. |
 
 `--backfill` covers every space by default rather than `KIOKU_MEMORY_SPACE`. A worker serves
 every space in its database, so a per-space default would let you run a backfill, read a count,
@@ -311,14 +337,15 @@ ignored without a word.
 
 Behavior of the continuous worker depends on the detected vector capability:
 
+- **memory embeddings disabled by AI policy** — prints a notice and runs timers only.
 - **pgvector available** — runs the embedding worker host (embeds new memories) and the timer
   loop concurrently.
 - **pgvector extension missing** — prints a notice; recall will be FTS-only; runs the timer
   worker only.
 - **pgvector columns missing** — prints which columns are missing; runs the timer worker only.
-- **embedding dimension mismatch** — `KIOKU_EMBEDDING_DIMENSIONS` disagrees with the declared width
-  of the `embedding` column. Logs to **stderr** and runs the timer worker only; `--backfill`
-  refuses outright and exits 1 rather than failing every row. See
+- **embedding dimension mismatch** — the column differs from the supported width of 1536.
+  Logs to **stderr** and runs the timer worker only; `--backfill` refuses outright and exits 1.
+  AI files selecting another dimension fail configuration validation. See
   [Troubleshooting](troubleshooting.md#embedding-dimension-mismatch).
 
 The continuous worker is built to be **supervised**: if either pipeline stops, it prints the reason
@@ -345,6 +372,24 @@ kioku worker --timers-once
 
 See **[The Distillation Pyramid](distillation.md)** for what the timers do and
 **[Recall](recall.md)** for how embeddings affect retrieval.
+
+### Deferred interactive timers
+
+Background workers park interactive-only work on the original timer with reason
+`kioku:deferred:interactive-unavailable`. Polling does not consume further attempts.
+`worker deferred list` prints authorized timer UUIDs, spaces, required features, attempts,
+reasons, and a resume command; the trusted CLI provider covers all database spaces.
+
+```bash
+kioku worker deferred list
+kioku worker deferred resume <TIMER_UUID> --ai-config /path/to/ai-interactive.json
+```
+
+Resume rechecks memory access and foreground execution availability before claiming the timer.
+A refusal consumes no attempt; a successful claim consumes one of the eight total attempts.
+Leases renew every 30 seconds and expire after 120 seconds. Execution failure re-parks the same
+work for explicit retry and exits non-zero. Only completed work prints
+`Completed the original deferred timer.` See [Configuration](configuration.md#ai-execution).
 
 ---
 
@@ -404,6 +449,8 @@ KIOKU_MEMORY_SPACE=space_prod kioku migrate-artifacts --workspace /srv/agent --a
 ## `kioku-migrate`
 
 The migration executable manages one dependency-ordered plan: Kiroku, then Keiro, then Kioku.
+Kioku 0.12.0.0 embeds **63 migrations (16 Kiroku, 32 Keiro, 15 Kioku)**. Follow the
+[current upgrade runbook](upgrading-to-keiro-0-22.md) before applying it to persistent data.
 
 ```text
 kioku-migrate COMMAND
@@ -411,7 +458,7 @@ kioku-migrate COMMAND
 Available commands:
   plan     Show the component dependency order
   list     List embedded migrations
-  check    Validate the embedded manifests
+  check    Validate an ordered SQL manifest
   status   Compare the database ledger with the embedded plan
   verify   Verify applied migration history and checksums
   up       Apply pending migrations
@@ -420,23 +467,28 @@ Available commands:
   import   Import the pinned 30-migration Codd cohort
 ```
 
-`plan`, `list`, and `check` inspect the compiled plan and need no database. Database-backed
-commands default to `DATABASE_URL`; pass `--database-url URL` to select a target explicitly.
+`plan` and `list` inspect the compiled plan. `check --manifest PATH` validates a manifest on disk.
+These commands need no database. Database-backed commands default to `DATABASE_URL`;
+pass `--database-url URL` to select a target explicitly.
 `status` and `verify` are read-only. A successful `up` also reconciles Keiro's read-model registry
 with the schemas compiled into this executable.
+That reconciliation does not adopt a changed projection-catalog fingerprint. Upgrades crossing
+the 0.10 or 0.11 reader additions need the [administrative catalog adoption](bounded-reads.md)
+before normal startup; `up` enters normal registration after applying SQL and will refuse drift.
 
 Use `kioku-migrate <command> --help` for command-specific filters and output options. All commands
 support text output and `--json`. The usual operational sequence is:
 
 ```bash
 cabal run kioku-migrate -- plan
-cabal run kioku-migrate -- check
+cabal run kioku-migrate -- check --manifest kioku-migrations/migrations/manifest
 DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- status
 DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- up
 DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
-`import` is the one-time Codd cutover command. It accepts a separate source database and advisory
+`import` is the deprecated one-time Codd cutover bridge, retained until existing Codd-era
+databases have migrated. Fresh databases never need it. It accepts a separate source database and advisory
 lock key when needed:
 
 ```bash

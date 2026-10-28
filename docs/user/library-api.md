@@ -14,8 +14,8 @@ types (`Kioku.Api.*`), and how to run them.
 > **Command records live in the `*.Domain` modules.** `Kioku.Memory` and `Kioku.Session` export the
 > *functions* and the error types, not the input records. A host calling `record` or `start` must
 > also import `Kioku.Memory.Domain (RecordMemoryData (..), …)` and
-> `Kioku.Session.Domain (StartSessionData (..), …)`. Likewise `MemoryRow` comes from
-> `Kioku.Memory.ReadModel` and `TurnRow` from `Kioku.Session.ReadModel`.
+> `Kioku.Session.Domain (StartSessionData (..), …)`. The facades re-export `MemoryRow`,
+> `SessionRow`, and `TurnRow`; their definitions live in the corresponding `*.ReadModel` modules.
 
 ## The effect context
 
@@ -25,8 +25,9 @@ Kiroku Store's `KirokuStoreResource`, which preserves configured event-enrichmen
 Keiro's transactional append-and-project path. A typical shape:
 
 ```haskell
-record ::
+recordWithContext ::
   (IOE :> es, KirokuStoreResource :> es, Store :> es, Error StoreError :> es) =>
+  MemoryAccessContext ->
   RecordMemoryData ->
   Eff es (Either MemoryWriteError MemoryId)
 ```
@@ -34,7 +35,7 @@ record ::
 The CLI sets this up via `Kioku.App`: `AppEnv` holds Kiroku `ConnectionSettings`, and `runAppIO`
 acquires `KirokuStoreResource` and interprets `Store` with `runStoreResource`. `withNoopAppEnv`
 constructs the common no-telemetry environment, validates both event streams and the projection
-catalog, and registers the catalog once before serving queries, as required by Keiro 0.17. Hosts
+catalog, and registers the catalog once before serving queries. Hosts
 with their own effect stack should install the resource with `withKirokuStore`, interpret `Store`
 with `runStoreResource`, validate the definitions, and run
 `Kioku.ReadModel.registerKiokuReadModels` once at application startup before calling Kioku APIs.
@@ -132,11 +133,11 @@ Namespaces and scopes are unaffected: they organize memory *inside* a space and 
 about who may read it. Two different spaces can use the same namespace and scope for entirely
 unrelated data.
 
-> **Reads take the space, not the context.** Every query function below takes a `MemorySpaceId`
-> as its first argument and returns nothing outside it; pass `memoryContextSpace` of the context
-> that authorized the read. They take the space rather than the whole context because they return
-> `Either ReadModelError` and the permission decision has already been made — `authorizeMemoryAccess`
-> mints a context only for the permissions it checked, so request `MemoryRead` when you mint one.
+> **Bounded reads check the context; older reads trust the host.** The bounded Session and Memory
+> facades take a `MemoryAccessContext` and check `MemoryRead` before Store access. Older
+> `Either ReadModelError` queries take a `MemorySpaceId`; pass `memoryContextSpace` only after
+> authorizing `MemoryRead`. `recall` takes the context to bind its space but also trusts the host
+> to have checked read permission. Prefer the bounded facades for resource inspection.
 
 ## Writing memories (`Kioku.Memory`)
 
@@ -352,19 +353,24 @@ names remain as deprecated legacy-space wrappers.
 belong to the space the context authorizes. An operator override for a lost key is not an
 override for the isolation boundary.
 
-Reads:
+Older reads (the common constraints are `IOE :> es, Store :> es`):
 
 ```haskell
-getById             :: SessionId          -> Eff es (Either ReadModelError (Maybe SessionRow))
-getRecentInNamespace:: Namespace -> Int   -> Eff es (Either ReadModelError [SessionRow])
-getByScope          :: MemoryScope        -> Eff es (Either ReadModelError [SessionRow])
-getByFocus          :: Namespace -> Text  -> Eff es (Either ReadModelError [SessionRow])
-getByStartedRange   :: Namespace -> UTCTime -> UTCTime -> Eff es (Either ReadModelError [SessionRow])
-getChain            :: SessionId          -> Eff es (Either ReadModelError [SessionRow])
-getDelegationChildren:: SessionId         -> Eff es (Either ReadModelError [SessionRow])
-getAwaitingByCorrelationKey:: Namespace -> Text -> Eff es (Either ReadModelError [SessionRow])
-getTurns            :: SessionId          -> Eff es (Either ReadModelError [TurnRow])
+getById             :: MemorySpaceId -> SessionId          -> Eff es (Either ReadModelError (Maybe SessionRow))
+getRecentInNamespace:: MemorySpaceId -> Namespace -> Int   -> Eff es (Either ReadModelError [SessionRow])
+getByScope          :: MemorySpaceId -> MemoryScope        -> Eff es (Either ReadModelError [SessionRow])
+getByFocus          :: MemorySpaceId -> Namespace -> Text  -> Eff es (Either ReadModelError [SessionRow])
+getByStartedRange   :: MemorySpaceId -> Namespace -> UTCTime -> UTCTime -> Eff es (Either ReadModelError [SessionRow])
+getChain            :: MemorySpaceId -> SessionId          -> Eff es (Either ReadModelError [SessionRow])
+getDelegationChildren:: MemorySpaceId -> SessionId         -> Eff es (Either ReadModelError [SessionRow])
+getAwaitingByCorrelationKey:: MemorySpaceId -> Namespace -> Text -> Eff es (Either ReadModelError [SessionRow])
+getTurns            :: MemorySpaceId -> SessionId          -> Eff es (Either ReadModelError [TurnRow])
 ```
+
+For bounded, permission-checked inspection use `getPageWithContext`, `getCountsWithContext`,
+`getTurnsPageWithContext`, and `getRelationsWithContext`. They return a flat `BoundedReadError`;
+filters use typed `SessionStatus` and explicit recall targets. Relation counts cover the complete
+selection independently of page size. See [bounded reads](bounded-reads.md).
 
 `StartSessionData` includes both continuation and delegation links:
 
@@ -420,7 +426,7 @@ metadata (agent, focus, scope, subject, and start time); it does not store a tra
 completion timestamp. Use `recordTurn` on a normal running session when the conversation itself
 must become **L0 evidence**. See [Distillation](distillation.md).
 
-Session rows include the fields used by the read APIs:
+Session rows include the fields below, plus partition, attribution, and database timestamps:
 
 ```haskell
 data SessionRow = SessionRow
@@ -485,7 +491,7 @@ Ranked hybrid recall:
 ```haskell
 recall ::
   (IOE :> es, Store :> es) =>
-  EmbeddingModel ->
+  AIRuntime ->
   VectorCapability ->
   MemoryAccessContext ->
   RecallQuery ->
@@ -511,6 +517,7 @@ data RecallHit = RecallHit
 
 data RecallError
   = RecallSpaceMismatch MemorySpaceId MemorySpaceId  -- requested, authorized (legacyRecall only)
+  | RecallAIUnavailable AIExecutionError
 
 mkRecallQuery :: RecallTarget -> Text -> RecallStrategy -> Int -> Either Text RecallQuery
 mkRecallLimit :: Int -> Either Text RecallLimit
@@ -524,15 +531,18 @@ the space, so widening a target never widens the tenancy.
 `authorizeMemoryAccess` already checked against that space, which is the same reason the reads
 below take a bare `MemorySpaceId`.
 
-All three targets execute. `RecallError` therefore has one constructor left, and only
-`legacyRecall` can produce it — a `RecallQuery` carries no memory space of its own to disagree
-with the context. `recall` keeps returning `Either` so that adding a refusal later is not a
-breaking change at every call site.
+All three targets execute. `RecallAIUnavailable` distinguishes disabled embedding-only requests
+and model incompatibility from successful empty results. Hybrid recall with disabled query
+embeddings reports keyword fallback. A space containing vectors labelled with a different model
+must be re-embedded before semantic recall.
 
-Build the `EmbeddingModel` from config with `Kioku.Memory.Embedding` (`resolveEmbeddingConfig`,
-`toEmbeddingModel`), and detect the vector capability with `Kioku.Recall.Capability`. Note that
-detection takes the **configured embedding dimensions** and fails closed to keyword-only on a
-mismatch, so pass the dimensions you resolved from config:
+Pass a validated `AIRuntime` from `Kioku.AI.Runtime` or `Kioku.AI.File.loadAIRuntime`.
+`resolveEmbeddingConfig :: AIRuntime -> AIFeature -> Either AIExecutionError EmbeddingModel`
+resolves an explicitly enabled embedding feature. `recallWithEmbeddingAdapter` retains the
+low-level `EmbeddingModel` shape as an independent host/test capability; it bypasses runtime
+policy and model-compatibility checks. The deprecated `legacyRecall` also takes that adapter.
+Production configuration supports 1536 dimensions; probe the database with
+`detectVectorCapability 1536`:
 
 ```haskell
 data VectorCapability
@@ -596,7 +606,7 @@ selectVectorCandidatesDiagnosed ::
   (Store :> es) => ResolvedRecall -> Vector Double -> Eff es (VectorChannelOutcome, [MemoryRecord])
 
 -- a ResolvedRecall is a query bound to one authorized space, built only by:
-resolveRecall :: MemorySpaceId -> RecallQuery -> Either RecallError ResolvedRecall
+resolveRecall :: MemorySpaceId -> RecallQuery -> ResolvedRecall
 ```
 
 kioku emits no metric itself (`Kioku.Recall` has no access to the host's tracer), so a host that
@@ -606,18 +616,18 @@ expose it. See [Recall](recall.md#the-vector-channels-two-passes).
 Unranked scope scans (return all active memories, no embedding needed):
 
 ```haskell
-getActiveByScope    :: MemoryScope          -> Eff es (Either ReadModelError [MemoryRecord])
-getActiveInNamespace:: Namespace            -> Eff es (Either ReadModelError [MemoryRecord])
-getGlobal           :: Namespace            -> Eff es (Either ReadModelError [MemoryRecord])
-getById             :: MemoryId             -> Eff es (Either ReadModelError (Maybe MemoryRecord))
-getBySession        :: SessionId            -> Eff es (Either ReadModelError [MemoryRecord])
-getByType           :: Namespace -> MemoryType -> Eff es (Either ReadModelError [MemoryRecord])
+getActiveByScope    :: MemorySpaceId -> MemoryScope          -> Eff es (Either ReadModelError [MemoryRecord])
+getActiveInNamespace:: MemorySpaceId -> Namespace            -> Eff es (Either ReadModelError [MemoryRecord])
+getGlobal           :: MemorySpaceId -> Namespace            -> Eff es (Either ReadModelError [MemoryRecord])
+getById             :: MemorySpaceId -> MemoryId             -> Eff es (Either ReadModelError (Maybe MemoryRecord))
+getBySession        :: MemorySpaceId -> SessionId            -> Eff es (Either ReadModelError [MemoryRecord])
+getByType           :: MemorySpaceId -> Namespace -> MemoryType -> Eff es (Either ReadModelError [MemoryRecord])
 ```
 
 Full-detail memory row reads (`Kioku.Memory`) expose projection fields that are intentionally
 not part of the smaller `MemoryRecord` API, including `supersededBy`, `supersedes`, and
-`updatedAt`. The row *type* comes from `Kioku.Memory.ReadModel` — `Kioku.Memory` exports the
-queries, not the type:
+`updatedAt`. `Kioku.Memory` re-exports the row type from `Kioku.Memory.ReadModel`.
+The following shows its main fields; partition and attribution fields are also present:
 
 ```haskell
 data MemoryRow = MemoryRow
@@ -639,21 +649,23 @@ data MemoryRow = MemoryRow
   , updatedAt    :: UTCTime
   }
 
-getMemoryRowById        :: MemoryId -> Eff es (Either ReadModelError (Maybe MemoryRow))
-getActiveRowsInNamespace:: Namespace -> Eff es (Either ReadModelError [MemoryRow])
-getActiveRowsByScope    :: MemoryScope -> Eff es (Either ReadModelError [MemoryRow])
-getRowsBySession        :: SessionId -> Eff es (Either ReadModelError [MemoryRow])
-getActiveRowsByType     :: Namespace -> MemoryType -> Eff es (Either ReadModelError [MemoryRow])
-getSupersessionChain    :: MemoryId -> Eff es (Either ReadModelError [MemoryRow])
+getMemoryRowById        :: MemorySpaceId -> MemoryId -> Eff es (Either ReadModelError (Maybe MemoryRow))
+getActiveRowsInNamespace:: MemorySpaceId -> Namespace -> Eff es (Either ReadModelError [MemoryRow])
+getActiveRowsByScope    :: MemorySpaceId -> MemoryScope -> Eff es (Either ReadModelError [MemoryRow])
+getRowsBySession        :: MemorySpaceId -> SessionId -> Eff es (Either ReadModelError [MemoryRow])
+getActiveRowsByType     :: MemorySpaceId -> Namespace -> MemoryType -> Eff es (Either ReadModelError [MemoryRow])
+getSupersessionChain    :: MemorySpaceId -> MemoryId -> Eff es (Either ReadModelError [MemoryRow])
 ```
 
-Use the row API when a host needs audit/detail views or supersession inspection. Use
+Use the bounded metadata/tag API for resource inspection; the older row reads above are
+unbounded compatibility APIs for trusted hosts. Use
 `MemoryRecord`/recall when the caller only needs active memory content for context injection.
 
 ## Distillation (`Kioku.Distill.*`)
 
-Hosts that want to drive generation directly pass a `DistillRuntime`, which carries the LLM config
-and the four programs. Read-only queries, timer helpers, and mirror-path helpers do not need it:
+Hosts that drive generation directly pass a `DistillRuntime`, which captures a validated
+`AIRuntime` and optional mirror workspace. Read-only queries, timer helpers, and mirror-path
+helpers do not need it. The following signatures omit the usual effect constraints:
 
 ```haskell
 -- Kioku.Distill.Runtime
@@ -662,8 +674,11 @@ newDistillRuntime :: AIRuntime -> Maybe FilePath -> DistillRuntime -- explicit v
 -- Kioku.Distill.L1
 data L1RunMode = RespectWatermark | IgnoreWatermark
 data L1Outcome = L1Distilled L1Summary | L1SkippedUpToDate
-newtype FindMergeCandidates es                 -- produced by scopedScanCandidates / recallCandidates
-                                               -- receives the pass's MemoryAccessContext
+newtype FindMergeCandidates es                 -- receives the pass's MemoryAccessContext
+scopedScanCandidates :: Int -> FindMergeCandidates es
+recallCandidates :: AIRuntime -> VectorCapability -> Int -> FindMergeCandidates es
+-- The scope scan is used when candidate embeddings are disabled. Enabled embeddings
+-- must be compatible with the memory space's stored model labels.
 
 distillSessionL1 ::
   MemoryAccessContext -> L1RunMode -> DistillRuntime -> FindMergeCandidates es -> SessionId ->
@@ -761,12 +776,15 @@ fallback.
 
 ## Embeddings and worker plumbing
 
-- `Kioku.Memory.Embedding` — `resolveEmbeddingConfig`, `toEmbeddingModel`.
+- `Kioku.Memory.Embedding` — `resolveEmbeddingConfig ai feature` resolves the explicit runtime
+  capability; `toEmbeddingModel` is the low-level adapter constructor.
 - `Kioku.Memory.Embedding.Worker` — the embedding worker a host must run, or hybrid recall degrades
   to keyword: `mkEmbeddingWorkerEnv`, `runEmbeddingWorkerHost`, `embeddingHandler`,
   `backfillMissingEmbeddings`, `shouldSkipEmbedding`. It discovers its own work, so it takes a
   `MemoryContextProvider` rather than a context, and reads the space from the delivered event; an
   envelope whose space disagrees with the memory row it names dead-letters without writing.
+  `mkEmbeddingWorkerEnv :: AIRuntime -> Either AIExecutionError EmbeddingWorkerEnv` validates
+  the memory-embedding capability; `runEmbeddingWorkerHost` receives the host runtime too.
   `backfillMissingEmbeddings` takes an `EmbeddingBackfillScope` (`BackfillEverySpace` or
   `BackfillOneSpace`) and an `EmbeddingWorkerEnv`, so a host can bound a pass to one tenant and a
   test can drive it with a fake provider.
@@ -791,8 +809,8 @@ operator or host input; **`parseIdLenient`** exists for legacy streams only and 
 
 ## Migrations (`kioku-migrations`)
 
-The supported 0.7 dependency baseline is Keiki 0.9, Keiro 0.17, Kiroku Store 0.8, and
-pg-migrate 1.1.
+The Kioku 0.12 baseline is Keiki 0.9, Keiro 0.22, Kiroku Store 0.12,
+Store migrations 0.7.2, Shibuya Core 0.12 / Kiroku adapter 0.7, and pg-migrate 1.2.
 These are ordinary Hackage dependencies; downstream projects do not need Git
 `source-repository-package` stanzas for the framework or migration packages.
 
@@ -801,7 +819,13 @@ compile time. `kiokuMigrations` is the component named `kioku` (depending on `ke
 `kiokuMigrationPlan` composes kiroku, keiro, and kioku in validated dependency order. A downstream
 host composes `kiokuMigrations` with its own components; this repo's `kioku-migrate` mounts the
 standard `plan`, `list`, `check`, `status`, `verify`, `up`, `repair`, and `new` commands, plus the
-kioku-specific Codd history `import` command.
+kioku-specific deprecated Codd history `import` command.
+
+The plan contains 63 entries (16 Kiroku, 32 Keiro, 15 Kioku). A complete Kioku 0.11 database
+applies only `kiroku/0016`, with no Kioku catalog adoption or ledger fixup. Rebuild embedded hosts
+and workers against the same dependency cohort; see the [0.12 runbook](upgrading-to-keiro-0-22.md).
+Hosts crossing 0.10 or 0.11 must also adopt the added query registrations using the
+[bounded-read recipe](bounded-reads.md#fixed-memory-metadata-01100).
 
 ### Where kioku's tables live
 
@@ -837,13 +861,23 @@ on the next kioku upgrade:
 ```haskell
 import Database.PostgreSQL.Migrate (defaultRunOptions, runMigrationPlan)
 import Kioku.Migrations (kiokuMigrationPlan)
+import Kioku.App (AppEnv (..), noopTracer, runAppIO)
+import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kioku.ReadModel (reconcileReadModelRegistry)
 
 plan <- either (fail . show) pure kiokuMigrationPlan
 _ <- runMigrationPlan defaultRunOptions migrationSettings plan >>= either (fail . show) pure
-withNoopAppEnv (defaultConnectionSettings connStr) \env -> do
-  result <- runAppIO env reconcileReadModelRegistry
-  either throwIO (const (pure ())) result
+-- Administrative setup avoids normal registration against an old catalog.
+tracer <- noopTracer
+let env = AppEnv
+      { connectionSettings = defaultConnectionSettings connStr
+      , tracer
+      , metrics = Nothing
+      }
+result <- runAppIO env reconcileReadModelRegistry
+either throwIO (const (pure ())) result
+-- If query registrations changed, preview and adopt the reviewed catalog groups
+-- using the bounded-read recipe before calling withNoopAppEnv for normal startup.
 ```
 
 It is idempotent — a second run writes nothing — and it derives every name, version, and
@@ -851,7 +885,7 @@ shape hash from the same validated `ProjectionCatalog` that registration and que
 cannot drift into a second inventory. Run it at migration time, not at app startup: every host
 process would otherwise race to write the registry on boot.
 
-This is not a hypothetical for the current release. `0012-relocate-projections-to-kioku-schema`
+For hosts crossing the schema relocation, `0012-relocate-projections-to-kioku-schema`
 advances memory to v3, session to v5, and turn to v3 precisely so that a binary on the wrong side
 of the move fails closed instead of querying relations that are no longer there — which means
 every kioku read stays down until reconciliation runs.
@@ -873,7 +907,7 @@ exception—the new index name is unqualified, but its `ON kioku.<table>` target
 
 Never edit an SQL file that has shipped. Add a forward migration, then run
 `cabal test kioku-migrations:kioku-migrations-test`; the suite checks the manifest, the frozen
-hashes of migrations 0001 through 0013, the forward-only schema policy, hostile host composition,
+hashes of the historical migration prefixes, the forward-only schema policy, hostile host composition,
 schema convergence, and rerun idempotence. `kioku-migrations/migrations.lock` is the immutable
 ten-entry Codd-import evidence file, not the native pg-migrate manifest; new native migrations do
 not append to it.

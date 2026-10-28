@@ -1,6 +1,11 @@
 # Upgrading to memory spaces
 
-This release gives Kioku an explicit isolation boundary. Every command and event now names a
+This guide covers the historical memory-space cutover, retained in Kioku 0.12.0.0.
+For the current dependency transition and 63-entry migration plan, see the
+[Keiro 0.22 runbook](upgrading-to-keiro-0-22.md). Older hosts also need the
+[bounded-reader source and catalog migrations](bounded-reads.md).
+
+The memory-space cutover gives Kioku an explicit isolation boundary. Every command and event names a
 **memory space** — the outer partition that keeps one caller's memories away from another's — and
 the principal responsible for the write.
 
@@ -328,7 +333,7 @@ not quietly send writes somewhere else.
 
 ## Reads take a memory space
 
-Every read function takes a `MemorySpaceId` as its first argument and returns nothing outside it:
+Older read functions take a `MemorySpaceId` first and return nothing outside it:
 
 ```haskell
 rows <- Memory.getActiveRowsByScope (memoryContextSpace hostContext) scope
@@ -339,13 +344,14 @@ the space rather than the whole context because reads return `Either ReadModelEr
 permission decision has already been made: `authorizeMemoryAccess` mints a context only for
 permissions it actually checked, so ask it for `MemoryRead` when you mint one.
 
-`Recall.recall` is the one exception: it takes the whole context, because it is the only read that
-can be asked to *widen* — from one scope to a whole namespace — and the space it searches must
-come from the decision rather than from the request.
+The bounded Session and Memory reads take a whole context and check `MemoryRead` before Store
+access; prefer them for paginated resource inspection. See [bounded reads](bounded-reads.md).
+`Recall.recall` also takes the context to bind its space, plus a validated `AIRuntime` and vector
+capability. It trusts the host's read permission decision.
 
 ```haskell
 hits <-
-  Recall.recall model capability hostContext
+  Recall.recall ai capability hostContext
     Recall.RecallQuery
       { target = Recall.NamespaceWide namespace
       , …
@@ -354,8 +360,9 @@ hits <-
 
 Two behaviours are worth knowing about:
 
-- **Recall's namespace-wide target does not widen tenancy.** A `ScopeGlobal` recall still means
-  "every scope in this namespace", and it still stops at the space boundary.
+- **Recall's namespace-wide target does not widen tenancy.** `NamespaceWide ns` searches every
+  scope in that namespace inside the context's space. `ExactScope (ScopeGlobal ns)` searches only
+  the global bucket; the deprecated `RecallRequest` retains the older namespace-wide meaning.
 - **A memory id from another space now behaves exactly like an id that does not exist.** Before
   this release the write path's idempotency precheck could tell a caller that such an id existed
   and whether it was active. It cannot any more: the precheck looks the row up inside the

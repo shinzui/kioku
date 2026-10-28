@@ -79,7 +79,7 @@ The CLI grants interactive availability only to foreground `distill session` and
 park interactive work with `kioku:deferred:interactive-unavailable` in the timer's dead-letter
 reason. No HTTP or batch fallback occurs. `worker deferred list` shows authorized work, and
 `worker deferred resume TIMER_ID --ai-config FILE` claims the original timer using the current
-Keiro 0.17 runtime after fresh authorization and execution-availability checks. Run
+Keiro 0.22 runtime after fresh authorization and execution-availability checks. Run
 `kioku-migrate up` before using these commands so the resume-lease migration introduced in Keiro
 0.16 is applied.
 Do not replay these rows using generic dead-letter tools or modify timer tables manually.
@@ -106,6 +106,9 @@ worker context covers all database spaces; embedded hosts must supply their own 
 `dimensions: 1536`, and optionally `apiKeyEnv`. Baikai resolves the named credential at execution.
 The interactive example leaves this object empty, so embeddings remain disabled.
 Legacy `KIOKU_EMBEDDING_*` variables no longer enable or select AI; migrate them into the file.
+Some dimension-mismatch diagnostics still print the old `KIOKU_EMBEDDING_DIMENSIONS` label.
+That label does not make the variable active: files must select 1536, and the database column
+must agree with that supported width.
 
 Hybrid recall reports disabled query embeddings and uses keyword search. Explicit
 `--strategy embedding` and `worker --backfill` refuse unavailable AI. Candidate lookup uses

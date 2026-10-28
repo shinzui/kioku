@@ -93,18 +93,21 @@ fires respect the watermark; `kioku distill session … --force` ignores it.
 
 The candidate finder is pluggable. The CLI exposes two:
 
-- **scan** (`--candidates scan`, default) — a recency/scope SQL scan. No embedding endpoint
+- **scan** (`--candidates scan`, default) — an exact-scope active-memory scan ordered by priority,
+  then recency. No embedding endpoint
   required.
 - **recall** (`--candidates recall`) — uses hybrid [recall](recall.md) to find the most similar
   existing memories. An explicitly enabled `candidate-embedding` setting enables semantic candidates; an
-  embedding failure falls back to FTS for that request.
+  embedding transport failure falls back to FTS for that request. Disabled candidate embeddings
+  use the scoped scan; stored/configured model incompatibility is refused.
 
 `--limit N` caps how many candidates are considered per atom (default `5`, range 1–50).
 
 **These flags govern the CLI only.** The `kioku worker` timer path — the one that actually runs in
 production — always uses recall-based candidates with a fixed limit of **8**, because a
 priority-ordered scan prefix hides duplicates that fall below the window. Recall degrades to
-FTS-only without pgvector, so the worker needs no capability gating.
+FTS-only without pgvector when candidate embeddings are enabled. With that capability disabled,
+the runtime selects the scope scan instead.
 
 Run a pass manually:
 
@@ -201,7 +204,7 @@ A timer fire reports one of four outcomes:
 - **retry later** — a transient failure (the LLM endpoint is down, a store blip). Retries with
   backoff, `30s` doubling to a `900s` cap, under an **8-attempt** ceiling. After that the timer
   becomes a visible `dead` row instead of burning LLM tokens forever — a structurally impossible
-  pass (a conversation past the model's context window, a missing `ANTHROPIC_API_KEY`) stops rather
+  pass (a conversation past the model's context window, a missing configured credential) stops rather
   than retrying indefinitely.
 - **failed permanently** — a structurally broken timer (malformed payload, a correlation id that is
   not a session id) or a worker authorization/configuration failure (provider refusal, missing
@@ -219,12 +222,26 @@ A dead **L1** timer means that session is never distilled; a dead **L2/L3** time
 scene or persona never regenerates. See
 [Troubleshooting](troubleshooting.md#dead-letters-and-worker-halts) for how to find them.
 
+Interactive work has a separate recovery path. A background runtime cannot open an authorized
+foreground session, so it parks the original timer with
+`kioku:deferred:interactive-unavailable` and stops consuming retries. List and resume it from
+the authorized foreground host:
+
+```bash
+kioku worker deferred list
+kioku worker deferred resume <TIMER_UUID> --ai-config /path/to/ai-interactive.json
+```
+
+Resume checks memory access and AI availability before claiming. A refused preflight consumes no
+attempt; a claimed attempt counts toward the eight-attempt ceiling. Failed execution re-parks
+the same timer. See [Configuration](configuration.md#ai-execution) for lease and retry behavior.
+
 ### Running the worker
 
 The **worker** fires due timers. Each poll drains *all* due timers, not just one.
 
 ```bash
-kioku worker                # continuous: startup backfill + embeddings + timer loop
+kioku worker                # timers; backfill + embeddings when explicitly enabled and available
 kioku worker --backfill     # one embedding backfill pass, then exit
 kioku worker --timers-once  # fire at most one due timer, then exit
 ```

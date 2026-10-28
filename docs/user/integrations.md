@@ -1,7 +1,7 @@
 # Scopes & Integrations
 
-kioku is host-agnostic: one database serves many platforms, kept apart by **namespace** and
-organized by **scope**. This page documents the scope conventions for the three first-party
+kioku is host-agnostic: one database serves many platforms, isolated by **memory space** and
+organized by namespaces and scopes inside it. This page documents scope conventions for first-party
 hosts and how to add your own.
 
 ## Scope recap
@@ -213,20 +213,14 @@ En denial are three different errors, and none of them may be quietly turned int
 recall that happens to return zero rows — a caller cannot tell "you may not look here" from "there
 is nothing here", and the difference matters.
 
-### What is not available yet
+### Adapter ownership
 
-None of Meibo, Shomei, En, or Kikan-En is a published package: each is at an in-tree `0.1.0.0`
-with no release tag, and none resolves on Hackage. Kikan-En's schema
-(project-relative `src/Kikan/En/Schema.hs`) still has `agent` as its only subject type and has no
-`space` object and no `can_view` permission family; IR-1, which adds them, is `status: proposed`.
-
-That is a reason Kioku *cannot* depend on them today, but it is not the reason it *does not*. Even
-fully released, these would stay out of Kioku's build closure: a memory library that drags a
-specific authentication service in behind it is unusable by anyone who has a different one. Kioku
-accepts the rendered principal id as opaque text at its boundary, and takes the object type and
-permission names from the host as a `MemoryAuthorizationBinding` rather than hard-coding names it
-does not own. When those packages ship, a **separate adapter package** maps them onto the types in
-`kioku-api/src/Kioku/Api/Access.hs`; neither `kioku-api` nor `kioku-core` changes.
+Kioku does not depend on a particular authentication, directory, or authorization service.
+It accepts rendered principal IDs as opaque text, and the host supplies object types and
+permission names through `MemoryAuthorizationBinding`. A separate host-owned adapter maps its
+services onto `PrincipalDirectory` and `PermissionChecker`. Verify those services' released APIs
+and deployed schema when implementing the adapter; this guide defines Kioku's boundary rather
+than fixing another repository's publication or schema status.
 
 ## Host-owned AI execution
 
@@ -259,5 +253,5 @@ finder, and the original timer ID. It rechecks access before claiming, renews it
 lease, and uses token-checked completion or parking. Background runtimes carry no session
 launcher. Hosts using only foreground operations should call listing/resume periodically to
 recover expired claims; ordinary Keiro worker passes also recover them. Apply the current Keiro
-0.17 migration component, which retains the resume-lease migration introduced in 0.16. No
+0.22 migration component, which retains the resume-lease migration introduced in 0.16. No
 application SQL against Keiro's timer table is needed.

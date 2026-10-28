@@ -58,14 +58,14 @@ deprecated one.
 mechanical migration is one call per site:
 
 ```haskell
--- before
-recall model capability
+-- Deprecated adapter API; context was already authorized for MemoryRead:
+legacyRecall model capability context
   RecallRequest {memorySpaceId = space, scope, query, strategy, maxResults = 8}
 
--- after: same rows, and the space now comes from the context rather than the request
+-- Current API: ai is a validated AIRuntime. The space comes from the context.
 case mkRecallQuery (legacyRecallTarget scope) query strategy 8 of
   Left invalidLimit -> ...
-  Right request     -> recall model capability context request
+  Right request     -> recall ai capability context request
 ```
 
 `mkRecallQuery` validates the result count, which is now a `RecallLimit` bounded to **1–100**
@@ -87,20 +87,14 @@ reached were the namespace-wide ones; each target now compiles to its own statem
 the global bucket and nothing else. See
 [Each recall target gets its own statement](../adr/each-recall-target-gets-its-own-statement.md).
 
-### Known dependents
+### Checking dependent hosts
 
-`mori registry dependents shinzui/kioku --packages` reports two:
-`mori://shinzui/shikigami`, which links `kioku-core` directly, and `mori://shinzui/kikan`, the
-umbrella portfolio. Shikigami is the compile check the removal window waits on, and its migration
-is mechanical: `Shikigami.Memory.Scope.agentScope` builds a `ScopeEntity`, so
-`legacyRecallTarget` maps it to `ExactScope` and it returns exactly the rows it returns today. It
-has no namespace-wide recall to preserve — `sharedScope`, the one `ScopeGlobal` value in that
-repository, is defined but never recalled against.
-
-Shikigami is behind by more than a target, though: it still calls `recall` without a
-`MemoryAccessContext` and builds a `RecallRequest` with no `memorySpaceId`, both of which changed
-when memory spaces landed. Migrate it in its own repository, through its own process; see
-[Upgrading to memory spaces](upgrading-to-memory-spaces.md) for that half.
+Use `mori registry dependents shinzui/kioku --packages` to discover registered consumers, then
+inspect and compile each host against the current release. Registry state is discovery evidence;
+it does not establish the version a deployed process uses. A migration must account for explicit
+targets, memory access contexts, and the `AIRuntime` argument. See
+[Upgrading to memory spaces](upgrading-to-memory-spaces.md) for the partition migration and
+[Library API](library-api.md#recall-kiokurecall) for the current signature.
 
 ## Strategies
 
@@ -118,7 +112,10 @@ embedding endpoint. `embedding` is pure semantic similarity.
 
 ## What happens during a hybrid recall
 
-1. **Plan.** kioku inspects the runtime **vector capability**. If pgvector is unavailable, the
+1. **Policy and plan.** `recall` resolves the runtime's `query-embedding` capability. With it
+   disabled, hybrid reports keyword fallback and explicit embedding-only requests return
+   `RecallAIUnavailable`. With it enabled, semantic recall refuses stored model incompatibility.
+   It then inspects the runtime **vector capability**. If pgvector is unavailable, the
    plan is rewritten to keyword-only regardless of the requested strategy (see
    [Degradation](#degradation-when-pgvector-is-missing)).
 2. **Embed the query** (if the plan needs it). The query is embedded via the configured
@@ -343,9 +340,10 @@ kioku detects one of four vector capabilities at runtime:
 | **available**                 | Full hybrid: FTS + vector + RRF.                          |
 | **extension unavailable**     | Keyword-only. `embedding`/`hybrid` silently become FTS.   |
 | **columns unavailable**       | Keyword-only (one or more required embedding columns are absent). |
-| **dimension mismatch**        | Keyword-only. `KIOKU_EMBEDDING_DIMENSIONS` disagrees with the declared width of the `embedding` column. |
+| **dimension mismatch**        | Keyword-only. The database column differs from the supported 1536-dimensional configuration. |
 
-In the keyword fallback the `vec` rank shows as `-` in `--show-scores` output, and the embedding
+This table assumes query embeddings are authorized; disabled embedding-only requests are refused
+before capability fallback. In keyword fallback the `vec` rank shows as `-`, and the embedding
 worker skips vector work. Distillation still runs, using FTS-only recall where applicable. Recall
 keeps working — it just loses the semantic channel.
 
@@ -359,7 +357,8 @@ the system is louder about it than recall is: `kioku worker` prints
 `embedding dimension mismatch: KIOKU_EMBEDDING_DIMENSIONS=N but kioku.memories.embedding is
 vector(M)` to stderr and runs distillation timers only, and `kioku worker --backfill` refuses to
 start rather than embed every memory into a cast that must fail. Recall itself degrades quietly.
-Fix the environment variable, or migrate the column — see
+The diagnostic retains a legacy environment-variable label, but that variable no longer
+configures AI. Select 1536 in the AI file and ensure the database column agrees — see
 [Configuration](configuration.md#embeddings).
 
 ### Healing a degraded schema
@@ -458,7 +457,9 @@ The memory space comes from `KIOKU_MEMORY_SPACE` (default `kioku_legacy`), never
 
 ## Library usage
 
-`Kioku.Recall.recall` takes a `MemoryAccessContext` and a `RecallQuery`; the scope-scan helpers
+`Kioku.Recall.recall` takes an `AIRuntime`, `VectorCapability`, `MemoryAccessContext`, and
+`RecallQuery`. The host must have authorized `MemoryRead`; recall uses the context to bind its
+space without rechecking that permission. The scope-scan helpers
 (`getActiveByScope`, `getActiveInNamespace`, `getGlobal`, `getById`, `getBySession`, `getByType`)
 take a `MemorySpaceId` and fetch active memories without ranking when you just want everything in
 a scope. See [Library API](library-api.md#recall-kiokurecall).

@@ -5,7 +5,7 @@
 > edge is **entailed**, so a project that depends only on Kioku — and has never
 > named Keiro — still crosses Keiro's edge, exactly once, in the right order.
 
-**Version:** `0.4.0`
+**Version:** `0.5.0`
 
 **Kind:** Blueprint migration (run with `seihou agent migrate`, not
 `seihou agent run` — this blueprint declares no baseline and applies no modules)
@@ -41,14 +41,19 @@ composed plan itself. The edge establishes from read-only evidence whether they
 apply to this project and reports the exact runbook — it stops there, by design.
 
 A receipt records that a provider interaction returned, not that a database was
-remediated. For a database holding production data, use the `cohort-migrate`
-skill, which proves the remediation on a restored clone before production is
-touched.
+remediated. For persistent data, use the [operator runbook](../../docs/user/upgrading-to-keiro-0-22.md)
+and rehearse the complete upgrade on a restored clone before cutover.
 
 The 0.9.0.0 edge also leaves persistent database work to the operator: stop all
 subscription workers for upstream 0013/0014, confirm legacy checkpoint targets,
 and schedule the 0015 index-build write pause. The recursively entailed upstream
 prompts own that runbook. This release introduces no new Kioku ledger fixup.
+
+The 0.10 and 0.11 edges add bounded-reader source adaptations and public projection-catalog
+adoption. The 0.12 edge rebuilds hosts against Keiro 0.22 / Store 0.12 and appends only
+`kiroku/0016` from a complete 0.11 database. The composed plan has 63 entries (16 Kiroku,
+32 Keiro, 15 Kioku). Package installation and receipts do not apply it; follow the
+[operator runbook](../../docs/user/upgrading-to-keiro-0-22.md) for rehearsal and cutover.
 
 ## Declared edges
 
@@ -60,6 +65,14 @@ prompts own that runbook. This release introduces no new Kioku ledger fixup.
 | `0.6.0.0` | `0.7.0.0` | `keiro-upgrade` `0.16.0.0 -> 0.17.0.0` |
 | `0.7.0.0` | `0.8.0.0` | `keiro-upgrade` `0.17.0.0 -> 0.18.0.0`, then `0.18.0.0 -> 0.19.0.0` |
 | `0.8.0.2` | `0.9.0.0` | `keiro-upgrade` `0.19.0.1 -> 0.20.0.0` |
+| `0.9.0.2` | `0.9.1.0` | —; bounded Session/Memory readers and migration 0014 |
+| `0.9.1.0` | `0.10.0.0` | —; read-permission gate and flat errors |
+| `0.10.0.0` | `0.11.0.0` | —; Memory metadata, tags, scope-kind filter and recency |
+| `0.11.0.0` | `0.12.0.0` | `keiro-upgrade` `0.21.0.0 -> 0.22.0.0` |
+
+Kioku 0.9.1.0 was tagged but never uploaded to Hackage. Consumers moving from the published
+0.9.0.2 release to 0.10.0.0 or later cross both reader edges. The 0.9.0.1 and 0.9.0.2 patches
+need no separate source edge; the 0.9.0.2-to-0.9.1.0 window is the next declared step.
 
 Gaps between edges are deliberate and legal: they mean no agent intervention was
 needed in that interval. `0.4.0.0 -> 0.4.1.0` is exactly such a gap — that

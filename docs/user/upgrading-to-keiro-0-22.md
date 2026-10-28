@@ -15,8 +15,10 @@ Workers must stop for migration. Package installation and a source-upgrade
 receipt do not apply migrations or establish operational acceptance.
 
 The [acceptance record](../architecture/keiro-0-22-upgrade-acceptance.md)
-distinguishes verified candidate evidence from the still-required actual-history
-rehearsal. No production installation is activated by this repository change.
+records candidate qualification and a restored development-database rehearsal. That development
+source was already at 63 entries and contained zero native streams: it proves current-state
+restore/repeatability, not the 62-to-63 transition on pre-upgrade history. A deployment still
+needs its own history, role/grant and supervisor acceptance before activation.
 
 ## Inventory and retain artifacts
 
@@ -121,6 +123,14 @@ KIOKU_UPGRADE_CLI="$KIOKU_NEW_BIN" "$KIOKU_NEW_PROBE" \
 python3 scripts/compare-kioku-upgrade.py migration \
   "$KIOKU_EVIDENCE/before" "$KIOKU_EVIDENCE/after"
 "$KIOKU_NEW_PROBE" replay "$KIOKU_NEW_URL" "$KIOKU_EVIDENCE/replay"
+```
+
+The comparison command above is for a complete **62-entry** source. For an already-current
+63-entry source, replace only that command with:
+
+```bash
+python3 scripts/compare-kioku-upgrade.py current \
+  "$KIOKU_EVIDENCE/before" "$KIOKU_EVIDENCE/after"
 ```
 
 Save both `up` reports: the second applies zero migrations and changes no ledger

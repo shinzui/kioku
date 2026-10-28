@@ -15,10 +15,9 @@ library for the kikan ecosystem. It gives any agent platform one shared engine f
 - **A distillation pyramid** — raw evidence (L0) is distilled by LLM programs into memory
   **atoms** (L1), human-readable **scenes** (L2), and a per-scope **persona** (L3).
 
-kioku is **host-agnostic**: memories are organized by a generic `MemoryScope`
-(`namespace` + optional `kind` + `ref`) so that different platforms — **rei** (personal
-coaching), **mori** (multi-repo agent execution), and **shikigami** (autonomous system agents)
-— can share one memory database without colliding.
+kioku is **host-agnostic**: a `MemorySpaceId` isolates each partition, while a generic
+`MemoryScope` (`namespace` + optional `kind` + `ref`) organizes memory inside it. Hosts supply
+authorization and actor attribution. A namespace is never an authorization boundary.
 
 > kioku is a Haskell library plus the `kioku` runtime CLI and `kioku-migrate` schema CLI. It is a
 > building block embedded by host applications, not a standalone product. This guide covers the
@@ -29,14 +28,15 @@ coaching), **mori** (multi-repo agent execution), and **shikigami** (autonomous 
 Start here, in order:
 
 1. **[Getting Started](getting-started.md)** — prerequisites, database setup, environment, and
-   your first memory in under five minutes.
+   your first memory.
 2. **[Concepts](concepts.md)** — the mental model: memories, scopes, sessions, recall, and the
    distillation pyramid. Read this before the rest.
 3. **[CLI Reference](cli-reference.md)** — runtime commands plus `kioku-migrate` operations.
 4. **[Recall & Hybrid Retrieval](recall.md)** — how matches are found, fused, and ranked.
 5. **[The Distillation Pyramid](distillation.md)** — L0 → L1 → L2 → L3, consolidation, timers,
    and workspace mirroring.
-6. **[Configuration](configuration.md)** — every environment variable and its default.
+6. **[Configuration](configuration.md)** — database and memory-space settings, explicit AI files,
+   execution permissions, and embedding compatibility.
 7. **[Library API](library-api.md)** — embedding kioku in a Haskell host application.
 8. **[Scopes & Integrations](integrations.md)** — namespace conventions for rei, mori,
    shikigami, and your own host.
@@ -49,9 +49,12 @@ Start here, in order:
 12. **[Upgrading to memory spaces](upgrading-to-memory-spaces.md)** — the explicit isolation
     boundary: what breaks at compile time, what happens to data already stored, and how to deploy
     and verify the migration that backfills it.
-
 13. **[Bounded reads](bounded-reads.md)** — permission-checked metadata, tag pages,
     complete counts, scope-kind filters, recency and catalog adoption.
+14. **[Upgrading to Kioku 0.12 / Keiro 0.22](upgrading-to-keiro-0-22.md)** — the current
+    dependency cohort, 62-to-63-entry transition, restored-clone rehearsal, and coordinated restart.
+15. **[Automated Baikai upgrades](automated-baikai-upgrades.md)** — the maintainer automation
+    and its current limits.
 
 ## At a glance
 
@@ -59,7 +62,7 @@ Start here, in order:
         ┌──────────────────────────────────────────────┐
         │                  kioku CLI                    │
         │  demo · recall · distill · scenes · persona   │
-        │  demo-session · worker                        │
+        │  demo-session · worker · migrate-artifacts     │
         └──────────────────────────────────────────────┘
                             │
         ┌───────────────────┴───────────────────────────┐
@@ -77,16 +80,16 @@ Start here, in order:
         │   schema keiro:  framework tables (timers,       │
         │     read-model registry)                         │
         └─────────────────────────────────────────────────┘
-
-kioku shares the host's kiroku event store and owns everything in the `kioku` schema. The
-namespaces are an ownership boundary in the catalog, not an authorization one — see
-[ADR-10](../adr/projections-live-in-the-kioku-schema.md).
 ```
+
+kioku shares the host's kiroku event store and owns everything in the `kioku` schema. PostgreSQL
+schemas mark component ownership; memory spaces isolate application data — see
+[ADR-10](../adr/projections-live-in-the-kioku-schema.md).
 
 ## Quick taste
 
 ```bash
-# 1. Point kioku at a Postgres database with the kiroku schema migrated.
+# 1. Point kioku at a database with the full Kiroku, Keiro, and Kioku plan applied.
 export PG_CONNECTION_STRING='host=localhost dbname=kioku user=me'
 
 # 2. Write a memory and read it back. The event log is append-only — there is no
@@ -97,10 +100,13 @@ kioku demo --yes-write-events
 kioku recall "concise answers" --scope kioku_demo:demo:demo --strategy keyword
 ```
 
-For semantic recall, configure the embedding endpoint and run `kioku worker --backfill`; see
+These examples assume `kioku` is on `PATH`; from this checkout, use `cabal run kioku --` in its
+place. For semantic recall, select an AI file that enables embeddings and run
+`kioku worker --backfill`; see
 [Getting Started](getting-started.md).
 
-> Distillation additionally needs an **Anthropic** key (`ANTHROPIC_API_KEY`), which is a separate
-> credential from the embeddings endpoint. See [Configuration](configuration.md).
+AI is disabled by default. Distillation uses the explicitly authorized API, batch, or interactive
+configuration; embeddings require a separate API capability. Credentials alone enable neither.
+See [Configuration](configuration.md).
 
 See **[Getting Started](getting-started.md)** for the full setup.

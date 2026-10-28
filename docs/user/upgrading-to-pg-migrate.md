@@ -3,9 +3,9 @@
 For Kioku 0.12.0.0 and its 63-entry migration cohort, follow the
 [Keiro 0.22 upgrade runbook](upgrading-to-keiro-0-22.md).
 
-## Current 0.9 cohort maintenance
+## Maintenance when crossing the 0.9 cohort
 
-The Kioku 0.9 cohort described below contains 60 entries (15 Kiroku, 32 Keiro, 13 Kioku).
+The historical Kioku 0.9 cohort contained 60 entries (15 Kiroku, 32 Keiro, 13 Kioku).
 Upgrading from 0.8 appends upstream 0013–0015; Kioku's own SQL and historical
 checksums are unchanged, and this release needs no new ledger fixup. The older
 cutover and checksum remedies below retain their original preconditions.
@@ -32,8 +32,13 @@ Fresh disposable test databases need no operator cutover.
 
 This runbook moves a data-bearing database created by the pre-cutover kioku cohort onto
 pg-migrate without replaying any of its 30 historical migrations. The source profile is exact:
-Kiroku 6, Keiro 14, and Kioku 10. Twenty-five migrations added after those pins are not imported; the
+Kiroku 6, Keiro 14, and Kioku 10. The 33 migrations added after those pins are not imported; the
 normal `up` step applies them once after the history import.
+
+The current target is Kioku 0.12.0.0 with 63 migrations. The maintenance requirements above
+still apply when crossing the older cohort. Kioku 0014 and 0015 additionally build indexes
+transactionally, blocking writes to their target tables while the migration transaction runs.
+See [bounded reads](bounded-reads.md) for those indexes and the catalog-adoption procedure.
 
 Stop every application, worker, and migration process that can write to the database. The importer
 takes pg-migrate's target advisory lock and a cooperating Codd-source lock, but old Codd processes
@@ -116,7 +121,7 @@ mapped SQL. Six Kiroku and nine Kioku mappings are checked against preserved SHA
 Running the same import again is safe: matching audit evidence reports `already imported`. Changed
 evidence fails with a history-import conflict instead of overwriting the first audit.
 
-## 5. Apply the 25 post-pin migrations and verify
+## 5. Apply the 33 post-pin migrations and verify
 
 A Codd-era database has no applied Kioku `0011` row: the imported Kioku history ends at `0010`.
 Do not run the 0.4.x `0011` checksum re-baseline before this first corrected `up`; `0011` is
@@ -129,20 +134,27 @@ DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- status
 ```
 
 `up` reports the 30 imported migrations as already applied and applies only the forward suffix:
-Kiroku `0007` through `0015`, Keiro `0015` through `0032`, and Kioku `0011` through `0013`.
+Kiroku `0007` through `0016`, Keiro `0015` through `0032`, and Kioku `0011` through `0015`.
 The Kioku suffix partitions the read models, relocates the projections into the `kioku` schema,
-and installs the partition-aware full-text index. The final status is 60 applied migrations
+and installs the partition-aware full-text, bounded-read and active-recency indexes.
+The final status is 63 applied migrations
 with no pending, unknown, or verification issues:
 
 ```text
-kiroku  15
+kiroku  16
 keiro  32
-kioku  13
+kioku  15
 ```
 
 Because the suffix includes Kioku 0012, this cutover also moves the seven projections out of
 `kiroku`; see [Upgrading to the kioku schema](upgrading-to-the-kioku-schema.md) for the outage and
 registry-reconciliation requirements that come with it.
+
+If an earlier runtime already persisted a projection catalog, drain it and preview/adopt the
+affected Kioku groups through the [public administrative API](bounded-reads.md#fixed-memory-metadata-01100)
+before ordinary registration. The `up` wrapper registers the catalog after applying SQL;
+reconciliation alone cannot adopt a changed fingerprint. A Codd-only database with no catalog
+can register the current catalog directly.
 
 Keep the backup until the application and workers have restarted successfully and their normal
 read/write paths have been checked.
