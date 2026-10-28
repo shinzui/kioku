@@ -10,7 +10,7 @@ workflow; it updates dependency bounds and can commit on local `master`.
 The retained scripts predate the current Cabal layout and AI cohort. In Kioku 0.12.0.0:
 
 - `scripts/baikai-cohort.sh` expects leading-comma `^>=` dependency lines. Current Cabal files
-  use trailing commas, and `baikai` uses a range (`>=0.7.0.0 && <0.9`). Its `cabal_bound` helper
+  use trailing commas. Its `cabal_bound` helper
   therefore cannot read the current bounds and cohort discovery fails closed.
 - The script lists five packages: `baikai`, `baikai-claude`, `baikai-effectful`, `shikumi`, and
   `shikumi-trace`. It does not include the required `baikai-openai` package or update the CLI's

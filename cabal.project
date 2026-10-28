@@ -12,9 +12,12 @@ with-compiler: ghc-9.12.4
 -- Kioku does not build, keeping their released cohort explicit so a consumer
 -- cannot revive the former Git-pinned PGMQ stack at an older version.
 constraints:
+  -- Preserve Kioku 0.12's qualified 63-entry migration cohort. Kiroku migrations
+  -- 0.7.3 adds another migration and needs a separate schema upgrade.
   http-client-tls ^>=0.4.0,
   keiki-codec-json ^>=0.9.1.0,
   keiro-pgmq ^>=0.22.0.0,
+  kiroku-store-migrations ==0.7.2.0,
   pgmq-core >=0.7.0.0 && <0.8,
   pgmq-effectful >=0.7.0.0 && <0.8,
   pgmq-hasql >=0.7.0.0 && <0.8,
@@ -22,8 +25,15 @@ constraints:
   shibuya-pgmq-adapter ^>=0.18.0.0
 
 -- The Claude CLI integration still needs the TLS 0.4 compatibility override.
+-- The latest released mori://shinzui/shikumi packages still cap Baikai at 0.9.
+-- Their response codecs and text-program paths use APIs retained by Baikai 0.10;
+-- relax only these upper bounds while Kioku's Cabal files require Baikai 0.10.
+-- Remove these three exceptions when Shikumi publishes compatible bounds.
 allow-newer:
   claude:http-client-tls
+  , shikumi:baikai
+  , shikumi-cache:baikai
+  , shikumi-trace:baikai
 
 package blake3
   flags: -avx512 -avx2 -sse41 -sse2

@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Require `mori://shinzui/baikai/packages/baikai` 0.10.0.0,
+  Claude/OpenAI providers 0.7.3.0 and Effectful 0.4.0.5 in Core and CLI.
+  Require the latest released Shikumi 0.4.1.1 and Trace 0.3.0.2, with scoped
+  `cabal.project` exceptions for the Baikai upper bounds in
+  `mori://shinzui/shikumi/packages/shikumi`,
+  `mori://shinzui/shikumi/packages/shikumi-cache` and
+  `mori://shinzui/shikumi/packages/shikumi-trace`. Embedded consumers need the
+  same exceptions until Shikumi releases compatible bounds.
+- Cover explicit `ThinkingNone` versus an absent preference through configuration
+  and Shikumi dispatch, and structured assistant data through Shikumi's response codec.
+- Keep `mori://shinzui/kiroku/packages/kiroku-store-migrations` at 0.7.2.0 in
+  `cabal.project` so refreshing Hackage preserves the qualified 63-entry schema.
+
 ## 0.12.0.0 — 2026-10-27
 
 ### Breaking Changes

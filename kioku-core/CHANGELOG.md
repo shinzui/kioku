@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Require `mori://shinzui/baikai/packages/baikai` 0.10.0.0,
+  `mori://shinzui/baikai/packages/baikai-claude` 0.7.3.0,
+  `mori://shinzui/baikai/packages/baikai-openai` 0.7.3.0 and
+  `mori://shinzui/baikai/packages/baikai-effectful` 0.4.0.5.
+- Require `mori://shinzui/shikumi/packages/shikumi` 0.4.1.1 and
+  `mori://shinzui/shikumi/packages/shikumi-trace` 0.3.0.2. Until upstream releases
+  compatible bounds, consumer projects must allow newer Baikai specifically for
+  Shikumi, Shikumi Cache and Shikumi Trace, as shown in this repository's
+  `cabal.project`. The response codec and text-program paths retain compatibility.
+
 ## 0.12.0.0 — 2026-10-27
 
 ### Breaking Changes

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Require `mori://shinzui/baikai/packages/baikai` 0.10.0.0 alongside Core's updated
+  provider cohort. Build with the scoped Shikumi compatibility exceptions in
+  this repository's `cabal.project` until upstream releases compatible bounds.
+
 ## 0.12.0.0 — 2026-10-27
 
 ### Changed

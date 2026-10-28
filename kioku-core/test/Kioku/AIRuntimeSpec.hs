@@ -1,12 +1,13 @@
 module Kioku.AIRuntimeSpec (tests) where
 
 import Baikai.Api (Api (..))
-import Baikai.Content (AssistantContent (..), emptyTextContent)
+import Baikai.Content (AssistantContent (..), DataContent (..), emptyTextContent)
 import Baikai.Interactive qualified as I
 import Baikai.Model qualified as M
 import Baikai.Options qualified as O
 import Baikai.Provider.Registry qualified as R
 import Baikai.Response (emptyResponse)
+import Baikai.ThinkingLevel (ThinkingLevel (ThinkingNone))
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (IOException, try)
 import Control.Lens ((&), (.~))
@@ -29,6 +30,7 @@ import Kioku.Distill.Persona
 import Kioku.Distill.Runtime
 import Kioku.Distill.Scene
 import Shikumi.Schema.Types (field)
+import Shikumi.Trace.ResponseJSON ()
 import System.Exit (ExitCode (..))
 import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile)
@@ -75,6 +77,12 @@ tests =
           case refused of
             Left _ -> pure ()
             Right _ -> assertFailure "Responses was authorized without API permission",
+      testCase "explicit reasoning off survives configuration and Shikumi dispatch" $
+        mapM_ testThinkingPreference [Nothing, Just ThinkingNone],
+      testCase "Shikumi response codec preserves structured assistant data" $ do
+        let structured = DataContent (A.object ["answer" A..= ("fixture" :: T.Text)]) (Just (Map.singleton "answer" (Map.singleton "fixture" 0.75))) (Just (Map.singleton "answer" 0.5)) (Just "fixture")
+            response = emptyResponse & #message . #content .~ V.singleton (AssistantData structured)
+        A.eitherDecode (A.encode response) @?= Right response,
       testCase "disabled construction and all features make no calls" $ do
         rt <- expect =<< newAIRuntime noHostCapabilities disabledAIConfig
         mapM_ (\f -> executionAvailability rt f @?= Left (AIDisabled f)) [minBound .. maxBound]
@@ -123,6 +131,30 @@ tests =
           )
           [WrongId, Missing, BadDomain, Nonzero, Symlink, Oversized, Cancelled]
     ]
+
+testThinkingPreference :: Maybe ThinkingLevel -> IO ()
+testThinkingPreference preference = do
+  let options = maybe (A.object []) (\p -> A.object ["thinking" A..= p]) preference
+      value =
+        A.object
+          [ "version" A..= (1 :: Int),
+            "distillation"
+              A..= A.object
+                [ "mode" A..= ("api" :: T.Text),
+                  "api" A..= ("fixture" :: T.Text),
+                  "model" A..= ("fixture" :: T.Text),
+                  "provider" A..= ("fixture" :: T.Text),
+                  "baseUrl" A..= ("" :: T.Text),
+                  "options" A..= options
+                ]
+          ]
+      handler = R.apiProviderWith (Custom "fixture") (\_ _ _ -> error "unexpected stream") $ \_ _ opts -> do
+        opts.thinking @?= preference
+        pure (emptyResponse & #message . #content .~ V.singleton (AssistantText (emptyTextContent & #text .~ "[[ ## answer ## ]]\nfixture\n[[ ## completed ## ]]")))
+  (cfg, _) <- expect (parseEither parseAIConfig value)
+  registry <- R.newProviderRegistryFrom [handler]
+  rt <- expect =<< newAIRuntime noHostCapabilities {apiRegistry = Just registry} cfg
+  smoke rt >>= (@?= Right (RuntimeSmokeOutput (field "fixture")))
 
 testBatchOverride :: IO ()
 testBatchOverride = do
