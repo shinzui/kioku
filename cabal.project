@@ -25,15 +25,7 @@ constraints:
   shibuya-pgmq-adapter ^>=0.18.0.0
 
 -- The Claude CLI integration still needs the TLS 0.4 compatibility override.
--- The latest released mori://shinzui/shikumi packages still cap Baikai at 0.9.
--- Their response codecs and text-program paths use APIs retained by Baikai 0.10;
--- relax only these upper bounds while Kioku's Cabal files require Baikai 0.10.
--- Remove these three exceptions when Shikumi publishes compatible bounds.
-allow-newer:
-  claude:http-client-tls
-  , shikumi:baikai
-  , shikumi-cache:baikai
-  , shikumi-trace:baikai
+allow-newer: claude:http-client-tls
 
 package blake3
   flags: -avx512 -avx2 -sse41 -sse2

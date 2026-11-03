@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Upgrade mori://shinzui/shikumi/packages/shikumi to `^>=0.5.0.0` and
+  mori://shinzui/shikumi/packages/shikumi-trace to `^>=0.3.1.0` in library and
+  test dependencies. Keep the already-current mori://shinzui/baikai cohort
+  (Baikai 0.10.0.0, providers 0.7.3.0, Effectful 0.4.0.5) and remove the three
+  Shikumi-to-Baikai `allow-newer` exceptions now supported by released bounds.
+
 ## 0.12.0.1 — 2026-10-28
 
 ### Changed
