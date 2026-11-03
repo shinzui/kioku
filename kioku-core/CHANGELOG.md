@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.12.0.2 — 2026-11-02
+
+### Changed
+
+- Require mori://shinzui/shikumi/packages/shikumi `^>=0.5.0.0` and mori://shinzui/shikumi/packages/shikumi-trace `^>=0.3.1.0`. These releases support the existing mori://shinzui/baikai cohort directly, removing the need for the three Shikumi-to-Baikai `allow-newer` exceptions.
+
 ## 0.12.0.1 — 2026-10-28
 
 ### Changed

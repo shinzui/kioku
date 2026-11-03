@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.12.0.2 — 2026-11-02
+
+### Changed
+
+- Align internal dependencies at 0.12.0.2 and adopt Core’s updated Shikumi cohort.
+
 ## 0.12.0.1 — 2026-10-28
 
 ### Changed

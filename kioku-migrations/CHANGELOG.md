@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.12.0.2 — 2026-11-02
+
+### Changed
+
+- Align the shared release version and internal test dependencies at 0.12.0.2. The qualified 63-entry migration plan and all SQL payloads remain unchanged.
+
 ## 0.12.0.1 — 2026-10-28
 
 ### Changed

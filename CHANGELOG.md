@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
+## 0.12.0.2 — 2026-11-02
+
 ### Changed
+
+- Align all five package versions and 16 internal dependency bounds at 0.12.0.2.
 
 - Upgrade mori://shinzui/shikumi/packages/shikumi to `^>=0.5.0.0` and
   mori://shinzui/shikumi/packages/shikumi-trace to `^>=0.3.1.0` in library and

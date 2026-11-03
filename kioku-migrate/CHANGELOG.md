@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.12.0.2 — 2026-11-02
+
+### Changed
+
+- Align Core and migration dependencies at 0.12.0.2. The composed migration plan remains at 63 entries.
+
 ## 0.12.0.1 — 2026-10-28
 
 ### Changed
