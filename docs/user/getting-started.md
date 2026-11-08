@@ -2,9 +2,9 @@
 
 This guide takes you from an empty checkout to writing and recalling your first memory.
 
-Kioku 0.12.0.0 uses Keiro 0.22 and Kiroku Store 0.12. Its plan has **63 entries**
-(16 Kiroku, 32 Keiro, 15 Kioku). For an existing database, follow the
-[0.12 upgrade runbook](upgrading-to-keiro-0-22.md) before starting hosts or workers.
+Kioku 0.13.0.0 uses Keiro 0.24 and Kiroku Store 0.13.0.1. Its plan has **64 entries**
+(17 Kiroku, 32 Keiro, 15 Kioku). For an existing database, follow the
+[0.13 upgrade runbook](upgrading-to-keiro-0-24.md) before starting hosts or workers.
 Older installations also need the intervening [migration maintenance](upgrading-to-pg-migrate.md)
 and [catalog adoption](bounded-reads.md) steps. Fresh disposable databases use the setup below.
 
@@ -64,7 +64,7 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 The migration ledger records the stable `component/name` identity and SHA-256 checksum of all
-63 migrations (Kiroku 16, Keiro 32, Kioku 15). `verify` is read-only and fails if applied SQL no
+64 migrations (Kiroku 17, Keiro 32, Kioku 15). `verify` is read-only and fails if applied SQL no
 longer matches the bytes compiled into the executable.
 
 When authoring a Kioku migration, start with `just new-migration <slug>`, qualify every persistent

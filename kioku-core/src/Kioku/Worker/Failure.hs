@@ -19,7 +19,8 @@ import Shibuya.Core.Types (Attempt (..))
 --
 -- Transient errors are the ones kiroku's own constructor documentation calls
 -- retryable: a pool timeout, a connection torn down mid-operation, and the
--- catch-all connection error. Everything else describes a stable disagreement
+-- catch-all connection error, transaction rollback, or concurrent compaction
+-- mutation. Everything else describes a stable disagreement
 -- between the caller and the database — a version conflict, a missing stream, a
 -- server error whose SQLSTATE kiroku does not recognise — and would fail
 -- identically on every redelivery.
@@ -39,6 +40,8 @@ isTransientStoreError = \case
   -- them permanent, which halted the worker on a conflict it should have
   -- retried.
   TransientTransactionFailure {} -> True
+  -- Compaction lost a reference/count race and rolled back without committing.
+  CompactionConcurrentMutation {} -> True
   WrongExpectedVersion {} -> False
   EmptyAppendBatch _ -> False
   StreamNotFound _ -> False

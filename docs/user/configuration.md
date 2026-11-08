@@ -1,7 +1,7 @@
 # Configuration
 
-For Kioku 0.12.0.0 and its 63-entry migration cohort, follow the
-[Keiro 0.22 upgrade runbook](upgrading-to-keiro-0-22.md).
+For Kioku 0.13.0.0 and its 64-entry migration cohort, follow the
+[Keiro 0.24 upgrade runbook](upgrading-to-keiro-0-24.md).
 
 AI execution requires an explicit versioned JSON file or a host-supplied `AIRuntime`.
 Without either, AI is disabled. Memory storage, keyword recall, and stored scene/persona readers
@@ -79,7 +79,7 @@ The CLI grants interactive availability only to foreground `distill session` and
 park interactive work with `kioku:deferred:interactive-unavailable` in the timer's dead-letter
 reason. No HTTP or batch fallback occurs. `worker deferred list` shows authorized work, and
 `worker deferred resume TIMER_ID --ai-config FILE` claims the original timer using the current
-Keiro 0.22 runtime after fresh authorization and execution-availability checks. Run
+Keiro 0.24 runtime after fresh authorization and execution-availability checks. Run
 `kioku-migrate up` before using these commands so the resume-lease migration introduced in Keiro
 0.16 is applied.
 Do not replay these rows using generic dead-letter tools or modify timer tables manually.

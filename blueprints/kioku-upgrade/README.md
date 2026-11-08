@@ -5,7 +5,7 @@
 > edge is **entailed**, so a project that depends only on Kioku — and has never
 > named Keiro — still crosses Keiro's edge, exactly once, in the right order.
 
-**Version:** `0.6.0`
+**Version:** `0.7.0`
 
 **Kind:** Blueprint migration (run with `seihou agent migrate`, not
 `seihou agent run` — this blueprint declares no baseline and applies no modules)
@@ -55,6 +55,10 @@ adoption. The 0.12 edge rebuilds hosts against Keiro 0.22 / Store 0.12 and appen
 32 Keiro, 15 Kioku). Package installation and receipts do not apply it; follow the
 [operator runbook](../../docs/user/upgrading-to-keiro-0-22.md) for rehearsal and cutover.
 
+The 0.13 edge selects Keiro 0.24 and Store 0.13.0.1, adding only `kiroku/0017`
+from a complete 0.12 database. Its plan has 64 entries (17 Kiroku, 32 Keiro,
+15 Kioku); follow the [0.13 runbook](../../docs/user/upgrading-to-keiro-0-24.md).
+
 ## Declared edges
 
 | From | To | Entails |
@@ -70,6 +74,7 @@ adoption. The 0.12 edge rebuilds hosts against Keiro 0.22 / Store 0.12 and appen
 | `0.10.0.0` | `0.11.0.0` | —; Memory metadata, tags, scope-kind filter and recency |
 | `0.11.0.0` | `0.12.0.0` | `keiro-upgrade` `0.21.0.0 -> 0.22.0.0` |
 | `0.12.0.0` | `0.12.0.1` | —; Baikai/Shikumi bounds and consumer project exceptions |
+| `0.12.0.2` | `0.13.0.0` | `keiro-upgrade` `0.22.0.0 -> 0.23.0.0`, then `0.23.0.0 -> 0.24.0.0` |
 
 Kioku 0.9.1.0 was tagged but never uploaded to Hackage. Consumers moving from the published
 0.9.0.2 release to 0.10.0.0 or later cross both reader edges. The 0.9.0.1 and 0.9.0.2 patches

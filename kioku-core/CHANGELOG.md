@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Require mori://shinzui/keiro 0.24.0.0,
+  mori://shinzui/kiroku/packages/kiroku-store 0.13.0.1 and
+  mori://shinzui/kiroku/packages/shibuya-kiroku-adapter 0.7.0.1. Rebuild
+  embedded hosts and workers together. Application APIs, event encodings,
+  query catalogs and AI policy remain unchanged.
+- Treat `CompactionConcurrentMutation` as transient in background workers,
+  following the upstream transaction rollback contract.
+
 ## 0.12.0.2 — 2026-11-02
 
 ### Changed

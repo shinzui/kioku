@@ -89,8 +89,9 @@ tests =
         ],
       testCase "the full migration chain applies to a fresh database" testFreshDatabase,
       testCase "0.10.0.0 upgrades with one recency index and unchanged rows" testRecencyUpgrade,
-      testCase "the released previous cohort preserves data and checkpoints through 0013–0016" testPreviousCohortUpgrade,
-      testCase "the 62-entry Keiro 0.21 cohort adds only Kiroku 0016" testKeiro021Upgrade,
+      testCase "the released previous cohort preserves data and checkpoints through 0013–0017" testPreviousCohortUpgrade,
+      testCase "the 62-entry Keiro 0.21 cohort adds Kiroku 0016 and 0017" testKeiro021Upgrade,
+      testCase "the 63-entry Keiro 0.22 cohort adds only Kiroku 0017" testKeiro022Upgrade,
       testCase "a changed previous checksum refuses before migration writes" testKeiro021ChecksumRefusal,
       testGroup
         "migration-session isolation"
@@ -475,7 +476,7 @@ testPreviousCohortUpgrade = withBareDatabase $ \connStr -> do
   checkpointsBefore <- query connStr previousCheckpointSnapshot
   query connStr previousCohortIsLegacy >>= (@?= True)
   migrated <- runMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
-  appliedNow migrated @?= [expectRight (migrationId "kiroku" n) | n <- ["0013", "0014", "0015", "0016"]]
+  appliedNow migrated @?= [expectRight (migrationId "kiroku" n) | n <- ["0013", "0014", "0015", "0016", "0017"]]
   query connStr previousCohortSnapshot >>= (@?= before)
   query connStr previousCohortLedger >>= (@?= ledgerBefore)
   query connStr previousCheckpointSnapshot >>= (@?= checkpointsBefore)
@@ -483,12 +484,12 @@ testPreviousCohortUpgrade = withBareDatabase $ \connStr -> do
   verification <- verifyMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
   let VerificationReport {issues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
   issues @?= []
-  length appliedMigrations @?= 63
+  length appliedMigrations @?= 64
   pendingMigrations @?= []
   unknownMigrations @?= []
   repeated <- runMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
   let MigrationReport {results} = repeated
-  length [() | MigrationResult {outcome = AlreadyApplied} <- toList results] @?= 63
+  length [() | MigrationResult {outcome = AlreadyApplied} <- toList results] @?= 64
   appliedNow repeated @?= []
   query connStr previousCohortSnapshot >>= (@?= before)
   query connStr previousCheckpointSnapshot >>= (@?= checkpointsBefore)
@@ -547,7 +548,7 @@ previousCohortLedger =
     """
     SELECT jsonb_agg(to_jsonb(t) ORDER BY component, migration)::text
     FROM pgmigrate.migrations t
-    WHERE NOT (component = 'kiroku' AND migration IN ('0013', '0014', '0015', '0016'))
+    WHERE NOT (component = 'kiroku' AND migration IN ('0013', '0014', '0015', '0016', '0017'))
     """
     E.noParams
     (D.singleRow (D.column (D.nonNullable D.text)))
@@ -625,10 +626,10 @@ prepare021 connStr = do
           "INSERT INTO kiroku.subscriptions (subscription_name,last_seen,consumer_group_member,consumer_group_size,target_kind,target_category) VALUES ('upgrade-exact',1,0,1,'category','kioku_memory'),('upgrade-all',1,0,1,'all',NULL),('upgrade-unbound',0,0,1,'unbound',NULL)"
       )
 
-ledgerWithout0016 :: Statement () Text
-ledgerWithout0016 =
+ledgerWithout0016And0017 :: Statement () Text
+ledgerWithout0016And0017 =
   preparable
-    "SELECT jsonb_agg(to_jsonb(t) ORDER BY component,migration)::text FROM pgmigrate.migrations t WHERE NOT (component='kiroku' AND migration='0016')"
+    "SELECT jsonb_agg(to_jsonb(t) ORDER BY component,migration)::text FROM pgmigrate.migrations t WHERE NOT (component='kiroku' AND migration IN ('0016','0017'))"
     E.noParams
     (D.singleRow (D.column (D.nonNullable D.text)))
 
@@ -643,31 +644,114 @@ testKeiro021Upgrade :: Assertion
 testKeiro021Upgrade = withBareDatabase $ \connStr -> do
   prepare021 connStr
   rows <- query connStr previousCohortSnapshot
-  ledger <- query connStr ledgerWithout0016
+  ledger <- query connStr ledgerWithout0016And0017
   bindings <- query connStr bindingsSnapshot
   checkpoints <- query connStr previousCheckpointSnapshot
   current <- either (assertFailure . show) pure kiokuMigrationPlan
   migrated <- runMigrationPlan defaultRunOptions (Settings.connectionString connStr) current >>= either (assertFailure . show) pure
-  appliedNow migrated @?= [expectRight (migrationId "kiroku" "0016")]
+  appliedNow migrated @?= [expectRight (migrationId "kiroku" n) | n <- ["0016", "0017"]]
   query connStr previousCohortSnapshot >>= (@?= rows)
-  query connStr ledgerWithout0016 >>= (@?= ledger)
+  query connStr ledgerWithout0016And0017 >>= (@?= ledger)
   query connStr bindingsSnapshot >>= (@?= bindings)
   query connStr previousCheckpointSnapshot >>= (@?= checkpoints)
   verification <- verifyMigrationPlan defaultRunOptions (Settings.connectionString connStr) current >>= either (assertFailure . show) pure
   let VerificationReport {issues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
   issues @?= []
-  length appliedMigrations @?= 63
+  length appliedMigrations @?= 64
   pendingMigrations @?= []
   unknownMigrations @?= []
   beforeRepeat <- query connStr fullLedgerSnapshot
   repeated <- runMigrationPlan defaultRunOptions (Settings.connectionString connStr) current >>= either (assertFailure . show) pure
   appliedNow repeated @?= []
   let MigrationReport {results} = repeated
-  length [() | MigrationResult {outcome = AlreadyApplied} <- toList results] @?= 63
+  length [() | MigrationResult {outcome = AlreadyApplied} <- toList results] @?= 64
   query connStr fullLedgerSnapshot >>= (@?= beforeRepeat)
   query connStr previousCohortSnapshot >>= (@?= rows)
   query connStr bindingsSnapshot >>= (@?= bindings)
   query connStr previousCheckpointSnapshot >>= (@?= checkpoints)
+
+-- The 0.7.2 release retains the preceding fifteen payloads byte-for-byte.
+-- Freeze only its appended payload and verify all sixteen checksums.
+previous022Plan :: IO MigrationPlan
+previous022Plan = do
+  entries <- checkMigrationManifest "test/fixtures/kiroku-0.7.1.0/manifest" >>= either (assertFailure . show) pure
+  namespaceSql <- ByteString.readFile "test/fixtures/kiroku-0.7.2.0/0016.sql"
+  let frozen = entries <> (("0016.sql", namespaceSql) :| [])
+  [(Text.dropEnd 4 (Text.pack name), checksumHex bytes) | (name, bytes) <- toList frozen]
+    @?= previous021Checksums <> [("0016", "53b22f14e20af7af0f444877544217a2433939be6a9a245295485e2f87228ee4")]
+  oldKiroku <- either (assertFailure . show) pure (migrationComponentFromEmbeddedSql "kiroku" Set.empty frozen)
+  keiro <- either (assertFailure . show) pure KeiroMigrations.keiroMigrations
+  kioku <- either (assertFailure . show) pure kiokuMigrations
+  either (assertFailure . show) pure (migrationPlan (oldKiroku :| [keiro, kioku]))
+
+testKeiro022Upgrade :: Assertion
+testKeiro022Upgrade = withBareDatabase $ \connStr -> do
+  prepare021 connStr
+  let settings = Settings.connectionString connStr
+  old <- previous022Plan
+  installed <- runMigrationPlan defaultRunOptions settings old >>= either (assertFailure . show) pure
+  appliedNow installed @?= [expectRight (migrationId "kiroku" "0016")]
+  withConnection connStr $ \conn ->
+    run conn (Session.script "INSERT INTO kiroku.subscriptions (subscription_name,last_seen,consumer_group_member,consumer_group_size,target_kind,target_category) VALUES ('upgrade-namespace',1,0,1,'category_namespace','kioku')")
+  rows <- query connStr previousCohortSnapshot
+  ledger <- query connStr ledgerWithout0017
+  bindings <- query connStr bindingsSnapshot
+  checkpoints <- query connStr previousCheckpointSnapshot
+  current <- either (assertFailure . show) pure kiokuMigrationPlan
+  before <- verifyMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
+  let VerificationReport {appliedMigrations = previousApplied, pendingMigrations = pending} = before
+  length previousApplied @?= 63
+  pending @?= [expectRight (migrationId "kiroku" "0017")]
+  migrated <- runMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
+  appliedNow migrated @?= [expectRight (migrationId "kiroku" "0017")]
+  query connStr previousCohortSnapshot >>= (@?= rows)
+  query connStr ledgerWithout0017 >>= (@?= ledger)
+  query connStr bindingsSnapshot >>= (@?= bindings)
+  query connStr previousCheckpointSnapshot >>= (@?= checkpoints)
+  query connStr compactionSchemaInstalled >>= (@?= True)
+  identity <- query connStr storeIdentitySnapshot
+  verification <- verifyMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
+  let VerificationReport {issues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
+  issues @?= []
+  length appliedMigrations @?= 64
+  pendingMigrations @?= []
+  unknownMigrations @?= []
+  after <- query connStr fullLedgerSnapshot
+  repeated <- runMigrationPlan defaultRunOptions settings current >>= either (assertFailure . show) pure
+  appliedNow repeated @?= []
+  let MigrationReport {results} = repeated
+  length [() | MigrationResult {outcome = AlreadyApplied} <- toList results] @?= 64
+  query connStr fullLedgerSnapshot >>= (@?= after)
+  query connStr storeIdentitySnapshot >>= (@?= identity)
+  query connStr previousCohortSnapshot >>= (@?= rows)
+  query connStr bindingsSnapshot >>= (@?= bindings)
+  query connStr previousCheckpointSnapshot >>= (@?= checkpoints)
+
+ledgerWithout0017 :: Statement () Text
+ledgerWithout0017 =
+  preparable
+    "SELECT jsonb_agg(to_jsonb(t) ORDER BY component,migration)::text FROM pgmigrate.migrations t WHERE NOT (component='kiroku' AND migration='0017')"
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
+
+storeIdentitySnapshot :: Statement () Text
+storeIdentitySnapshot =
+  preparable
+    "SELECT to_jsonb(t)::text FROM kiroku.store_identity t WHERE singleton"
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.text)))
+
+compactionSchemaInstalled :: Statement () Bool
+compactionSchemaInstalled =
+  preparable
+    """
+    SELECT (SELECT count(*) = 1 FROM kiroku.store_identity WHERE singleton)
+      AND (SELECT count(*) = 0 FROM kiroku.event_compactions)
+      AND obj_description(to_regnamespace('kiroku'), 'pg_namespace') =
+        'Managed by pg-migrate component kiroku through 0017'
+    """
+    E.noParams
+    (D.singleRow (D.column (D.nonNullable D.bool)))
 
 testKeiro021ChecksumRefusal :: Assertion
 testKeiro021ChecksumRefusal = withBareDatabase $ \connStr -> do
@@ -706,7 +790,7 @@ testFreshDatabase =
         runMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan
           >>= either (assertFailure . show) pure
       let MigrationReport {results = repeatedResults} = repeated
-      length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 63
+      length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 64
       length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
       verification <-
         verifyMigrationPlan defaultRunOptions (Settings.connectionString connStr) plan
@@ -825,10 +909,10 @@ testLedgerChecksumRebaseline =
     plan <- either (fail . show) pure kiokuMigrationPlan
     let settings = Settings.connectionString connStr
     initial <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
-    length (appliedNow initial) @?= 63
+    length (appliedNow initial) @?= 64
 
     baselineLedger <- query connStr fullLedgerSnapshot
-    fst baselineLedger @?= 63
+    fst baselineLedger @?= 64
     baselineSchema <- query connStr cohortSchemaSnapshotStatement
     fixup <- Text.IO.readFile ledgerFixupPath
 
@@ -854,7 +938,7 @@ testLedgerChecksumRebaseline =
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 63
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 64
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
     withConnection connStr \conn -> run conn (Session.script fixup)
@@ -1319,12 +1403,12 @@ testKirokuOnlyAdoption =
     full <- either (fail . show) pure kiokuMigrationPlan
 
     kirokuReport <- runMigrationPlan defaultRunOptions settings kirokuOnly >>= either (assertFailure . show) pure
-    length (appliedNow kirokuReport) @?= 16
+    length (appliedNow kirokuReport) @?= 17
     ledgerBefore <- query connStr kirokuLedgerSnapshot
 
     adoption <- runMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let MigrationReport {results = adoptionResults} = adoption
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 16
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList adoptionResults] @?= 17
     length [() | MigrationResult {outcome = AppliedNow} <- toList adoptionResults] @?= 47
 
     -- Verified and skipped, never re-executed: the stored rows keep their checksums and their
@@ -1338,7 +1422,7 @@ testKirokuOnlyAdoption =
     verification <- verifyMigrationPlan defaultRunOptions settings full >>= either (assertFailure . show) pure
     let VerificationReport {issues = adoptionIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     adoptionIssues @?= []
-    length appliedMigrations @?= 63
+    length appliedMigrations @?= 64
     pendingMigrations @?= []
     unknownMigrations @?= []
 
@@ -1689,13 +1773,13 @@ testCoddCohortImport =
     verification <- verifyMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let VerificationReport {issues = verificationIssues, appliedMigrations, pendingMigrations, unknownMigrations} = verification
     verificationIssues @?= []
-    length appliedMigrations @?= 63
+    length appliedMigrations @?= 64
     pendingMigrations @?= []
     unknownMigrations @?= []
 
     repeated <- runMigrationPlan defaultRunOptions settings plan >>= either (assertFailure . show) pure
     let MigrationReport {results = repeatedResults} = repeated
-    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 63
+    length [() | MigrationResult {outcome = AlreadyApplied} <- toList repeatedResults] @?= 64
     length [() | MigrationResult {outcome = AppliedNow} <- toList repeatedResults] @?= 0
 
 testSchemaConvergence :: Assertion
@@ -1865,6 +1949,7 @@ expectedForwardMigrationIds =
           migrationId "kiroku" "0014",
           migrationId "kiroku" "0015",
           migrationId "kiroku" "0016",
+          migrationId "kiroku" "0017",
           migrationId "keiro" "0015-keiro-outbox-claim-order-index",
           migrationId "keiro" "0016-keiro-inbox-drop-received-idx",
           migrationId "keiro" "0017-schema-management-comment",
@@ -1932,7 +2017,7 @@ forwardMigrationEffectCountStatement =
       (EXISTS (SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'kiroku' AND table_name = 'streams' AND column_name = 'truncate_before'))::int
       + (coalesce(obj_description(to_regnamespace('kiroku'), 'pg_namespace'), '') =
-          'Managed by pg-migrate component kiroku through 0016')::int
+          'Managed by pg-migrate component kiroku through 0017')::int
       + (to_regclass('keiro.keiro_outbox_claim_order_idx') IS NOT NULL)::int
       + (to_regclass('keiro.keiro_inbox_received_idx') IS NULL)::int
       + (coalesce(obj_description(to_regnamespace('keiro'), 'pg_namespace'), '') =
@@ -1965,8 +2050,8 @@ run conn session =
 query :: Text -> Statement () a -> IO a
 query connStr statement = withConnection connStr \conn -> run conn (Session.statement () statement)
 
--- The previous released manifest prefix is preserved byte-for-byte. Only the
--- appended index runs when a data-bearing 0.10.0.0 database upgrades.
+-- The previous released Kioku manifest prefix is preserved byte-for-byte. With
+-- the current upstream schema already installed, only the appended index runs.
 testRecencyUpgrade :: Assertion
 testRecencyUpgrade = withBareDatabase $ \connStr -> do
   let settings = Settings.connectionString connStr
@@ -1979,7 +2064,7 @@ testRecencyUpgrade = withBareDatabase $ \connStr -> do
   old <- either (assertFailure . show) pure (migrationPlan (kiroku :| [keiro, oldKioku]))
   current <- either (assertFailure . show) pure kiokuMigrationPlan
   initial <- runMigrationPlan defaultRunOptions settings old >>= either (assertFailure . show) pure
-  length (appliedNow initial) @?= 62
+  length (appliedNow initial) @?= 63
   withConnection connStr $ \conn ->
     run
       conn

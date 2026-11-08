@@ -253,5 +253,5 @@ finder, and the original timer ID. It rechecks access before claiming, renews it
 lease, and uses token-checked completion or parking. Background runtimes carry no session
 launcher. Hosts using only foreground operations should call listing/resume periodically to
 recover expired claims; ordinary Keiro worker passes also recover them. Apply the current Keiro
-0.22 migration component, which retains the resume-lease migration introduced in 0.16. No
+0.24 migration component, which retains the resume-lease migration introduced in 0.16. No
 application SQL against Keiro's timer table is needed.

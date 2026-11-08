@@ -1,7 +1,7 @@
 # Library API
 
-For Kioku 0.12.0.0 and its 63-entry migration cohort, follow the
-[Keiro 0.22 upgrade runbook](upgrading-to-keiro-0-22.md).
+For Kioku 0.13.0.0 and its 64-entry migration cohort, follow the
+[Keiro 0.24 upgrade runbook](upgrading-to-keiro-0-24.md).
 
 This page is for **host developers** embedding kioku in a Haskell application. It covers the
 write API (`Kioku.Memory`, `Kioku.Session`), the read/recall API (`Kioku.Recall`), the shared
@@ -809,8 +809,8 @@ operator or host input; **`parseIdLenient`** exists for legacy streams only and 
 
 ## Migrations (`kioku-migrations`)
 
-The Kioku 0.12 baseline is Keiki 0.9, Keiro 0.22, Kiroku Store 0.12,
-Store migrations 0.7.2, Shibuya Core 0.12 / Kiroku adapter 0.7, and pg-migrate 1.2.
+The Kioku 0.13 baseline is Keiki 0.9, Keiro 0.24, Kiroku Store 0.13.0.1,
+Store migrations 0.7.3, Shibuya Core 0.12 / Kiroku adapter 0.7.0.1, and pg-migrate 1.2.
 These are ordinary Hackage dependencies; downstream projects do not need Git
 `source-repository-package` stanzas for the framework or migration packages.
 
@@ -821,9 +821,9 @@ host composes `kiokuMigrations` with its own components; this repo's `kioku-migr
 standard `plan`, `list`, `check`, `status`, `verify`, `up`, `repair`, and `new` commands, plus the
 kioku-specific deprecated Codd history `import` command.
 
-The plan contains 63 entries (16 Kiroku, 32 Keiro, 15 Kioku). A complete Kioku 0.11 database
-applies only `kiroku/0016`, with no Kioku catalog adoption or ledger fixup. Rebuild embedded hosts
-and workers against the same dependency cohort; see the [0.12 runbook](upgrading-to-keiro-0-22.md).
+The plan contains 64 entries (17 Kiroku, 32 Keiro, 15 Kioku). A complete Kioku 0.12 database
+applies only `kiroku/0017`, with no Kioku catalog adoption or ledger fixup. Rebuild embedded hosts
+and workers against the same dependency cohort; see the [0.13 runbook](upgrading-to-keiro-0-24.md).
 Hosts crossing 0.10 or 0.11 must also adopt the added query registrations using the
 [bounded-read recipe](bounded-reads.md#fixed-memory-metadata-01100).
 

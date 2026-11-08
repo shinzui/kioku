@@ -11,6 +11,7 @@ edit. What to edit is in the edge prompt.
 
 | Kioku | `keiro` / `keiro-core` | `kiroku-store` | `keiki` | `shibuya-core` | `shibuya-kiroku-adapter` | `baikai` |
 |---|---|---|---|---|---|---|
+| 0.13.0.0 | `^>=0.24.0.0` | `^>=0.13.0.1` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.1` | `^>=0.10.0.0` |
 | 0.12.0.2 | `^>=0.22.0.0` | `^>=0.12.0.0` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.0` | `^>=0.10.0.0` |
 | 0.12.0.1 | `^>=0.22.0.0` | `^>=0.12.0.0` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.0` | `^>=0.10.0.0` |
 | 0.12.0.0 | `^>=0.22.0.0` | `^>=0.12.0.0` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.0` | `>=0.7.0.0 && <0.9` |
@@ -39,6 +40,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `baikai` / `baikai-claude` | `baikai-openai` | `baikai-effectful` | `shikumi` | `shikumi-trace` |
 |---|---|---|---|---|---|
+| 0.13.0.0 | `baikai ^>=0.10.0.0`; `baikai-claude ^>=0.7.3.0` | `^>=0.7.3.0` | `^>=0.4.0.5` | `^>=0.5.0.0` | `^>=0.3.1.0` |
 | 0.12.0.2 | `baikai ^>=0.10.0.0`; `baikai-claude ^>=0.7.3.0` | `^>=0.7.3.0` | `^>=0.4.0.5` | `^>=0.5.0.0` | `^>=0.3.1.0` |
 | 0.12.0.1 | `baikai ^>=0.10.0.0`; `baikai-claude ^>=0.7.3.0` | `^>=0.7.3.0` | `^>=0.4.0.5` | `^>=0.4.1.1` | `^>=0.3.0.2` |
 | 0.12.0.0 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
@@ -61,6 +63,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `keiro-migrations` | `kiroku-store-migrations` | `pg-migrate` |
 |---|---|---|---|
+| 0.13.0.0 | `^>=0.24.0.0` | `^>=0.7.3.0` (project constraint `==0.7.3.0`) | `^>=1.2.0.0` |
 | 0.12.0.2 | `^>=0.22.0.0` | `^>=0.7.2.0` (project constraint `==0.7.2.0`) | `^>=1.2.0.0` |
 | 0.12.0.1 | `^>=0.22.0.0` | `^>=0.7.2.0` (project constraint `==0.7.2.0`) | `^>=1.2.0.0` |
 | 0.12.0.0 | `^>=0.22.0.0` | `^>=0.7.2.0` | `^>=1.2.0.0` |
@@ -96,7 +99,7 @@ For 0.12.0.1, consuming projects also need scoped `allow-newer` entries for
 at mori://shinzui/shikumi selected by that release cap Baikai below 0.9.
 Kioku 0.12.0.2 requires Shikumi 0.5.0.0 and Trace 0.3.1.0, whose released
 bounds support Baikai 0.10 directly; those three exceptions can be removed.
-Keep mori://shinzui/kiroku/packages/kiroku-store-migrations constrained to
+For Kioku 0.12, keep mori://shinzui/kiroku/packages/kiroku-store-migrations constrained to
 `==0.7.2.0` to retain the qualified 63-entry plan. Repository project settings
 are not inherited through Hackage packages. Follow the 0.12.0.0-to-0.12.0.1 edge
 for direct Baikai API adaptations and consumer validation.
@@ -108,7 +111,8 @@ asserts on migration counts or ids needs the right row for its release.
 
 | Kioku | Total | Kiroku | Keiro | Kioku |
 |---|---|---|---|---|
-| 0.12.0.0 | 63 | 16 | 32 | 15 |
+| 0.13.0.0 | 64 | 17 | 32 | 15 |
+| 0.12.0.0–0.12.0.2 | 63 | 16 | 32 | 15 |
 | 0.11.0.0 | 62 | 15 | 32 | 15 |
 | 0.9.1.0–0.10.0.0 | 61 | 15 | 32 | 14 |
 | 0.9.0.0 | 60 | 15 | 32 | 13 |
@@ -206,3 +210,11 @@ changes subscription constraints and the Kiroku schema comment. Stop affected
 workers for the operator-owned migration, preserve exact-category targets, and
 restart new Store-linked hosts before enabling any namespace bindings. No Kioku
 SQL, codec, catalog identity or AI policy changes. No ledger fixup is required.
+
+0.13.0.0 selects mori://shinzui/keiro 0.24 and
+mori://shinzui/kiroku/packages/kiroku-store 0.13.0.1, migrations 0.7.3 and
+adapter 0.7.0.1. Only `kiroku/0017` is new from a complete 0.12 installation:
+it installs one store identity and an empty compaction ledger. The plan has 64
+entries. Historical SQL/checksums, Kioku catalog bindings and AI policy remain
+unchanged; no ledger fixup or compaction adoption is required. Remove a consumer's
+old `==0.7.2.0` constraint and select `==0.7.3.0` to match this qualified plan.

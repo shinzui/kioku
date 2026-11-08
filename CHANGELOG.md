@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Upgrade all five packages to the mori://shinzui/keiro 0.24.0.0 cohort and
+  mori://shinzui/kiroku/packages/kiroku-store 0.13.0.1,
+  mori://shinzui/kiroku/packages/kiroku-store-migrations 0.7.3.0 and
+  mori://shinzui/kiroku/packages/shibuya-kiroku-adapter 0.7.0.1. Align package versions and internal bounds at 0.13.0.0;
+  rebuild embedded hosts, CLI and workers together.
+
+### Changed
+
+- Compose 64 migrations (17 Kiroku, 32 Keiro, 15 Kioku). From a complete
+  0.12 database only `kiroku/0017` applies, installing store identity and an empty
+  compaction ledger. Historical Kioku SQL/checksums, native event encodings,
+  query catalogs and AI policies are unchanged; no ledger fixup is required.
+- Qualify the released 63-to-64 transition with frozen migration bytes, exact
+  data/checkpoint/ledger preservation, identity creation and repeat no-op.
+- Add the 0.12.0.2-to-0.13.0.0 consumer edge, entailing Keiro 0.22-to-0.23 and
+  0.23-to-0.24, plus the operator runbook in `docs/user/upgrading-to-keiro-0-24.md`.
+  Database cutover remains operator-owned; compaction adoption is separate.
+
 ## 0.12.0.2 — 2026-11-02
 
 ### Changed

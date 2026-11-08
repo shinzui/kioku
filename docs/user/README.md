@@ -1,7 +1,7 @@
 # kioku (記憶) — User Guide
 
-For Kioku 0.12.0.0 and its 63-entry migration cohort, follow the
-[Keiro 0.22 upgrade runbook](upgrading-to-keiro-0-22.md).
+For Kioku 0.13.0.0 and its 64-entry migration cohort, follow the
+[Keiro 0.24 upgrade runbook](upgrading-to-keiro-0-24.md).
 
 **kioku** ("memory") is a reusable, event-sourced **agent memory** and **agent session**
 library for the kikan ecosystem. It gives any agent platform one shared engine for:
@@ -51,8 +51,9 @@ Start here, in order:
     and verify the migration that backfills it.
 13. **[Bounded reads](bounded-reads.md)** — permission-checked metadata, tag pages,
     complete counts, scope-kind filters, recency and catalog adoption.
-14. **[Upgrading to Kioku 0.12 / Keiro 0.22](upgrading-to-keiro-0-22.md)** — the current
-    dependency cohort, 62-to-63-entry transition, restored-clone rehearsal, and coordinated restart.
+14. **[Upgrading to Kioku 0.13 / Keiro 0.24](upgrading-to-keiro-0-24.md)** — the current
+    dependency cohort, 63-to-64-entry transition, restored-clone rehearsal, and coordinated restart.
+    The [0.12 runbook](upgrading-to-keiro-0-22.md) retains the preceding transition.
 15. **[Automated Baikai upgrades](automated-baikai-upgrades.md)** — the maintainer automation
     and its current limits.
 

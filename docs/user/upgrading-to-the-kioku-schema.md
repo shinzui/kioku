@@ -1,8 +1,8 @@
 # Upgrading to the kioku schema
 
-The current target is Kioku 0.12.0.0: **63 migrations (16 Kiroku, 32 Keiro, 15 Kioku)**.
+The current target is Kioku 0.13.0.0: **64 migrations (17 Kiroku, 32 Keiro, 15 Kioku)**.
 Use this guide when crossing the historical projection relocation; for the latest
-0.11-to-0.12 transition, use the [Keiro 0.22 runbook](upgrading-to-keiro-0-22.md).
+0.12-to-0.13 transition, use the [Keiro 0.24 runbook](upgrading-to-keiro-0-24.md).
 Hosts crossing the 0.10/0.11 reader additions must also perform
 [catalog adoption](bounded-reads.md) before normal startup. Kioku 0014/0015 build indexes
 transactionally, so include their write pauses in the same maintenance window.
@@ -159,7 +159,7 @@ hand-write registry SQL.
    DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- status
    ```
 
-   `status` must report all 63 migrations applied (Kiroku 16, Keiro 32, Kioku 15), with nothing
+   `status` must report all 64 migrations applied (Kiroku 17, Keiro 32, Kioku 15), with nothing
    pending or failed.
 5. **Grant schema usage if your runtime role is not the owner.** Table grants moved with the
    tables; usage on a schema that did not exist before is a separate privilege.

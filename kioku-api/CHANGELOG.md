@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Align the shared package version at 0.13.0.0 for the Keiro 0.24 cohort.
+  Wire types and encodings remain unchanged.
+
 ## 0.12.0.2 — 2026-11-02
 
 ### Changed

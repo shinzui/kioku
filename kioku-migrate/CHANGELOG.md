@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Build against mori://shinzui/kiroku/packages/kiroku-store 0.13.0.1 and
+  the shared Kioku 0.13.0.0 packages. The composed plan has 64 entries,
+  adding only `kiroku/0017` from the 0.12 cohort.
+
 ## 0.12.0.2 — 2026-11-02
 
 ### Changed

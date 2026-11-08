@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Require mori://shinzui/keiro/packages/keiro-migrations and
+  mori://shinzui/keiro/packages/keiro-test-support 0.24.0.0, and
+  mori://shinzui/kiroku/packages/kiroku-store-migrations 0.7.3.0.
+- Compose 64 entries (17 Kiroku, 32 Keiro, 15 Kioku); only `kiroku/0017`
+  applies from a complete 0.12 database. Freeze the released 0.7.2 payload
+  and prove data/checkpoint preservation, store identity creation and repeat
+  no-op. Historical Kioku SQL/checksums remain unchanged; no ledger fixup.
+
 ## 0.12.0.2 — 2026-11-02
 
 ### Changed

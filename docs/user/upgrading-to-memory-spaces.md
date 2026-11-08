@@ -1,8 +1,8 @@
 # Upgrading to memory spaces
 
-This guide covers the historical memory-space cutover, retained in Kioku 0.12.0.0.
-For the current dependency transition and 63-entry migration plan, see the
-[Keiro 0.22 runbook](upgrading-to-keiro-0-22.md). Older hosts also need the
+This guide covers the historical memory-space cutover, retained in Kioku 0.13.0.0.
+For the current dependency transition and 64-entry migration plan, see the
+[Keiro 0.24 runbook](upgrading-to-keiro-0-24.md). Older hosts also need the
 [bounded-reader source and catalog migrations](bounded-reads.md).
 
 The memory-space cutover gives Kioku an explicit isolation boundary. Every command and event names a

@@ -449,8 +449,8 @@ KIOKU_MEMORY_SPACE=space_prod kioku migrate-artifacts --workspace /srv/agent --a
 ## `kioku-migrate`
 
 The migration executable manages one dependency-ordered plan: Kiroku, then Keiro, then Kioku.
-Kioku 0.12.0.0 embeds **63 migrations (16 Kiroku, 32 Keiro, 15 Kioku)**. Follow the
-[current upgrade runbook](upgrading-to-keiro-0-22.md) before applying it to persistent data.
+Kioku 0.13.0.0 embeds **64 migrations (17 Kiroku, 32 Keiro, 15 Kioku)**. Follow the
+[current upgrade runbook](upgrading-to-keiro-0-24.md) before applying it to persistent data.
 
 ```text
 kioku-migrate COMMAND

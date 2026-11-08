@@ -58,6 +58,7 @@ import Kioku.Prelude
 import Kioku.Recall.Capability (VectorCapability (..), detectVectorCapability)
 import Kioku.SpaceFixtures (otherContext, otherSpace, testContext, testContextProvider, testSpace)
 import Kioku.Worker.Failure (embeddingRetryDelay, isTransientStoreError)
+import Kiroku.Store.Compaction.Types (parseCompactionDigestHex)
 import Kiroku.Store.Connection (defaultConnectionSettings)
 import Kiroku.Store.Effect (Store)
 import Kiroku.Store.Effect.Resource (KirokuStoreResource, getKirokuStore)
@@ -84,7 +85,7 @@ tests =
         shouldSkipEmbedding False (Just "hash-a") "hash-a" @?= False
         shouldSkipEmbedding True Nothing "hash-a" @?= False
         shouldSkipEmbedding True (Just "hash-b") "hash-a" @?= False,
-      testCase "classifies only connection-shaped store errors as transient" testTransientClassification,
+      testCase "classifies retryable store errors as transient" testTransientClassification,
       testCase "backs off on the documented retry schedule" testRetrySchedule,
       testCase "real adapter delivers, checkpoints, and shuts down" (testAdapterLifecycle False),
       testCase "real adapter adopts a confirmed legacy checkpoint and resumes" (testAdapterLifecycle True),
@@ -109,6 +110,9 @@ testTransientClassification = do
   isTransientStoreError PoolAcquisitionTimeout @?= True
   isTransientStoreError (ConnectionLost "reset by peer") @?= True
   isTransientStoreError (ConnectionError "pool closed") @?= True
+  isTransientStoreError (TransientTransactionFailure "40001" "serialization failure") @?= True
+  digest <- maybe (assertFailure "invalid test digest") pure (parseCompactionDigestHex "0000000000000000000000000000000000000000000000000000000000000000")
+  isTransientStoreError (CompactionConcurrentMutation digest "reference changed") @?= True
   isTransientStoreError (UnexpectedServerError "22000" "expected 1536 dimensions, not 8") @?= False
   isTransientStoreError (StreamNotFound (StreamName "kioku_memory-x")) @?= False
   isTransientStoreError (DuplicateEvent Nothing) @?= False
