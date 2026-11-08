@@ -5,7 +5,7 @@
 > edge is **entailed**, so a project that depends only on Kioku — and has never
 > named Keiro — still crosses Keiro's edge, exactly once, in the right order.
 
-**Version:** `0.7.0`
+**Version:** `0.7.1`
 
 **Kind:** Blueprint migration (run with `seihou agent migrate`, not
 `seihou agent run` — this blueprint declares no baseline and applies no modules)
@@ -22,6 +22,20 @@ seihou install https://github.com/shinzui/kiroku.git --module kiroku-upgrade
 seihou agent --debug migrate kioku-upgrade --from 0.4.1.0   # preview
 seihou agent migrate kioku-upgrade --from 0.4.1.0           # run
 ```
+
+For the Kioku 0.12-to-0.13 upgrade, preview the exact window before running it:
+
+```sh
+seihou agent --debug migrate kioku-upgrade --from 0.12.0.2 --to 0.13.0.0
+seihou agent migrate kioku-upgrade --from 0.12.0.2 --to 0.13.0.0
+```
+
+Use the actual starting version for `--from`; 0.12.0.0 and 0.12.0.1 consumers
+also cross the 0.13 edge. Its upstream chain runs Kiroku's Store 0.13 edge,
+Keiro 0.23, Keiro 0.24, then Kioku 0.13, without repeating entailed work.
+The root `seihou-registry.dhall` exposes this blueprint to `seihou browse` and
+`seihou install`. The commands above use the upstream Git repository, so local
+authoring changes must be published there before consumers can install them.
 
 `--to` is inferred from the [version probe](#version-probe); `--from` is
 inferred from your recorded receipts after the first run. The entailed
@@ -41,7 +55,7 @@ composed plan itself. The edge establishes from read-only evidence whether they
 apply to this project and reports the exact runbook — it stops there, by design.
 
 A receipt records that a provider interaction returned, not that a database was
-remediated. For persistent data, use the [operator runbook](../../docs/user/upgrading-to-keiro-0-22.md)
+remediated. For persistent data, use the [operator runbook](../../docs/user/upgrading-to-keiro-0-24.md)
 and rehearse the complete upgrade on a restored clone before cutover.
 
 The 0.9.0.0 edge also leaves persistent database work to the operator: stop all
@@ -135,6 +149,8 @@ Mounted read-only for every edge of this blueprint:
 - `files/kioku-cohort-versions.md` — which upstream cohort each Kioku release
   pairs with, how to read what a project actually resolved, the composed
   migration plan's shape per release, and which releases require a ledger fixup.
+- `files/kioku-0-13-upgrade.md` — consumer validation, restored-clone rehearsal
+  and operator handoff for the current cohort, available without a Kioku checkout.
 
 ## For maintainers
 

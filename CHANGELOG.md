@@ -12,6 +12,8 @@
 
 ### Changed
 
+- Register the `kioku-upgrade` Seihou blueprint for discovery and installation,
+  and bundle the 0.13 consumer runbook with explicit preview/run commands.
 - Compose 64 migrations (17 Kiroku, 32 Keiro, 15 Kioku). From a complete
   0.12 database only `kiroku/0017` applies, installing store identity and an empty
   compaction ledger. Historical Kioku SQL/checksums, native event encodings,

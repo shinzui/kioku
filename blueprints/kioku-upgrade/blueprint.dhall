@@ -4,7 +4,7 @@ let S =
 
 in  S.Blueprint::{
     , name = "kioku-upgrade"
-    , version = Some "0.7.0"
+    , version = Some "0.7.1"
     , description = Some
         "Upgrade guidance for projects consuming Kioku, the agent memory runtime. One edge per released version window that needs judgement work, with the Keiro cohort edge entailed so a project that depends only on Kioku still crosses it exactly once."
     , prompt = ./prompt.md as Text
@@ -16,6 +16,11 @@ in  S.Blueprint::{
         , src = "kioku-cohort-versions.md"
         , description = Some
             "Which upstream cohort each Kioku release pairs with, how to read what this project actually resolved, the composed migration plan's shape per release, and which ledger fixups a release requires."
+        }
+      , S.Blueprint.BlueprintFile::{
+        , src = "kioku-0-13-upgrade.md"
+        , description = Some
+            "Self-contained consumer validation and operator cutover runbook for Kioku 0.13, Keiro 0.24 and Kiroku Store 0.13."
         }
       ]
     , migrations =
