@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Require mori://shinzui/baikai/packages/baikai `^>=0.10.1.0`, matching Core.
 - Build with mori://shinzui/keiro 0.24.0.0 and
   mori://shinzui/kiroku/packages/kiroku-store 0.13.0.1. Align the shared
   version and internal dependencies at 0.13.0.0.

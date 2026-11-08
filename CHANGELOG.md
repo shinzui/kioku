@@ -12,6 +12,14 @@
 
 ### Changed
 
+- Require mori://shinzui/baikai/packages/baikai `^>=0.10.1.0`,
+  mori://shinzui/shikumi/packages/shikumi `^>=0.5.1.0` and
+  mori://shinzui/shikumi/packages/shikumi-trace `^>=0.3.2.0` in library and
+  test dependencies. Keep mori://shinzui/baikai/packages/baikai-effectful at
+  `^>=0.4.0.5`, the latest binding admitted by Shikumi 0.5.1.0's `<0.5` bound.
+  Keep mori://shinzui/baikai/packages/baikai-claude and
+  mori://shinzui/baikai/packages/baikai-openai at 0.7.3.0. No new `allow-newer`
+  exception or schema change is required.
 - Register the `kioku-upgrade` Seihou blueprint for discovery and installation,
   and bundle the 0.13 consumer runbook with explicit preview/run commands.
 - Compose 64 migrations (17 Kiroku, 32 Keiro, 15 Kioku). From a complete

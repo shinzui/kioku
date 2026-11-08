@@ -11,7 +11,7 @@ edit. What to edit is in the edge prompt.
 
 | Kioku | `keiro` / `keiro-core` | `kiroku-store` | `keiki` | `shibuya-core` | `shibuya-kiroku-adapter` | `baikai` |
 |---|---|---|---|---|---|---|
-| 0.13.0.0 | `^>=0.24.0.0` | `^>=0.13.0.1` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.1` | `^>=0.10.0.0` |
+| 0.13.0.0 | `^>=0.24.0.0` | `^>=0.13.0.1` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.1` | `^>=0.10.1.0` |
 | 0.12.0.2 | `^>=0.22.0.0` | `^>=0.12.0.0` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.0` | `^>=0.10.0.0` |
 | 0.12.0.1 | `^>=0.22.0.0` | `^>=0.12.0.0` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.0` | `^>=0.10.0.0` |
 | 0.12.0.0 | `^>=0.22.0.0` | `^>=0.12.0.0` | `^>=0.9.1.0` | `^>=0.12.0.0` | `^>=0.7.0.0` | `>=0.7.0.0 && <0.9` |
@@ -40,7 +40,7 @@ Shikumi. `baikai-openai` became a direct requirement at 0.6.0.0.
 
 | Kioku | `baikai` / `baikai-claude` | `baikai-openai` | `baikai-effectful` | `shikumi` | `shikumi-trace` |
 |---|---|---|---|---|---|
-| 0.13.0.0 | `baikai ^>=0.10.0.0`; `baikai-claude ^>=0.7.3.0` | `^>=0.7.3.0` | `^>=0.4.0.5` | `^>=0.5.0.0` | `^>=0.3.1.0` |
+| 0.13.0.0 | `baikai ^>=0.10.1.0`; `baikai-claude ^>=0.7.3.0` | `^>=0.7.3.0` | `^>=0.4.0.5` | `^>=0.5.1.0` | `^>=0.3.2.0` |
 | 0.12.0.2 | `baikai ^>=0.10.0.0`; `baikai-claude ^>=0.7.3.0` | `^>=0.7.3.0` | `^>=0.4.0.5` | `^>=0.5.0.0` | `^>=0.3.1.0` |
 | 0.12.0.1 | `baikai ^>=0.10.0.0`; `baikai-claude ^>=0.7.3.0` | `^>=0.7.3.0` | `^>=0.4.0.5` | `^>=0.4.1.1` | `^>=0.3.0.2` |
 | 0.12.0.0 | `baikai >=0.7.0.0 && <0.9`; `baikai-claude ^>=0.7.0.0` | `^>=0.7.0.0` | `^>=0.4.0.1` | `^>=0.4.0.0` | `^>=0.3.0.0` |
@@ -218,3 +218,11 @@ it installs one store identity and an empty compaction ledger. The plan has 64
 entries. Historical SQL/checksums, Kioku catalog bindings and AI policy remain
 unchanged; no ledger fixup or compaction adoption is required. Remove a consumer's
 old `==0.7.2.0` constraint and select `==0.7.3.0` to match this qualified plan.
+
+Kioku 0.13 requires mori://shinzui/baikai/packages/baikai 0.10.1.0,
+mori://shinzui/shikumi/packages/shikumi 0.5.1.0 and
+mori://shinzui/shikumi/packages/shikumi-trace 0.3.2.0. Provider bounds remain
+at 0.7.3.0. Keep mori://shinzui/baikai/packages/baikai-effectful at 0.4.0.5:
+Shikumi 0.5.1.0 requires `>=0.4.0.5 && <0.5`, so the released 0.5.0.0 binding
+cannot join this cohort without an upstream bounds change. No `allow-newer`
+exception is needed for the selected compatible versions.
