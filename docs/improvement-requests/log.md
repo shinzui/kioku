@@ -1,5 +1,11 @@
 # Bundle Update Log
 
+## 2026-11-19
+
+* **Addition**: IR-8 and IR-9 (from `mori://shinzui/mori-kaizen`, a host that embeds Kioku as a
+  recall index): let a host record memories without scheduling scene distillation, and filter
+  ranked recall by tag and memory type.
+
 ## 2026-10-20
 
 * **Completion**: IR-6 and IR-7 are completed by Kioku `v0.11.0.0` at release commit
