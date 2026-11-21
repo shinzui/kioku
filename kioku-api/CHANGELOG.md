@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.0.0 — Unreleased
+
+- Align the package version with the shared Kioku 0.14 cohort.
+
 ## 0.13.0.0 — 2026-11-08
 
 ### Changed

@@ -18,10 +18,10 @@
        }
 , blueprints =
   [ { name = "kioku-upgrade"
-    , version = Some "0.7.1"
+    , version = Some "0.8.0"
     , path = "blueprints/kioku-upgrade"
     , description = Some
-        "Ordered upgrade guidance for Kioku consumers, including the Keiro 0.24 and Kiroku Store 0.13 cohort and database cutover runbook"
+        "Ordered upgrade guidance for Kioku consumers, including the Keiro 0.26 and Shibuya 0.13 cohort and database cutover runbook"
     , tags =
       [ "haskell", "postgresql", "event-sourcing", "agent-memory", "kioku", "migration" ]
     }

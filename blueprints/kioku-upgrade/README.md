@@ -5,7 +5,7 @@
 > edge is **entailed**, so a project that depends only on Kioku — and has never
 > named Keiro — still crosses Keiro's edge, exactly once, in the right order.
 
-**Version:** `0.7.1`
+**Version:** `0.8.0`
 
 **Kind:** Blueprint migration (run with `seihou agent migrate`, not
 `seihou agent run` — this blueprint declares no baseline and applies no modules)
@@ -23,14 +23,18 @@ seihou agent --debug migrate kioku-upgrade --from 0.4.1.0   # preview
 seihou agent migrate kioku-upgrade --from 0.4.1.0           # run
 ```
 
-For the Kioku 0.12-to-0.13 upgrade, preview the exact window before running it:
+For the Kioku 0.13-to-0.14 upgrade, preview the exact window before running it:
 
 ```sh
-seihou agent --debug migrate kioku-upgrade --from 0.12.0.2 --to 0.13.0.0
-seihou agent migrate kioku-upgrade --from 0.12.0.2 --to 0.13.0.0
+seihou install https://github.com/shinzui/kiroku.git --module shibuya-kiroku-adapter-upgrade
+seihou install https://github.com/shinzui/shibuya-pgmq-adapter.git --module shibuya-pgmq-adapter-upgrade
+seihou agent --debug migrate kioku-upgrade --from 0.13.0.0 --to 0.14.0.0
+seihou agent migrate kioku-upgrade --from 0.13.0.0 --to 0.14.0.0
 ```
 
-Use the actual starting version for `--from`; 0.12.0.0 and 0.12.0.1 consumers
+The 0.14 preview runs the PGMQ and Kiroku adapter edges first, then both Keiro
+edges, then the Kioku edge. Use the actual starting version for `--from`.
+Projects starting on 0.12.0.0 or 0.12.0.1
 also cross the 0.13 edge. Its upstream chain runs Kiroku's Store 0.13 edge,
 Keiro 0.23, Keiro 0.24, then Kioku 0.13, without repeating entailed work.
 The root `seihou-registry.dhall` exposes this blueprint to `seihou browse` and
@@ -72,6 +76,8 @@ adoption. The 0.12 edge rebuilds hosts against Keiro 0.22 / Store 0.12 and appen
 The 0.13 edge selects Keiro 0.24 and Store 0.13.0.1, adding only `kiroku/0017`
 from a complete 0.12 database. Its plan has 64 entries (17 Kiroku, 32 Keiro,
 15 Kioku); follow the [0.13 runbook](../../docs/user/upgrading-to-keiro-0-24.md).
+The 0.14 edge adds `keiro/0033` to that plan. Apply it before restarting
+timer workers as described in the [0.14 runbook](../../docs/user/upgrading-to-keiro-0-26.md).
 
 ## Declared edges
 
@@ -89,6 +95,7 @@ from a complete 0.12 database. Its plan has 64 entries (17 Kiroku, 32 Keiro,
 | `0.11.0.0` | `0.12.0.0` | `keiro-upgrade` `0.21.0.0 -> 0.22.0.0` |
 | `0.12.0.0` | `0.12.0.1` | —; Baikai/Shikumi bounds and consumer project exceptions |
 | `0.12.0.2` | `0.13.0.0` | `keiro-upgrade` `0.22.0.0 -> 0.23.0.0`, then `0.23.0.0 -> 0.24.0.0` |
+| `0.13.0.0` | `0.14.0.0` | `keiro-upgrade` `0.24.0.0 -> 0.25.0.0`, then `0.25.1.0 -> 0.26.0.0` |
 
 Kioku 0.9.1.0 was tagged but never uploaded to Hackage. Consumers moving from the published
 0.9.0.2 release to 0.10.0.0 or later cross both reader edges. The 0.9.0.1 and 0.9.0.2 patches
@@ -150,7 +157,7 @@ Mounted read-only for every edge of this blueprint:
   pairs with, how to read what a project actually resolved, the composed
   migration plan's shape per release, and which releases require a ledger fixup.
 - `files/kioku-0-13-upgrade.md` — consumer validation, restored-clone rehearsal
-  and operator handoff for the current cohort, available without a Kioku checkout.
+  and operator handoff for the 0.13 cohort, available without a Kioku checkout.
 
 ## For maintainers
 

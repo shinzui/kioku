@@ -27,6 +27,7 @@ import Keiro.Timer
     TimerRow (..),
     TimerWorkerOptions (..),
     deadLetterTimer,
+    defaultTimerWorkerOptions,
     requeueStuckTimer,
     runTimerWorkerWith,
     scheduleTimerTx,
@@ -65,7 +66,7 @@ import System.IO qualified as IO
 -- stale requeue is keiro's default and unchanged.
 kiokuTimerWorkerOptions :: TimerWorkerOptions
 kiokuTimerWorkerOptions =
-  TimerWorkerOptions {maxAttempts = Just kiokuTimerAttemptCeiling, requeueStuckAfter = Just 300}
+  defaultTimerWorkerOptions {maxAttempts = Just kiokuTimerAttemptCeiling, requeueStuckAfter = Just 300}
 
 kiokuTimerAttemptCeiling :: Int
 kiokuTimerAttemptCeiling = 8
@@ -268,6 +269,7 @@ rescheduleClaimedTimer row delay = do
       scheduleTimerTx
         TimerRequest
           { timerId = row.timerId,
+            traceContext = row.traceContext,
             processManagerName = row.processManagerName,
             correlationId = row.correlationId,
             fireAt = addUTCTime delay now,

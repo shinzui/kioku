@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.0.0 — Unreleased
+
+- Upgrade the five Kioku packages together to mori://shinzui/keiro 0.26.0.0, mori://shinzui/kiroku/packages/kiroku-store 0.13.0.2, mori://shinzui/shibuya/packages/shibuya-core 0.13.0.1 and mori://shinzui/kiroku/packages/shibuya-kiroku-adapter 0.8.0.0. Apply `keiro/0033` before starting upgraded workers. See the [upgrade runbook](docs/user/upgrading-to-keiro-0-26.md).
+
 ## 0.13.0.0 — 2026-11-08
 
 ### Breaking Changes

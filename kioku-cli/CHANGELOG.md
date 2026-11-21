@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.0.0 — Unreleased
+
+- Build the CLI and its workers against the Kioku 0.14 runtime cohort.
+
 ## 0.13.0.0 — 2026-11-08
 
 ### Changed

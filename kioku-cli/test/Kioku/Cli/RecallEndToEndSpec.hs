@@ -251,6 +251,7 @@ deferredCommands = withKiokuMigratedDatabase $ \connStr ->
                   "scene-fixture"
                   now
                   (toJSON (SceneTimerPayload alphaSpace globalScope))
+                  Nothing
               )
           )
         Timer.deadLetterTimer tid "kioku:deferred:interactive-unavailable feature=scene"

@@ -1,7 +1,7 @@
 # Upgrading an existing Codd database to pg-migrate
 
-For Kioku 0.13.0.0 and its 64-entry migration cohort, follow the
-[Keiro 0.24 upgrade runbook](upgrading-to-keiro-0-24.md).
+For Kioku 0.14.0.0 and its 65-entry migration cohort, follow the
+[Keiro 0.26 upgrade runbook](upgrading-to-keiro-0-26.md).
 
 ## Maintenance when crossing the 0.9 cohort
 
@@ -32,10 +32,10 @@ Fresh disposable test databases need no operator cutover.
 
 This runbook moves a data-bearing database created by the pre-cutover kioku cohort onto
 pg-migrate without replaying any of its 30 historical migrations. The source profile is exact:
-Kiroku 6, Keiro 14, and Kioku 10. The 33 migrations added after those pins are not imported; the
+Kiroku 6, Keiro 14, and Kioku 10. The 35 migrations added after those pins are not imported; the
 normal `up` step applies them once after the history import.
 
-The current target is Kioku 0.13.0.0 with 64 migrations. The maintenance requirements above
+The current target is Kioku 0.14.0.0 with 65 migrations. The maintenance requirements above
 still apply when crossing the older cohort. Kioku 0014 and 0015 additionally build indexes
 transactionally, blocking writes to their target tables while the migration transaction runs.
 See [bounded reads](bounded-reads.md) for those indexes and the catalog-adoption procedure.
@@ -121,7 +121,7 @@ mapped SQL. Six Kiroku and nine Kioku mappings are checked against preserved SHA
 Running the same import again is safe: matching audit evidence reports `already imported`. Changed
 evidence fails with a history-import conflict instead of overwriting the first audit.
 
-## 5. Apply the 33 post-pin migrations and verify
+## 5. Apply the 35 post-pin migrations and verify
 
 A Codd-era database has no applied Kioku `0011` row: the imported Kioku history ends at `0010`.
 Do not run the 0.4.x `0011` checksum re-baseline before this first corrected `up`; `0011` is
@@ -134,15 +134,15 @@ DATABASE_URL="$DATABASE_URL" cabal run kioku-migrate -- status
 ```
 
 `up` reports the 30 imported migrations as already applied and applies only the forward suffix:
-Kiroku `0007` through `0017`, Keiro `0015` through `0032`, and Kioku `0011` through `0015`.
+Kiroku `0007` through `0017`, Keiro `0015` through `0033`, and Kioku `0011` through `0015`.
 The Kioku suffix partitions the read models, relocates the projections into the `kioku` schema,
 and installs the partition-aware full-text, bounded-read and active-recency indexes.
-The final status is 64 applied migrations
+The final status is 65 applied migrations
 with no pending, unknown, or verification issues:
 
 ```text
 kiroku  17
-keiro  32
+keiro  33
 kioku  15
 ```
 

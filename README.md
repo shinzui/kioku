@@ -47,7 +47,7 @@ Start with the user guide:
 - [docs/user/concepts.md](docs/user/concepts.md)
 - [CLI reference](docs/user/cli-reference.md) and [AI configuration](docs/user/configuration.md)
 - [Library API](docs/user/library-api.md) and [bounded reads](docs/user/bounded-reads.md)
-- [Upgrading to Kioku 0.13 / Keiro 0.24](docs/user/upgrading-to-keiro-0-24.md)
+- [Upgrading to Kioku 0.14 / Keiro 0.26](docs/user/upgrading-to-keiro-0-26.md)
 
 Common development commands:
 
@@ -59,18 +59,18 @@ DATABASE_URL="$PG_CONNECTION_STRING" cabal run kioku-migrate -- verify
 ```
 
 Project dependencies resolve from Hackage; `cabal.project` does not replace released packages with
-Git checkouts. All five Kioku packages are at **0.13.0.0**, using
-[Keiro](mori://shinzui/keiro) 0.24.0.0,
-[Kiroku Store](mori://shinzui/kiroku/packages/kiroku-store) 0.13.0.1,
-[Shibuya Core](mori://shinzui/shibuya/packages/shibuya-core) 0.12 and its
-[Kiroku adapter](mori://shinzui/kiroku/packages/shibuya-kiroku-adapter) 0.7.0.1,
+Git checkouts. All five Kioku packages are at **0.14.0.0**, using
+[Keiro](mori://shinzui/keiro) 0.26.0.0,
+[Kiroku Store](mori://shinzui/kiroku/packages/kiroku-store) 0.13.0.2,
+[Shibuya Core](mori://shinzui/shibuya/packages/shibuya-core) 0.13.0.1 and its
+[Kiroku adapter](mori://shinzui/kiroku/packages/shibuya-kiroku-adapter) 0.8.0.0,
 with pg-migrate 1.2. The optional PGMQ integration is constrained to Keiro PGMQ
-0.24, PGMQ 0.7 and its Shibuya adapter 0.18; Kioku's normal runtime does not build it.
+0.26, PGMQ 0.7 and its Shibuya adapter 0.19; Kioku's normal runtime does not build it.
 
-The composed migration plan has **64 entries (Kiroku 17, Keiro 32, Kioku 15)**.
-From a complete 0.12 database, only `kiroku/0017` applies, adding store identity
-and an empty compaction ledger. Rebuild hosts and workers together and follow the
-[0.13 upgrade runbook](docs/user/upgrading-to-keiro-0-24.md) for restored-clone
+The composed migration plan has **65 entries (Kiroku 17, Keiro 33, Kioku 15)**.
+From a complete 0.13 database, only `keiro/0033` applies. It adds nullable trace context
+to timers and an attribution hint to workflows. Rebuild hosts and workers together and follow the
+[0.14 upgrade runbook](docs/user/upgrading-to-keiro-0-26.md) for restored-clone
 rehearsal, migration verification and coordinated restart. Older installations
 also need their intervening index-build pauses, checkpoint checks, and
 [bounded-read catalog adoption](docs/user/bounded-reads.md).

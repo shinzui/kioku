@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.0.0 — Unreleased
+
+- Build against mori://shinzui/keiro 0.26 and use the replay-friendly link-only trace policy from mori://shinzui/kiroku/packages/shibuya-kiroku-adapter 0.8. Rescheduled timers retain their stored trace context.
+
 ## 0.13.0.0 — 2026-11-08
 
 ### Changed

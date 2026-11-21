@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.0.0 — Unreleased
+
+- Compose 65 migrations. On a fully migrated Kioku 0.13 database, `keiro/0033` adds nullable trace fields to timers and workflows.
+
 ## 0.13.0.0 — 2026-11-08
 
 ### Changed

@@ -129,6 +129,7 @@ scheduleL3PersonaTimerTx memorySpaceId scope now =
   scheduleTimerTx $
     TimerRequest
       { timerId = l3PersonaTimerId memorySpaceId scope fireAt,
+        traceContext = Nothing,
         processManagerName = l3PersonaProcessManagerName,
         correlationId = partitionedCorrelationId memorySpaceId scope,
         fireAt,

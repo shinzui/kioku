@@ -1,4 +1,5 @@
 {-# LANGUAGE GHC2024 #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -389,6 +390,15 @@ semanticTargets (J.Object obj) = J.Object (KM.mapWithKey semantic obj)
     removeEnrichment v = v
 semanticTargets v = v
 
+-- The comparison probe is compiled against both sides of the upgrade.
+probeTimerRequest :: Timer.TimerId -> Text -> Text -> UTCTime -> J.Value -> Timer.TimerRequest
+#if MIN_VERSION_keiro(0,25,0)
+probeTimerRequest tid manager correlation due payload =
+  Timer.TimerRequest tid manager correlation due payload Nothing
+#else
+probeTimerRequest = Timer.TimerRequest
+#endif
+
 deliveryProbe :: AppEnv -> Text -> FilePath -> IO ()
 deliveryProbe app url out = do
   cap <- run app (detectVectorCapability 1536)
@@ -439,7 +449,14 @@ deliveryProbe app url out = do
   rt <- testDistillRuntime
   now <- getCurrentTime
   run app $ do
-    runTransaction (Timer.scheduleTimerTx (Timer.TimerRequest (Timer.TimerId timerUuid) l2SceneProcessManagerName "upgrade-probe-empty" (addUTCTime (-1) now) (J.object ["scope" J..= ScopeGlobal (Namespace "kioku_upgrade_timer_empty"), "memorySpaceId" J..= fixtureSpace])))
+    let request =
+          probeTimerRequest
+            (Timer.TimerId timerUuid)
+            l2SceneProcessManagerName
+            "upgrade-probe-empty"
+            (addUTCTime (-1) now)
+            (J.object ["scope" J..= ScopeGlobal (Namespace "kioku_upgrade_timer_empty"), "memorySpaceId" J..= fixtureSpace])
+    runTransaction (Timer.scheduleTimerTx request)
     void (runKiokuTimerWorkerOnce Nothing contexts rt (scopedScanCandidates 5) now)
   timer <- rows url "keiro.keiro_timers" ("WHERE timer_id=" <> literal (UUID.toText timerUuid))
   unless (map (field "status") (array timer) == ["fired"]) (fail "due timer did not fire")

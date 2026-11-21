@@ -137,6 +137,7 @@ l1TimerRequest :: TimerId -> SessionId -> MemorySpaceId -> Text -> UTCTime -> Ma
 l1TimerRequest timerId sid memorySpaceId kind fireAt turnCount =
   TimerRequest
     { timerId,
+      traceContext = Nothing,
       processManagerName = l1ExtractProcessManagerName,
       correlationId = idText sid,
       fireAt,

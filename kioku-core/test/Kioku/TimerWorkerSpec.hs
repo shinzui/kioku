@@ -452,6 +452,7 @@ scheduleTestTimer timerId processManagerName correlationId payload offset = do
     scheduleTimerTx
       TimerRequest
         { timerId,
+          traceContext = Nothing,
           processManagerName,
           correlationId,
           fireAt = addUTCTime offset now,

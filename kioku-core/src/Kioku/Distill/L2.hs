@@ -210,6 +210,7 @@ l2SceneTimerRequest :: MemorySpaceId -> MemoryScope -> Text -> UTCTime -> TimerR
 l2SceneTimerRequest memorySpaceId scope sourceId fireAt =
   TimerRequest
     { timerId = l2SceneTimerId memorySpaceId scope sourceId,
+      traceContext = Nothing,
       processManagerName = l2SceneProcessManagerName,
       correlationId = partitionedCorrelationId memorySpaceId scope,
       fireAt,
