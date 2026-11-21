@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.14.0.0 — Unreleased
+## 0.14.0.0 — 2026-11-21
 
-- Align the package version with the shared Kioku 0.14 cohort.
+### Changed
+
+- Align the package and its test dependency at Kioku 0.14.0.0.
 
 ## 0.13.0.0 — 2026-11-08
 

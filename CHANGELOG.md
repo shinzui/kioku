@@ -1,8 +1,17 @@
 # Changelog
 
-## 0.14.0.0 — Unreleased
+## 0.14.0.0 — 2026-11-21
 
-- Upgrade the five Kioku packages together to mori://shinzui/keiro 0.26.0.0, mori://shinzui/kiroku/packages/kiroku-store 0.13.0.2, mori://shinzui/shibuya/packages/shibuya-core 0.13.0.1 and mori://shinzui/kiroku/packages/shibuya-kiroku-adapter 0.8.0.0. Apply `keiro/0033` before starting upgraded workers. See the [upgrade runbook](docs/user/upgrading-to-keiro-0-26.md).
+### Breaking Changes
+
+- Upgrade to mori://shinzui/keiro 0.26.0.0, mori://shinzui/kiroku/packages/kiroku-store 0.13.0.2, mori://shinzui/shibuya/packages/shibuya-core 0.13.0.1 and mori://shinzui/kiroku/packages/shibuya-kiroku-adapter 0.8.0.0. Rebuild hosts, CLI and workers together.
+- Apply `keiro/0033` before restarting upgraded workers. It adds nullable timer and workflow trace fields and brings the composed migration plan from 64 to 65 entries. See the [upgrade runbook](docs/user/upgrading-to-keiro-0-26.md).
+
+### Changed
+
+- Link embedding processing spans to the writing trace when an event carries a valid traceparent. Preserve stored trace context when rescheduling timers.
+- Add a Kioku 0.13-to-0.14 upgrade edge that runs the required upstream steps. Test incremental migration from a fully migrated Kioku 0.13 database.
+- Add the OKF CLI to the Nix development shell and refresh the Redpanda container input.
 
 ## 0.13.0.0 — 2026-11-08
 

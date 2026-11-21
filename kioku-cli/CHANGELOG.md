@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.14.0.0 — Unreleased
+## 0.14.0.0 — 2026-11-21
 
-- Build the CLI and its workers against the Kioku 0.14 runtime cohort.
+### Changed
+
+- Build the CLI and its workers against Kioku 0.14 and mori://shinzui/keiro 0.26. Apply the Kioku 0.14 migration plan before starting workers.
 
 ## 0.13.0.0 — 2026-11-08
 

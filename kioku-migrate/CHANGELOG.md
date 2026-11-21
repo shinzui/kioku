@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.14.0.0 — Unreleased
+## 0.14.0.0 — 2026-11-21
+
+### Breaking Changes
 
 - Apply and verify the 65-entry Kioku 0.14 plan before restarting upgraded workers.
 
